@@ -166,8 +166,8 @@ async function withLauncher(consent: ConsentSeed, body: (tree: Tree, requests: s
   const clock = captureTimeouts();
   const originalFetch = globalThis.fetch;
   // The test app has no version-store repo; stub the reads the app and history screens make.
-  const { activeBundle, timeline, activeId } = StoreAccess.prototype;
-  StoreAccess.prototype.activeBundle = async () => 'window.__WHIM_APP_MODULE__ = {};';
+  const { activeLaunch, timeline, activeId } = StoreAccess.prototype;
+  StoreAccess.prototype.activeLaunch = async (target) => ({ app: target, source: 'window.__WHIM_APP_MODULE__ = {};', versionId: 'g1' });
   StoreAccess.prototype.timeline = async () => [];
   StoreAccess.prototype.activeId = async () => null;
   const requests: string[] = [];
@@ -187,7 +187,7 @@ async function withLauncher(consent: ConsentSeed, body: (tree: Tree, requests: s
   } finally {
     if (tree) await unmountScreen(tree);
     globalThis.fetch = originalFetch;
-    Object.assign(StoreAccess.prototype, { activeBundle, timeline, activeId });
+    Object.assign(StoreAccess.prototype, { activeLaunch, timeline, activeId });
     clock.restore();
   }
 }

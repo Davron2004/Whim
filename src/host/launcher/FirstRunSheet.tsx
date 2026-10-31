@@ -5,7 +5,8 @@
  * for you", a lead sentence, three summary rows (what's
  * sent, what stays on the phone, what we never do), a Privacy policy row, "Full details" (the whole
  * consent disclosure, expanding in place) and a Language row, whose value is the one-tap switch to
- * the other language, named in that language (spec legal-text-localization); then the terms checkbox row, unticked,
+ * the other language, named in that language (spec legal-text-localization); then, pinned with the actions
+ * it unlocks, the terms checkbox row, unticked,
  * with the Terms link beside it and outside its hit area; and two actions on purpose (GDPR art.
  * 7(2)): `Agree to send descriptions` (`ink`, enabled once the terms are ticked) and `Not now`.
  *
@@ -35,6 +36,7 @@ import { makeStyles, PRESS_RETENTION } from '../ui/tokens-pure';
 import { consentWhatsNewText, firstRunSentText, LEGAL_COPY } from './copy';
 import { disclosureOf } from './consent-disclosure';
 import KeyboardShell from './KeyboardShell';
+import { FIELDLESS_FOOTER_SHARE } from './keyboard-shell';
 import { otherLegalLanguage, privacyPolicyUrl, termsUrl, type LegalLanguage } from './legal-language';
 
 export interface FirstRunSheetProps {
@@ -65,12 +67,23 @@ export interface FirstRunSheetProps {
 const BOX = 24;
 
 const styles = makeStyles((t) => ({
-  content: { paddingHorizontal: LAYOUT.gutter, paddingBottom: SPACE[4], gap: SPACE[4] },
+  // A grouped section keeps `gapBetweenGroups` under itself, the last one under the content too, so
+  // nothing else spaces them: a gap of the content's own as well left a 40 pt band between groups,
+  // which the fold could land in, and under the last one.
+  content: { paddingHorizontal: LAYOUT.gutter },
+  head: { gap: SPACE[4], marginBottom: LAYOUT.gapBetweenGroups },
   notice: { gap: SPACE[1] },
-  details: { gap: SPACE[3], paddingHorizontal: LAYOUT.listRowPaddingHorizontal, paddingBottom: SPACE[4] },
+  details: { gap: SPACE[3], paddingHorizontal: LAYOUT.listRowPaddingHorizontal, paddingBottom: LAYOUT.gapBetweenGroups },
   bullet: { flexDirection: 'row' as const, gap: SPACE[2] },
   bulletText: { flex: 1 },
-  termsLine: { flexDirection: 'row' as const, alignItems: 'center' as const, backgroundColor: t.colors['sheet-group'], borderRadius: RADII.lg.radius, borderCurve: 'continuous' as const },
+  termsLine: {
+    flexDirection: 'row' as const,
+    alignItems: 'center' as const,
+    backgroundColor: t.colors['sheet-group'],
+    borderRadius: RADII.lg.radius,
+    borderCurve: 'continuous' as const,
+    marginBottom: SPACE[3],
+  },
   termsCheck: {
     flex: 1,
     minHeight: LAYOUT.listRowMinHeight,
@@ -183,19 +196,26 @@ function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
   return (
     <KeyboardShell
       host="sheet"
+      footerShare={FIELDLESS_FOOTER_SHARE}
       contentContainerStyle={s.content}
       footer={
+        // The terms row sits with the action it unlocks: in reach whenever Agree is, never below the fold
+        // of a disabled button. With no field, the footer may take more of the window than a form's, so
+        // the three stay pinned on a small phone in every language at default size.
         <View style={s.footer}>
+          {termsDue ? <TermsRow language={language} accepted={accepted} onToggle={() => setAccepted((on) => !on)} /> : null}
           <Button label={consentDue ? copy.consentAgree : copy.firstRunContinue} variant="ink" disabled={termsDue && !accepted} onPress={onAgree} />
           <Button label={copy.consentDecline} variant="plain" onPress={onClose} />
         </View>
       }
     >
-      {lines.map((line) => (
-        <Notice key={line} message={line} />
-      ))}
-      <Text type="title2">{copy.consentTitle}</Text>
-      <Text color="text-2">{copy.firstRunLead}</Text>
+      <View style={s.head}>
+        {lines.map((line) => (
+          <Notice key={line} message={line} />
+        ))}
+        <Text type="title2">{copy.consentTitle}</Text>
+        <Text color="text-2">{copy.firstRunLead}</Text>
+      </View>
       <GroupedSection on="sheet">
         <GroupedRow icon="arrow-up" title={copy.firstRunSentTitle} subtitle={firstRunSentText(copy)} />
         <GroupedRow icon="phone" title={copy.firstRunStaysTitle} subtitle={copy.firstRunStays} />
@@ -209,7 +229,6 @@ function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
       <GroupedSection on="sheet">
         <GroupedRow title={copy.firstRunLanguage} trailing={{ kind: 'value', text: copy.legalLanguageSwitch }} onPress={() => onLanguageChange(otherLegalLanguage(language))} />
       </GroupedSection>
-      {termsDue ? <TermsRow language={language} accepted={accepted} onToggle={() => setAccepted((on) => !on)} /> : null}
     </KeyboardShell>
   );
 }

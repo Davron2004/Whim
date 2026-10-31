@@ -13,7 +13,8 @@
 // style sheet or script added), that Chromium plays the sampled `linear()` springs, that a keyed
 // list animates only the row that left and closes the gap while an index-keyed one stays still, and
 // that the off Switch track and the empty Slider track hold 3:1 against `surface` (WCAG 1.4.11) in
-// both schemes on both platforms. Not part of `invariants/` (owner-authored); the invariant it
+// both schemes on both platforms, and that the bundled Tip Splitter's segmented control keeps every
+// label inside its segment at 100% and 200% text on a 360-wide phone (issue #200). Not part of `invariants/` (owner-authored); the invariant it
 // motivates is drafted in openspec/changes/design-system-v1/invariant-proposal.md.
 //
 //   npm run build && node src/sdk/test/motion.desktop.mjs
@@ -92,6 +93,7 @@ function Home() {
 function Second() { return <Screen title="Second"><Text>Pushed</Text></Screen>; }
 export default defineApp({ name: 'Motion check', initial: 'Home', screens: { Home, Second }, capabilities: [] });
 `);
+const TIP_SPLITTER = await bundleSource(await readFile(join(ROOT, 'fixtures/tip-splitter.app.tsx'), 'utf8'));
 
 const dir = await mkdtemp(join(tmpdir(), 'whim-motion-'));
 const pageFile = join(dir, 'realm.html');
@@ -189,8 +191,8 @@ function check(name, ok, detail) {
   if (!ok) failures.push(name);
 }
 
-async function openRealm(browser, theme) {
-  const page = await browser.newPage({ viewport: { width: 420, height: 2400 } });
+async function openRealm(browser, theme, { app = APP, ready = 'Press me', viewport = { width: 420, height: 2400 } } = {}) {
+  const page = await browser.newPage({ viewport });
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e?.message || e)));
   // The outer page relays every realm frame to RN; keep them, to know when the runtime's own
@@ -204,9 +206,9 @@ async function openRealm(browser, theme) {
   await page.goto(pathToFileURL(pageFile).href, { waitUntil: 'load', timeout: 20000 });
   await page.evaluate(({ src, th }) => globalThis.__whimControl.reinject({
     reset: true, bundle: 'motion-check', bundleSource: src, generation: 2, theme: th,
-  }), { src: APP, th: theme });
+  }), { src: app, th: theme });
   const realm = () => page.frames().find((f) => f !== page.mainFrame());
-  await until(async () => (await realm()?.evaluate(() => document.body.textContent.includes('Press me')).catch(() => false)) === true);
+  await until(async () => (await realm()?.evaluate((text) => document.body.textContent.includes(text), ready).catch(() => false)) === true);
   const probed = await until(() => page.evaluate(() => window.__relayed.some((f) => f.kind === 'probes')));
   if (!probed) throw new Error('the realm never reported its containment probes');
   // The probes' own CSP reports are queued as tasks after their verdict: let them land first.
@@ -378,6 +380,52 @@ async function pushPop({ tag, realm, pair }) {
   check(`${tag} pop: back on the first screen`, await realm.evaluate(() => window.__probe.find.text('Press me') && !window.__probe.find.text('Pushed')), 'wrong screen');
 }
 
+/** The bundled Tip Splitter's segmented control on a 360-wide Android phone at `fontScale` (issue
+ *  #200; system.md §6): every label inside its own segment, no segment over another, and each one a
+ *  full target that selects with a real tap and moves the thumb to it on the spring. */
+async function segmentsAtScale(browser, fontScale) {
+  const tag = `android/light/${Math.round(fontScale * 100)}% segmented control:`;
+  const theme = { platform: 'android', scheme: 'light', reduceMotion: false, tint: 'purple', fontScale, increaseContrast: false };
+  const { page, realm, errors } = await openRealm(browser, theme, { app: TIP_SPLITTER, ready: 'Per person', viewport: { width: 360, height: 1600 } });
+  const layout = () => realm.evaluate(() => {
+    const edges = (r) => ({ left: r.left, right: r.right, top: r.top, bottom: r.bottom });
+    const group = document.querySelector('[role="radiogroup"]');
+    const segments = [...group.querySelectorAll('[role="radio"]')].map((radio) => {
+      const range = document.createRange();
+      range.selectNodeContents(radio);
+      return { label: radio.textContent, checked: radio.getAttribute('aria-checked') === 'true', box: edges(radio.getBoundingClientRect()), text: edges(range.getBoundingClientRect()) };
+    });
+    return { segments, group: edges(group.getBoundingClientRect()), thumb: edges(group.children[1].getBoundingClientRect()) };
+  });
+  const within = (inner, outer) => inner.left >= outer.left - 0.5 && inner.right <= outer.right + 0.5 && inner.top >= outer.top - 0.5 && inner.bottom <= outer.bottom + 0.5;
+  const overlap = (a, b) => Math.min(a.right, b.right) - Math.max(a.left, b.left) > 0.5 && Math.min(a.bottom, b.bottom) - Math.max(a.top, b.top) > 0.5;
+
+  const before = await layout();
+  const { segments } = before;
+  check(`${tag} one radio per option, the app's value checked`, JSON.stringify(segments.map((s) => s.label)) === JSON.stringify(['10%', '15%', '20%', '25%']) && segments.filter((s) => s.checked).map((s) => s.label).join() === '20%', JSON.stringify(segments));
+  const spilled = segments.filter((s) => !within(s.text, s.box));
+  check(`${tag} every label is drawn inside its own segment`, spilled.length === 0, JSON.stringify(spilled));
+  const outside = segments.filter((s) => !within(s.box, before.group) || s.box.right > 360);
+  check(`${tag} every segment is inside the control and on screen`, outside.length === 0, JSON.stringify({ group: before.group, outside }));
+  const crossed = segments.flatMap((a, i) => segments.slice(i + 1).filter((b) => overlap(a.box, b.box)).map((b) => `${a.label}/${b.label}`));
+  check(`${tag} no segment lies over another`, crossed.length === 0, crossed.join(', '));
+  const small = segments.filter((s) => s.box.bottom - s.box.top < 48 || s.box.right - s.box.left < 48);
+  check(`${tag} every segment is a 48 target`, small.length === 0, JSON.stringify(small));
+  if (fontScale === 1) check(`${tag} at 100% the options share one line`, segments.every((s) => s.box.top === segments[0].box.top), JSON.stringify(segments));
+
+  await realm.getByRole('radio', { name: '10%' }).click();
+  const translate = await realm.evaluate(() => getComputedStyle(document.querySelector('[role="radiogroup"]').children[1]).translate);
+  check(`${tag} a tap springs the thumb from where it was (translate ${translate})`, translate !== 'none' && translate !== '' && translate.split(' ').some((v) => Number.parseFloat(v) !== 0), translate);
+  await sleep(600);
+  await settle(realm);
+  const after = await layout();
+  const picked = after.segments.find((s) => s.label === '10%');
+  check(`${tag} the tapped option is the checked one`, after.segments.filter((s) => s.checked).map((s) => s.label).join() === '10%', JSON.stringify(after.segments));
+  check(`${tag} and the thumb rests under it`, within(after.thumb, picked.box), JSON.stringify({ thumb: after.thumb, picked }));
+  check(`${tag} no page error`, errors.length === 0, errors.join('; '));
+  await page.close();
+}
+
 /** One theme: every moment, and the facts about this realm. */
 async function runTheme(browser, theme) {
   const tag = `${theme.platform}/${theme.scheme}/${theme.reduceMotion ? 'reduced' : 'full'}`;
@@ -427,6 +475,7 @@ try {
   ]) {
     await runTheme(browser, { ...theme, tint: 'purple', fontScale: 1, increaseContrast: false });
   }
+  for (const fontScale of [1, 2]) await segmentsAtScale(browser, fontScale);
 } finally {
   await browser.close();
   await rm(dir, { recursive: true, force: true });

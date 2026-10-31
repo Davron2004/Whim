@@ -14,7 +14,16 @@ import { Text } from '../../ui/Text';
 import { Button } from '../../ui/Button';
 import { BackButton, IconButton } from '../../ui/IconButton';
 import { Chip } from '../../ui/Chip';
+import { GroupedRow, GroupedSection } from '../../ui/GroupedList';
+import { Sheet } from '../../ui/Sheet';
 import { haptics } from '../../haptics';
+import { contrastRatio } from '../../../design/tints';
+import { COPY } from '../copy';
+import { ReportPage } from '../ReportScreen';
+import { reportClientOptions } from '../transport-shared';
+import type { InstalledApp } from '../app-index';
+import type { StoreAccess } from '../store-access';
+import { testAppInfo } from './client-fixtures';
 import { COLORS, LAYOUT, ON_TINT, SPRINGS, TIMINGS, TINTS, type ColorRole, type Scheme, type TypeToken } from '../../../design/tokens';
 import { ICON_PATHS } from '../../../design/icons/paths';
 import type { ButtonVariant } from '../../ui/tokens-pure';
@@ -345,4 +354,97 @@ export async function runShellControlsUiTests(h: Harness): Promise<void> {
     h.eq([hapticCalls.splice(0), suggested, one(suggestion, 'Pressable').props.accessibilityRole], [[], 1, 'button'], 'a suggestion is a plain button tap');
     await unmountScreen(suggestion);
   });
+
+  await h.test('a switch row: its track holds 3:1 on the group it sits in and its knob 3:1 on the track and, where Android’s overhangs it, on the group, on and off, on the canvas and in a sheet, in both schemes, on both platforms', async () => {
+    const short: string[] = [];
+    for (const os of ['ios', 'android'] as const) {
+      for (const scheme of ['light', 'dark'] as const) {
+        for (const on of ['canvas', 'sheet'] as const) {
+          short.push(...(await switchShortfalls({ os, scheme, on, value: false })), ...(await switchShortfalls({ os, scheme, on, value: true })));
+        }
+      }
+    }
+    h.eq(short, [], 'every part of every switch stands 3:1 off what it sits on');
+    await resetPhone();
+  });
+
+  await h.test('the Report page in a sheet draws its groups (the include switch, What gets sent) on sheet-group, in both schemes: in dark a canvas group is the sheet’s own colour and shows no fill', async () => {
+    for (const scheme of ['light', 'dark'] as const) {
+      await resetPhone();
+      await act(() => setColorScheme(scheme));
+      const tree = await renderScreen(
+        <Sheet visible title={COPY.reportScreenTitle} onClose={() => {}}>
+          <ReportPage app={REPORTED_APP} access={reportAccess} options={reportClientOptions({ kind: 'absent' }, 'https://server.test', 'device', testAppInfo)} onLeave={() => {}} onUpdateRequired={() => {}} legalLanguage="en" />
+        </Sheet>,
+      );
+      await TestRenderer.act(async () => { await new Promise((r) => setImmediate(r)); });
+      h.ok(all(tree, 'Switch').length === 1, `${scheme}: the include switch shows for an app with words to include`);
+      // What gets sent shows once there is a report to send: a reason picked.
+      await press(all(tree, 'Pressable').find((n) => n.props.accessibilityLabel === COPY.reportReasonBroken)!);
+      const fills = all(tree, 'Pressable')
+        .filter((n) => n.props.accessibilityLabel === COPY.reportIncludePrompt || n.props.accessibilityLabel === COPY.reportPreviewTitle)
+        .map(groupFillOf);
+      h.eq(fills, [COLORS[scheme]['sheet-group'], COLORS[scheme]['sheet-group']], `${scheme}: both groups are sheet-group`);
+      await unmountScreen(tree);
+    }
+    await resetPhone();
+  });
+}
+
+/** An app with the words it was made from, so the Report form offers to include them. */
+const REPORTED_APP: InstalledApp = {
+  id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main',
+  record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } },
+};
+const reportAccess = { activeWords: async () => ({ prompt: 'A timer for my tea', source: 'export default 1;' }) } as unknown as StoreAccess;
+
+/** The fill of the group `node` sits in: the nearest view around it that paints one. */
+function groupFillOf(node: Node): string | undefined {
+  for (let up = node.parent; up; up = up.parent) {
+    if (hostType(up) !== 'View') continue;
+    const fill = style(up).backgroundColor;
+    if (typeof fill === 'string') return fill;
+  }
+  return undefined;
+}
+
+/** Every part of a switch row's switch, on `os` in `scheme` on the `on` surface, set to `value`, that
+ *  stands less than 3:1 off what it sits on: its track on the group, its knob on its track. */
+async function switchShortfalls({ os, scheme, on, value }: Readonly<{ os: 'ios' | 'android'; scheme: Scheme; on: 'canvas' | 'sheet'; value: boolean }>): Promise<string[]> {
+  await resetPhone();
+  Platform.OS = os;
+  await act(() => setColorScheme(scheme));
+  const tree = await renderScreen(
+    <GroupedSection on={on}>
+      <GroupedRow title="Include what I asked for" trailing={{ kind: 'switch', value, onValueChange: () => {} }} />
+    </GroupedSection>,
+  );
+  const look = switchLook(one(tree, 'Switch'), value);
+  await unmountScreen(tree);
+  const where = `${os} ${scheme} on the ${on}, ${value ? 'on' : 'off'}`;
+  const pairs: [string, string, string][] = [['track on the group', look.track, look.group], ['knob on the track', look.knob, look.track]];
+  // A knob taller than its track overhangs it onto the group: there it sits on the group too.
+  const { knob, track } = SWITCH_GEOMETRY[os];
+  if (knob > track) pairs.push(['knob where it overhangs the track, on the group', look.knob, look.group]);
+  return pairs.flatMap(([what, fg, bg]) => {
+    const ratio = contrastRatio(fg, bg);
+    return ratio < 3 ? [`${where}: ${what} ${fg} on ${bg} is ${ratio.toFixed(2)}:1`] : [];
+  });
+}
+
+/** The platform switch's knob diameter and track height, in pt/dp. Android's (AppCompat `SwitchCompat`,
+ *  which React Native's Switch is) measured on the Android 17 emulator: a 20 dp knob over a 14 dp track,
+ *  3 dp proud of it above and below. iOS's knob sits inside its track. */
+const SWITCH_GEOMETRY = { android: { knob: 20, track: 14 }, ios: { knob: 27, track: 31 } } as const;
+
+/** What a switch draws, as the platform draws it: the track for `value` (iOS paints the off track
+ *  from `ios_backgroundColor`), the knob (white unless told otherwise), and the group under it. */
+function switchLook(node: Node, value: boolean): { track: string; knob: string; group: string } {
+  const tracks = (node.props.trackColor ?? {}) as { true?: string; false?: string };
+  const off = Platform.OS === 'ios' ? (node.props.ios_backgroundColor ?? tracks.false) : tracks.false;
+  return {
+    track: String((value ? tracks.true : off) ?? '#FFFFFF'),
+    knob: String(node.props.thumbColor ?? '#FFFFFF'),
+    group: String(groupFillOf(node)),
+  };
 }

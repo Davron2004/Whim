@@ -26,7 +26,7 @@ import type { InstalledApp } from '../app-index';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { consentRequiredRefusal } from '../../../../server/src/admission/refusals';
-import { androidBack, button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
+import { androidBack, boundWebView, button, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
 import { composeAndContinue, firstRunOpen, json, onHome, settle, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
 import { Linking, Platform, StyleSheet, holdModalDismissals, injectedScripts, modalPresentations, setColorScheme, windowMetrics } from './native-host';
 
@@ -52,7 +52,7 @@ function tipSplitter(tree: Tree): InstalledApp | undefined {
 /** Let the running app's page finish loading (its WebView, not the one waiting unseen beside it),
  *  so the shell delivers its bundle. */
 async function loadAppPage(tree: Tree): Promise<void> {
-  await TestRenderer.act(async () => tree.root.find((node) => hostType(node) === 'WebView' && node.props.pointerEvents !== 'none').props.onLoadEnd());
+  await TestRenderer.act(async () => boundWebView(tree).props.onLoadEnd());
 }
 
 /** Home's composer row: the first data-sending action spec terms-acceptance names. */
@@ -285,12 +285,11 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
   });
 
   await h.test('terms gate: a report sent with neither record sends exactly that report, and no first-run sheet appears', async () => {
-    const { timeline, activeId, activeDescription, activeSource } = StoreAccess.prototype;
-    const original = { timeline, activeId, activeDescription, activeSource };
+    const { timeline, activeId, activeWords } = StoreAccess.prototype;
+    const original = { timeline, activeId, activeWords };
     StoreAccess.prototype.timeline = async () => [];
     StoreAccess.prototype.activeId = async () => null;
-    StoreAccess.prototype.activeDescription = async () => 'A tea timer';
-    StoreAccess.prototype.activeSource = async () => 'export default {}';
+    StoreAccess.prototype.activeWords = async () => ({ prompt: 'A tea timer', source: 'export default {}' });
     try {
       await withLauncher({ terms: false, consent: false, apps: [APP], server: () => json({ reportId: 'r-1' }, 202) }, async ({ tree, sent, probes }) => {
         await TestRenderer.act(async () => home(tree).props.onHistory(APP));
@@ -373,7 +372,7 @@ export async function runTermsFlowUiTests(h: Harness): Promise<void> {
       const scroll = () => tree.root.find((n) => hostType(n) === 'ScrollView');
       const strays = () => strayTouches(scroll());
       const notNow = () => button(tree, LEGAL_COPY.fr.consentDecline);
-      h.ok(within(button(tree, LEGAL_COPY.fr.firstRunTermsCheck), scroll()) && scroll().findAll((n) => hostType(n) === 'Text').length > 5, 'setup: the sheet’s words and its terms row are in the scroll view');
+      h.ok(within(button(tree, LEGAL_COPY.fr.firstRunLanguage + ', ' + LEGAL_COPY.fr.legalLanguageSwitch), scroll()) && scroll().findAll((n) => hostType(n) === 'Text').length > 5, 'setup: the sheet’s words and its rows are in the scroll view');
       h.eq(strays(), [], 'a touch on any view in the scroll view — a word, a row that does nothing, the space between groups — is answered inside it');
       h.ok(touchAnswerer(scroll()) === null, 'and a touch on the gutters, the scroll view’s own padding, is answered by no view around it');
       h.ok(!within(notNow(), scroll()), 'setup: the footer starts pinned under the scroll view');

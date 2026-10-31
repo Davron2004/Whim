@@ -155,7 +155,7 @@ export async function runReportPayloadTests(h: Harness): Promise<void> {
     const store = createMemoryStore({ autoCompact: false, now: () => (t += 1000) });
     const index = new AppIndex(new MapKVBackend());
     const access = new StoreAccess({ store, index, deleteStorage: () => {}, now: () => (t += 1000) });
-    return { access };
+    return { access, store };
   }
 
   await h.test('reportDraftFor: an app with stored source starts with its prompt and code present', async () => {
@@ -192,5 +192,26 @@ export async function runReportPayloadTests(h: Harness): Promise<void> {
     h.ok(!('sourceIncluded' in draft), 'there is no code switch for a legacy app');
     const request = buildReportRequest({ ...draft, reason: 'broken' });
     h.ok(request !== null && !('source' in request), 'an absent source never reaches the built request, reason chosen or not');
+  });
+
+  await h.test('reportDraftFor: the prompt and the code come from one version, even when a new version lands while the draft is read', async () => {
+    const { access, store } = harnessAccess();
+    const entry = await access.install({
+      id: 'habit-tracker', name: 'Habit Tracker', record: REC('habit-tracker'), bundleSource: 'BUNDLE_V1', source: 'CODE_V1', prompt: 'words of version 1',
+    });
+    // A version lands right after the first read of the active version.
+    const active = store.active.bind(store);
+    let landed = false;
+    store.active = async (repo) => {
+      const read = await active(repo);
+      if (!landed) {
+        landed = true;
+        await store.snapshot(repo, { 'bundle.js': 'BUNDLE_V2', 'source.ts': 'CODE_V2' }, 'words of version 2');
+      }
+      return read;
+    };
+    const draft = await reportDraftFor(entry, access);
+    h.ok(landed, 'setup: a version landed during the read');
+    h.eq([draft.prompt, draft.source], ['words of version 1', 'CODE_V1'], 'the words and the code of the version that was current when the draft read it');
   });
 }

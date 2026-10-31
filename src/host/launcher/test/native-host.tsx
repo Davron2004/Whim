@@ -142,8 +142,9 @@ export function Modal(props: HostProps) {
   if (!visible && !(ios && kept)) return null;
   return React.createElement('Modal', props, React.createElement(PresenterContext.Provider, { value: self }, props.children));
 }
-export function FlatList({ data, renderItem, ...props }: HostProps & { data: unknown[]; renderItem: (args: { item: unknown; index: number }) => React.ReactNode }) {
-  return React.createElement('FlatList', props, data.map((item, index) => React.createElement(React.Fragment, { key: index }, renderItem({ item, index }))));
+export function FlatList({ data, renderItem, ListHeaderComponent, ...props }: HostProps & { data: unknown[]; renderItem: (args: { item: unknown; index: number }) => React.ReactNode; ListHeaderComponent?: React.ReactElement }) {
+  const items = data.map((item, index) => React.createElement(React.Fragment, { key: index }, renderItem({ item, index })));
+  return React.createElement('FlatList', props, ListHeaderComponent, ...items);
 }
 /** The app's state, as `AppState` reports it; `setAppState` plays a change to every listener. */
 const appStateListeners = new Set<(state: string) => void>();

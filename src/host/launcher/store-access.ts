@@ -22,8 +22,9 @@
  * → one safe switch on first use. Operations on DIFFERENT repos stay fully concurrent.
  */
 
-import type { VersionStore, Snapshot, Pin, FileChange } from '../version-store';
-import type { AppRecord } from '../bridge/contract';
+import type { VersionStore, Snapshot, SnapshotContent, Pin, FileChange } from '../version-store';
+import type { AppManifest, AppRecord } from '../bridge/contract';
+import type { SchemaArtifact } from '../storage-engine/contract';
 import { AppIndex, InstalledApp } from './app-index';
 import { parsePromptEnvelope } from './prompt-envelope';
 import { assignedTile, copyTile, declaredTile, resolveTileRequest, type TileRequest } from './tile-identity';
@@ -75,8 +76,6 @@ export interface InstallSpec {
   /** The structured prompt tracked as snapshot #1 (honest product string; surfaces in #6). */
   prompt: string;
   example?: boolean;
-  /** Optional storage-engine schema artifact, written alongside `bundle.js` when supplied (D7). */
-  schemaJson?: string;
   /** How the entry gets its tile. Absent: assigned from `record.manifest`'s declaration. */
   tile?: TileRequest;
 }
@@ -87,14 +86,99 @@ export interface UpdateSpec {
   bundleSource: string;
   /** The original TypeScript the bundle was compiled from (#52-D5 / D14) — see `InstallSpec.source`. */
   source?: string;
-  /** Optional storage-engine schema artifact, written alongside `bundle.js` when supplied (D7). */
-  schemaJson?: string;
   /** The structured prompt tracked as this snapshot (honest product string; surfaces in #6). */
   prompt: string;
 }
 
 function messageOf(e: unknown): string {
   return e instanceof Error ? e.message : String(e);
+}
+
+/** The files a version is saved as: its code, its original source when there is one, and the
+ *  manifest and schema the bridge runs it with (`manifest.json`, `schema.json`: decision #36's repo
+ *  contents). Both come from the record the version was built with and nowhere else, so the schema
+ *  file exists exactly when the record declares a schema. The manifest is saved without the tile
+ *  colour: that is the host's, kept on the app, never moved by a version (`versionRecord`). */
+function versionFiles(spec: { record: AppRecord; bundleSource: string; source?: string }): Record<string, string> {
+  const manifest = { ...spec.record.manifest };
+  delete manifest.tileColor;
+  return {
+    'bundle.js': spec.bundleSource,
+    ...(spec.source != null ? { 'source.ts': spec.source } : {}),
+    'manifest.json': JSON.stringify(manifest),
+    ...(spec.record.schemaArtifact != null ? { 'schema.json': JSON.stringify(spec.record.schemaArtifact) } : {}),
+  };
+}
+
+/** What a saved version declares about itself (`versionFiles`): its manifest and, when it declares
+ *  storage, its schema. `null` for a version saved before versions kept their manifest. */
+interface VersionDeclaration {
+  manifest: AppManifest;
+  schemaArtifact?: SchemaArtifact;
+}
+
+/** Reads `version`'s declaration. Throws when its files cannot be parsed — callers read it before
+ *  anything moves, so a damaged version is refused while the app is still where it was. */
+function versionDeclaration(version: SnapshotContent): VersionDeclaration | null {
+  const manifestFile = version.artifacts['manifest.json'];
+  if (manifestFile == null) return null;
+  const manifest = JSON.parse(manifestFile) as AppManifest;
+  delete manifest.tileColor; // a version saved before the colour was left out of its manifest
+  const schemaFile = version.artifacts['schema.json'];
+  return { manifest, ...(schemaFile != null ? { schemaArtifact: JSON.parse(schemaFile) as SchemaArtifact } : {}) };
+}
+
+/**
+ * The record a version runs with: what it declares (`versionDeclaration`) over the host's own fields
+ * of `current` (the app id, its name, and the tile colour, which a version switch never moves).
+ *
+ * KNOWN LIMITATION (pre-release, accepted — decision #81): a version saved before versions kept
+ * their manifest (`declared` null) runs with `current` unchanged, which is whatever record the app
+ * holds now — possibly a later version's. Its own manifest was never saved, so there is nothing
+ * truer to run it with.
+ *
+ * The schema is the version's own declared artifact, never the store's: the engine keeps the
+ * accumulated union in `_meta`, so an older version opens its store as an older subset — no DDL,
+ * nothing dropped — and the fields a later version added stay in the store, unnamed by the older
+ * code and so unused by it, until a version that names them runs again.
+ */
+function versionRecord(current: AppRecord, declared: VersionDeclaration | null): AppRecord {
+  if (declared == null) return current;
+  const manifest = { ...declared.manifest };
+  if (current.manifest.tileColor !== undefined) manifest.tileColor = current.manifest.tileColor;
+  return {
+    appId: current.appId,
+    name: current.name,
+    manifest,
+    ...(declared.schemaArtifact != null ? { schemaArtifact: declared.schemaArtifact } : {}),
+  };
+}
+
+/** `value` as JSON with every object's keys sorted, so two records that say the same compare equal. */
+function canonicalJson(value: unknown): string {
+  return JSON.stringify(value, (_key, v: unknown) =>
+    v !== null && typeof v === 'object' && !Array.isArray(v)
+      ? Object.fromEntries(Object.entries(v as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : 1)))
+      : v,
+  );
+}
+
+/** What a launch runs (`StoreAccess.activeLaunch`): the app as the index holds it, carrying the
+ *  record its active version runs with; that version's code; and its id. */
+export interface ActiveLaunch {
+  app: InstalledApp;
+  source: string;
+  versionId: string;
+}
+
+/** What a change of an app is made from (`StoreAccess.activeEdit`): the app carrying the record its
+ *  active version runs with, that version's original TypeScript when it has one (`source.ts`, never
+ *  the bundle), the words that made it, and its id. */
+export interface ActiveEdit {
+  app: InstalledApp;
+  source?: string;
+  description?: string;
+  versionId: string;
 }
 
 /** The version-store repo an entry reads/writes (its own id for originals; the shared repo for forks). */
@@ -117,6 +201,8 @@ export class StoreAccess {
   private readonly repoLineage = new Map<string, string>();
   /** repoId → the tail of that repo's in-flight operation chain (see `serial`). */
   private readonly chains = new Map<string, Promise<unknown>>();
+  /** repoId → version id → the schema that version declares (`schemaOf`); dropped with the repo. */
+  private readonly schemas = new Map<string, Map<string, SchemaArtifact | null>>();
 
   constructor(opts: StoreAccessOptions) {
     this.store = opts.store;
@@ -135,7 +221,7 @@ export class StoreAccess {
    * per-repo lineage cache, `switchLineage`s the repo HEAD, then reads/writes through that HEAD —
    * and one repo is shared by an original and all of its forks, which are DIFFERENT launcher ids.
    * The launcher's per-app busy gate (`app-busy.ts`) is keyed by launcher id, so it does not
-   * serialize them: an un-awaited call on a fork (the prompt flow's `activeDescription`) can
+   * serialize them: an un-awaited call on a fork (the prompt flow's `activeEdit`) can
    * interleave with an "Open" on the original, and the loser's read lands on the other lineage's
    * snapshot — wrong data, silently. Chaining each operation onto the previous one for the same
    * repo makes switch + read atomic against every other operation on that repo. Different repos
@@ -183,15 +269,7 @@ export class StoreAccess {
    */
   async install(spec: InstallSpec): Promise<InstalledApp> {
     return this.serial(spec.id, async () => {
-      await this.store.snapshot(
-        spec.id,
-        {
-          'bundle.js': spec.bundleSource,
-          ...(spec.source != null ? { 'source.ts': spec.source } : {}),
-          ...(spec.schemaJson != null ? { 'schema.json': spec.schemaJson } : {}),
-        },
-        spec.prompt,
-      );
+      await this.store.snapshot(spec.id, versionFiles(spec), spec.prompt);
       this.repoLineage.set(spec.id, 'main');
       // Assigned against the index as it is NOW, with no await before the write below, so two
       // installs landing together cannot both take the same free tint.
@@ -226,15 +304,7 @@ export class StoreAccess {
   async update(entry: InstalledApp, spec: UpdateSpec): Promise<InstalledApp> {
     return this.serial(storeIdOf(entry), async () => {
       await this.ensureLineage(entry);
-      await this.store.snapshot(
-        storeIdOf(entry),
-        {
-          'bundle.js': spec.bundleSource,
-          ...(spec.source != null ? { 'source.ts': spec.source } : {}),
-          ...(spec.schemaJson != null ? { 'schema.json': spec.schemaJson } : {}),
-        },
-        spec.prompt,
-      );
+      await this.store.snapshot(storeIdOf(entry), versionFiles(spec), spec.prompt);
       // `entry.name` is deliberately NOT refreshed from `spec.record.name` here (they can differ —
       // `mapWireRecord` sets `record.name = wire.name`). `app.name` is what tile-colour resolution
       // hashes for a record with no declared/injected colour (`tiles.ts#tileColor` -> `fallbackTint(name)`
@@ -262,34 +332,79 @@ export class StoreAccess {
     });
   }
 
-  /** The active snapshot's ORIGINAL TypeScript source for an entry (#52-D5 / D14) — the genuine
-   *  `source.ts` artifact, never `activeBundle`'s compiled `bundle.js`. Returns `undefined` when
-   *  this snapshot predates source tracking: absence is a legitimate legacy state, reported
-   *  honestly, never silently substituted with the bundle. */
-  async activeSource(entry: InstalledApp): Promise<string | undefined> {
+  /**
+   * What a launch of `entry` runs (decision #81): its active version's code and the record that
+   * version runs with (`versionRecord`), read together in one `serial` section, so no version switch
+   * can land between them. The record comes from the version, never from the caller's `entry` — a
+   * copy of it can be older than an Undo that has landed since — and the host's own fields from the
+   * index as it is now. When the index holds another record for the entry (a write that failed after
+   * the version moved), the derived one is written down, so every other reader agrees again; that
+   * write failing does not stop the launch.
+   */
+  async activeLaunch(entry: InstalledApp): Promise<ActiveLaunch> {
     return this.serial(storeIdOf(entry), async () => {
-      await this.ensureLineage(entry);
-      const active = await this.store.active(storeIdOf(entry));
-      return active?.artifacts['source.ts'];
+      const { active, app } = await this.readActive(entry);
+      const source = active.artifacts['bundle.js'];
+      if (source == null) throw new Error(`no active bundle for "${entry.id}"`);
+      return { app, source, versionId: active.id };
     });
   }
 
   /**
-   * The prompt that produced this entry's CURRENT version, as the user's own words — read-only,
-   * best-effort context for a re-prompt (`generation-request.ts#buildRewriteAppContext`'s
-   * `description`, sent to both the clarify and rewrite calls). Resolved through
-   * `parsePromptEnvelope` the same way `history-logic.ts#buildHistoryRows` reads a snapshot's
-   * prompt, so a v1 envelope or a raw legacy string reads exactly as honestly here as there.
-   * `undefined` when the entry has never snapshotted — a legitimate state, never an error; callers
-   * decide what "no description" means for their own request (`buildRewriteAppContext` omits the
-   * field entirely).
+   * What a change of `entry` is made from: its ACTIVE version's original source and words and the
+   * record that version runs with, read together in one `serial` section exactly as `activeLaunch`
+   * reads a launch, so a change request never describes one version's code with another's manifest
+   * (a caller's copy of the entry can be older than an Undo, or than a record write that failed).
+   *
+   * The active version, not the one a running realm happens to show: delivery builds on the active
+   * version (`build-lifecycle.ts#deliverResult` updates it at the tip, or continues from it behind
+   * the tip), so the request describes the version the change will follow. A running app is behind
+   * the active version only when a change landed and was not reloaded (or a switch landed over it);
+   * changing the code it shows would silently drop that landed change from the app's line.
    */
-  async activeDescription(entry: InstalledApp): Promise<string | undefined> {
+  async activeEdit(entry: InstalledApp): Promise<ActiveEdit> {
+    return this.serial(storeIdOf(entry), async () => {
+      const { active, app } = await this.readActive(entry);
+      const source = active.artifacts['source.ts'];
+      return {
+        app,
+        ...(source != null ? { source } : {}),
+        description: parsePromptEnvelope(active.prompt).text,
+        versionId: active.id,
+      };
+    });
+  }
+
+  /** The active version of `entry` and the app carrying the record it runs with (`versionRecord`), the
+   *  record written down when the index holds another. Runs inside the caller's `serial(repo)`. */
+  private async readActive(entry: InstalledApp): Promise<{ active: SnapshotContent; app: InstalledApp }> {
+    await this.ensureLineage(entry);
+    const active = await this.store.active(storeIdOf(entry));
+    if (active == null) throw new Error(`no active version for "${entry.id}"`);
+    const current = this.index.get(entry.id);
+    const app = current ?? entry;
+    const record = versionRecord(app.record, versionDeclaration(active));
+    if (current != null && canonicalJson(current.record) !== canonicalJson(record)) this.writeRecord(current, record);
+    return { active, app: { ...app, record } };
+  }
+
+  /**
+   * What a report on `entry` offers of its CURRENT version (`report-payload.ts#reportDraftFor`): the
+   * prompt that produced it, as the user's own words (through `parsePromptEnvelope`, as
+   * `history-logic.ts#buildHistoryRows` reads a snapshot's prompt, so a v1 envelope or a raw legacy
+   * string reads as honestly here as there), and its ORIGINAL TypeScript (#52-D5 / D14: the genuine
+   * `source.ts` artifact, never `activeBundle`'s compiled `bundle.js`). Read from one version in one
+   * `serial` section, so a report never pairs one version's words with another's code. `source` is
+   * absent when the version predates source tracking, and both when the entry never snapshotted:
+   * legitimate states, reported honestly, never an error or a substitute.
+   */
+  async activeWords(entry: InstalledApp): Promise<{ prompt?: string; source?: string }> {
     return this.serial(storeIdOf(entry), async () => {
       await this.ensureLineage(entry);
       const active = await this.store.active(storeIdOf(entry));
-      if (active == null) return undefined;
-      return parsePromptEnvelope(active.prompt).text;
+      if (active == null) return {};
+      const source = active.artifacts['source.ts'];
+      return { prompt: parsePromptEnvelope(active.prompt).text, ...(source != null ? { source } : {}) };
     });
   }
 
@@ -309,12 +424,82 @@ export class StoreAccess {
     });
   }
 
-  /** Move this entry's active snapshot (non-destructive — later snaps stay reachable) (D6). */
+  /** Move this entry's active snapshot (non-destructive — later snaps stay reachable) (D6), and the
+   *  entry's record with it: the app runs that version with the manifest and schema it was saved
+   *  with (`versionRecord`). The version is read before anything moves, so one that cannot be read
+   *  is refused with the app where it was. The record is read from the index as it is now, so
+   *  nothing set on the entry since the caller read it is undone, and an entry removed meanwhile is
+   *  not written back. The index write is a copy: when it fails the switch still stands and is
+   *  reported, and the next launch, which derives the record from the version (`activeLaunch`),
+   *  writes it down. */
   async rollback(entry: InstalledApp, snapshotId: string): Promise<{ activeId: string }> {
-    return this.serial(storeIdOf(entry), async () => {
+    const repo = storeIdOf(entry);
+    return this.serial(repo, async () => {
       await this.ensureLineage(entry);
-      return this.store.rollback(storeIdOf(entry), snapshotId);
+      const declared = versionDeclaration(await this.store.getSnapshot(repo, snapshotId));
+      const moved = await this.store.rollback(repo, snapshotId);
+      const current = this.index.get(entry.id);
+      if (current != null) this.writeRecord(current, versionRecord(current.record, declared));
+      return moved;
     });
+  }
+
+  /** Write `entry` down running `record`, with the tile it shows (as `update` does), so a record from
+   *  before tints keeps showing the tile it showed. Only ever a copy of what the version declares, so
+   *  a failure is logged, not thrown: the next launch derives the record again and retries. */
+  private writeRecord(entry: InstalledApp, record: AppRecord): void {
+    const { tint, icon } = assignedTile(entry);
+    try {
+      this.index.put({ ...entry, record, tint, icon });
+    } catch (e) {
+      log.warn(CHANNELS.app, 'an app record could not be written down', { appId: entry.id, detail: messageOf(e) });
+    }
+  }
+
+  /**
+   * The schema every saved version declares, of every app whose code opens `entry`'s store: each
+   * entry of `entry`'s repo in its storage group (a rewind continuation shares it), over each one's
+   * whole timeline, so it includes versions delivered and never opened and the ones a rollback left
+   * behind. A version saved before versions kept their schema contributes nothing. A change request
+   * sends the fields these declare that the store does not hold (`generation-request.ts`).
+   *
+   * A version never changes once saved, so each one's schema is read once per repo and kept
+   * (`schemaOf`): a change request reads only the versions saved since the last one, rather than
+   * every file of every version while it holds the repo.
+   */
+  async declaredSchemas(entry: InstalledApp): Promise<SchemaArtifact[]> {
+    const repo = storeIdOf(entry);
+    const group = this.engineAppId(entry);
+    return this.serial(repo, async () => {
+      const sharers = this.index.list().filter((e) => e.id !== entry.id && storeIdOf(e) === repo && this.engineAppId(e) === group);
+      const seen = new Set<string>();
+      const schemas: SchemaArtifact[] = [];
+      for (const member of [entry, ...sharers]) {
+        await this.ensureLineage(member);
+        for (const { id } of await this.store.timeline(repo, { limit: Number.POSITIVE_INFINITY })) {
+          if (seen.has(id)) continue;
+          seen.add(id);
+          const schema = await this.schemaOf(repo, id);
+          if (schema != null) schemas.push(schema);
+        }
+      }
+      return schemas;
+    });
+  }
+
+  /** The schema version `id` of `repo` declares (`null`: none, or saved before versions kept it),
+   *  read from the store the first time only. Runs inside the caller's `serial(repo)`. */
+  private async schemaOf(repo: string, id: string): Promise<SchemaArtifact | null> {
+    let kept = this.schemas.get(repo);
+    if (kept == null) {
+      kept = new Map();
+      this.schemas.set(repo, kept);
+    }
+    const known = kept.get(id);
+    if (known !== undefined) return known;
+    const schema = versionDeclaration(await this.store.getSnapshot(repo, id))?.schemaArtifact ?? null;
+    kept.set(id, schema);
+    return schema;
   }
 
   /** Label a snapshot (D6/D8): re-pinning an existing label MOVES it (last write wins) —
@@ -353,34 +538,48 @@ export class StoreAccess {
   }
 
   /** Fork `entry`'s lineage in the version store from `versionId` (or its active snapshot) and
-   *  return the new lineage. Runs inside the caller's `serial(repo)` section. */
-  private async forkLineage(entry: InstalledApp, repo: string, versionId: string | undefined): Promise<string> {
+   *  return the new lineage with what the version it starts from declares, read before the fork.
+   *  Runs inside the caller's `serial(repo)` section. */
+  private async forkLineage(
+    entry: InstalledApp,
+    repo: string,
+    versionId: string | undefined,
+  ): Promise<{ lineageId: string; declared: VersionDeclaration | null }> {
     await this.ensureLineage(entry);
-    let snapshotId: string;
+    let version: SnapshotContent;
     if (versionId != null) {
-      snapshotId = versionId;
+      version = await this.store.getSnapshot(repo, versionId);
     } else {
       const active = await this.store.active(repo);
       if (!active) throw new Error(`cannot fork "${entry.id}": no active snapshot`);
-      snapshotId = active.id;
+      version = active;
     }
-    const { lineageId } = await this.store.fork(repo, snapshotId);
+    const declared = versionDeclaration(version);
+    const { lineageId } = await this.store.fork(repo, version.id);
     // fork() left the repo HEAD on the new lineage.
     this.repoLineage.set(repo, lineageId);
-    return lineageId;
+    return { lineageId, declared };
   }
 
-  /** The index entry for a new lineage of `entry`'s repo. Its tile is the original's glyph with the
-   *  tint farthest from the original's among the least used — read from the index now, so an
-   *  override set since the caller read `entry` counts. No await may sit between this and the
-   *  `index.put` that writes it, so two copies landing together cannot take the same tint. */
-  private lineageEntry(entry: InstalledApp, repo: string, lineageId: string, storageGroupId?: string): InstalledApp {
-    const tile = copyTile(this.index.get(entry.id) ?? entry, this.index.list());
+  /** The index entry for a new lineage of `entry`'s repo, running the version it starts from with the
+   *  record that version declares (`versionRecord`). Its tile is the original's glyph with the tint
+   *  farthest from the original's among the least used — read from the index now, so an override set since the caller
+   *  read `entry` counts. No await may sit between this and the `index.put` that writes it, so two
+   *  copies landing together cannot take the same tint. */
+  private lineageEntry(
+    entry: InstalledApp,
+    repo: string,
+    from: { lineageId: string; declared: VersionDeclaration | null },
+    storageGroupId?: string,
+  ): InstalledApp {
+    const current = this.index.get(entry.id) ?? entry;
+    const tile = copyTile(current, this.index.list());
+    const { lineageId } = from;
     return {
       id: `${repo}__${lineageId}`,
       name: entry.name,
       createdAt: this.now(),
-      record: entry.record,
+      record: versionRecord(current.record, from.declared),
       storeId: repo,
       lineageId,
       forkedFrom: { id: entry.id, name: entry.name },
@@ -416,15 +615,15 @@ export class StoreAccess {
     if (data === 'copy' && !seam) throw new Error(`cannot copy the data of "${entry.id}": this build has no data copy`);
     const repo = storeIdOf(entry);
     return this.serial(repo, async () => {
-      const lineageId = await this.forkLineage(entry, repo, versionId);
-      const copyAppId = `${repo}__${lineageId}`;
+      const forked = await this.forkLineage(entry, repo, versionId);
+      const copyAppId = `${repo}__${forked.lineageId}`;
       if (this.index.has(copyAppId) || this.index.storageRefCount(copyAppId) > 0) {
         // Fork ids are never reused while their repo lives; an entry here is a broken invariant,
         // and both that entry and its store must stay as they are.
         throw new DataCopyError('io', `cannot make a copy: an app already uses "${copyAppId}"`);
       }
       const commit = (): InstalledApp => {
-        const forkEntry = this.lineageEntry(entry, repo, lineageId);
+        const forkEntry = this.lineageEntry(entry, repo, forked);
         this.index.put(forkEntry);
         return forkEntry;
       };
@@ -491,8 +690,8 @@ export class StoreAccess {
   async continueSharingData(entry: InstalledApp): Promise<InstalledApp> {
     const repo = storeIdOf(entry);
     return this.serial(repo, async () => {
-      const lineageId = await this.forkLineage(entry, repo, undefined);
-      const continuation = this.lineageEntry(entry, repo, lineageId, this.engineAppId(entry));
+      const forked = await this.forkLineage(entry, repo, undefined);
+      const continuation = this.lineageEntry(entry, repo, forked, this.engineAppId(entry));
       this.index.put(continuation);
       return continuation;
     });
@@ -533,6 +732,7 @@ export class StoreAccess {
       if (this.index.refCount(repo) === 0) {
         await this.store.remove(repo);
         this.repoLineage.delete(repo);
+        this.schemas.delete(repo);
       }
     });
   }

@@ -5,7 +5,9 @@
  * `footnote` `text-2` subtitle, and a trailing value, chevron, switch, external link, copy
  * button or the `check` of a chosen row. Separators inset 16 (52 with an icon). A pressed row fills with `fill`; a destructive
  * row's title is `danger-text`. A section header (`footnote` 600 `text-2`) sits 8 pt above the
- * group, its footer (`footnote` `text-2`) 8 pt under. Switches are the platform's own, on-track `ink`.
+ * group, its footer (`footnote` `text-2`) 8 pt under. Switches are the platform's own, on-track `ink`,
+ * off-track `border`; knob `on-ink` on iOS, and on Android, whose knob overhangs its track, `border`
+ * when on and `ink` when off.
  *
  * From 135% text (§6, paired things stack) a trailing value goes under the title, so the title keeps
  * the row's width. A chevron with `expanded` turns down while its row is open and says so.
@@ -173,15 +175,22 @@ function rowRole(props: Readonly<GroupedRowProps>): 'switch' | 'radio' | 'link' 
   return props.trailing?.kind === 'external' ? 'link' : 'button';
 }
 
-/** A switch row's switch: the platform's own, on-track `ink`; the row speaks for it. */
+/** A switch row's switch: the platform's own, on-track `ink`; the row speaks for it. Off, its track is
+ *  `border`, the edge that holds 3:1 on every surface a group paints. iOS's knob sits inside the track:
+ *  `on-ink` in both states holds 3:1 on either track (the platform's white knob all but vanishes on dark
+ *  ink). Android's knob (20 dp) stands 3 dp proud of its 14 dp track, onto the group, where `on-ink` is
+ *  the group's own colour: its knob is `border` on the `ink` track and `ink` on the `border` one, each
+ *  3:1 on its track and on either group, in both schemes. */
 function RowSwitch({ t, value, onFlip, disabled }: Readonly<{ t: ShellTokens; value: boolean; onFlip: () => void; disabled: boolean }>) {
+  const androidKnob = value ? t.colors.border : t.colors.ink;
   return (
     <Switch
       value={value}
       onValueChange={onFlip}
       disabled={disabled}
-      trackColor={{ true: t.colors.ink, false: t.colors['fill-strong'] }}
-      ios_backgroundColor={t.colors['fill-strong']}
+      trackColor={{ true: t.colors.ink, false: t.colors.border }}
+      ios_backgroundColor={t.colors.border}
+      thumbColor={t.platform === 'android' ? androidKnob : t.colors['on-ink']}
       accessibilityElementsHidden
       importantForAccessibility="no-hide-descendants"
     />

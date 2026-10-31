@@ -1,10 +1,8 @@
 /**
  * history-logic — the RN-free decision logic behind HistoryScreen (version-history spec,
- * shell-redesign-v2 chain-E). Rebuilt for the `4a` timeline: row derivation (the user's quoted
- * prompt as the headline and Whim's summary for the opened row, kind grouping for the filter
- * pills, at-most-two next actions per row) plus the pre-existing schema-diff annotation and
- * relative-timestamp helpers this module already carried (kept unchanged — D5's
- * restore-reassurance path still reads through them).
+ * design-system-v1 chain-20). Row derivation for the timeline (the user's quoted prompt as the
+ * headline and Whim's summary under it, the version and when, the kind chip, each row's actions)
+ * plus the schema-diff annotation helpers the hidden-data line reads.
  *
  * `RunSummary`/`SummaryKind`/`SummaryMark` are `@whim/contract` TYPE-ONLY imports (erased at
  * compile — zod itself never enters the RN bundle). `storedSummary` below mirrors
@@ -23,7 +21,7 @@ import type { SchemaArtifact } from '../storage-engine/contract';
 import { diffSchemas, emptyApplied, type AppliedSchema } from '../storage-engine/schema';
 import type { Snapshot } from '../version-store';
 import type { InstalledApp } from './app-index';
-import { historyQuotedPrompt } from './copy';
+import { historyQuotedPrompt, historyRowMeta } from './copy';
 import { parsePromptEnvelope } from './prompt-envelope';
 import type { StoreAccess } from './store-access';
 import type { RunSummary, SummaryKind, SummaryMark } from '@whim/contract';
@@ -37,9 +35,13 @@ import { CHANNELS } from '../logging/channels';
  * fork's `timeline()` no longer surfaces the original's later snapshots (and a rolled-back original
  * no longer surfaces a fork's). Every entry, fork or original, lists via `timeline()` for full
  * roll-forward — the interim `history()`-for-forks guard this function used to apply is retired.
+ *
+ * Newest first by the version chain, never the clock (#126), and the WHOLE chain: the store's
+ * default cap would cut the oldest versions off, and then the last row would not be the version
+ * the app began with. Uncapping costs nothing — `timeline()` reads every version before it caps.
  */
 export async function listVersions(access: StoreAccess, app: InstalledApp): Promise<Snapshot[]> {
-  return access.timeline(app);
+  return access.timeline(app, { limit: Number.POSITIVE_INFINITY });
 }
 
 /**
@@ -117,9 +119,9 @@ export async function annotationBetween(
 }
 
 /**
- * D5 restore reassurance: fields that would leave view by restoring to `targetId` — present in
- * the currently active version's schema, absent from the target's. Empty means nothing would
- * leave view (no reassurance needed).
+ * The hidden-data line (D5): fields that would leave view by using `targetId` — present in the
+ * currently active version's schema, absent from the target's. Empty means nothing would leave
+ * view (no line).
  */
 export function fieldsLeavingViewOnRestore(
   access: StoreAccess,
@@ -130,22 +132,7 @@ export function fieldsLeavingViewOnRestore(
   return annotationBetween(access, app, targetId, currentActiveId);
 }
 
-const MINUTE_MS = 60_000;
-const HOUR_MS = 3_600_000;
-const DAY_MS = 86_400_000;
-
-/** A short, human-readable relative timestamp (D7). Falls back to a locale date string once a
- *  version is a week or older. */
-export function formatRelativeTimestamp(createdAt: number, now: number = Date.now()): string {
-  const diff = Math.max(0, now - createdAt);
-  if (diff < MINUTE_MS) return 'Just now';
-  if (diff < HOUR_MS) return `${Math.floor(diff / MINUTE_MS)}m ago`;
-  if (diff < DAY_MS) return `${Math.floor(diff / HOUR_MS)}h ago`;
-  if (diff < 7 * DAY_MS) return `${Math.floor(diff / DAY_MS)}d ago`;
-  return new Date(createdAt).toLocaleDateString();
-}
-
-// ── the `4a` row model (E1/E2/E3/E5/E6/E9) ──────────────────────────────────
+// ── the timeline row model (system.md §7.1 Timeline row) ────────────────────
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
@@ -192,48 +179,36 @@ export function storedSummary(raw: string): RunSummary | undefined {
   return undefined;
 }
 
-/** The three filter groups the seeded copy table has labels for (`historyFilterWhatItDoes` /
- *  `Look` / `Fixes`) — there is no per-raw-kind pill copy, so grouping, not one pill per kind, is
- *  the shape E6 settles on. */
-export type FilterGroup = 'features' | 'look' | 'fixes';
-
-const KIND_GROUP: Record<SummaryKind, FilterGroup> = {
-  Start: 'features',
-  Added: 'features',
-  Changed: 'features',
-  Removed: 'features',
-  Look: 'look',
-  Fixed: 'fixes',
-};
-
-export type HistoryOrigin = 'you-said' | 'whim-on-its-own';
-export type HistoryActionKind = 'change-from-here' | 'go-back' | 'start-copy';
+export type HistoryActionKind = 'change-it' | 'use-version' | 'make-copy';
 
 export interface HistoryRow {
   id: string;
   index: number;
+  /** The version's place in the chain, oldest = 1: "Back on version 3". */
+  number: number;
   /** A display ordinal, oldest = "v1" — never a git ref (product-verbs guard). */
   version: string;
-  when: string;
+  /** "v4 · 2 days ago". */
+  meta: string;
+  /** The neutral kind chip's kind; `null` = unclassified, no chip. */
   kind: SummaryKind | null;
-  /** `null` = unclassified — stays reachable under the all-versions pill only (E6). */
-  group: FilterGroup | null;
-  /** What the collapsed row says (design 4a, "the prompt is the headline"): under `You said`, the
-   *  user's own words — the resolved prompt text, quoted; under `Whim, on its own`, which has no
-   *  words of the user's to quote, the stored summary's text. */
+  /** What the row leads with: the user's own words — the resolved prompt text, quoted; for a
+   *  version with no words of the user's to quote, the stored summary's text. */
   headline: string;
   /** The raw resolved prompt-envelope text, for the renderer's `yours`-class matching. */
   promptText: string;
   /** Producer `chg`/`hedge` marks for `headline` — only a summary headline carries any. */
   marks: SummaryMark[];
-  /** Whim's summary of what the version did, which the expanded row says first — `null` when the
-   *  version has none, or when the summary is already the headline. */
+  /** Whim's summary of what the version did, under the headline — `null` when the version has
+   *  none, or when the summary is already the headline. */
   result: { text: string; marks: SummaryMark[] } | null;
   touched: string[];
-  origin: HistoryOrigin;
   isCurrent: boolean;
+  /** The true first version: the end of the chain, where the app began. The only row whose kind
+   *  is `Start`. */
   isInstall: boolean;
-  /** At most two, never three (E5/E9). */
+  /** The current version's `change-it`; every other version's `use-version` and `make-copy` (the
+   *  first version's too, and a newer one after going back: that is how Undo stays reachable). */
   actions: HistoryActionKind[];
 }
 
@@ -248,52 +223,42 @@ function rowWords(promptText: string, summary: RunSummary | undefined): Pick<His
   };
 }
 
+/** A row's kind chip. `Start` is a place in the chain, not something a summary can claim (#126):
+ *  the first version is the Start whatever its summary says, and a later version's `Start` claim
+ *  is dropped, leaving it unclassified. */
+function rowKind(summary: RunSummary | undefined, isInstall: boolean): SummaryKind | null {
+  if (isInstall) return 'Start';
+  return summary && summary.kind !== 'Start' ? summary.kind : null;
+}
+
 /**
- * The `4a` row model. `rows` newest-first (as `listVersions` returns); `activeId` the live
- * current marker (E3 — derived from the store, never persisted on the app record).
+ * The timeline's rows. `rows` is the whole chain, newest first, as `listVersions` returns it — so
+ * the last row is the true first version; `activeId` the live current marker (E3 — derived from
+ * the store, never persisted on the app record); `now` what each row's "when" counts back from.
  */
-export function buildHistoryRows(rows: readonly Snapshot[], activeId: string | null): HistoryRow[] {
+export function buildHistoryRows(rows: readonly Snapshot[], activeId: string | null, now: number = Date.now()): HistoryRow[] {
   const total = rows.length;
   return rows.map((snapshot, index) => {
     const summary = storedSummary(snapshot.prompt);
     const promptText = parsePromptEnvelope(snapshot.prompt).text;
     const isCurrent = snapshot.id === activeId;
     const isInstall = index === total - 1;
-    let actions: HistoryActionKind[];
-    if (isCurrent) actions = ['change-from-here'];
-    else if (isInstall) actions = ['start-copy'];
-    else actions = ['go-back', 'start-copy'];
+    const actions: HistoryActionKind[] = isCurrent ? ['change-it'] : ['use-version', 'make-copy'];
+    const number = total - index;
+    const version = `v${number}`;
     return {
       id: snapshot.id,
       index,
-      version: `v${total - index}`,
-      when: formatRelativeTimestamp(snapshot.createdAt),
-      kind: summary?.kind ?? null,
-      group: summary ? KIND_GROUP[summary.kind] : null,
+      number,
+      version,
+      meta: historyRowMeta(version, snapshot.createdAt, now),
+      kind: rowKind(summary, isInstall),
       ...rowWords(promptText, summary),
       promptText,
       touched: summary?.touched ?? [],
-      // No write path in this codebase yet produces a version the user did not prompt (`prompt`
-      // is a required field on every install/update spec) — an empty stored prompt is the only
-      // signal available on-device for "the product acted unprompted" today.
-      origin: promptText.length > 0 ? 'you-said' : 'whim-on-its-own',
       isCurrent,
       isInstall,
       actions,
     };
   });
-}
-
-/** Live per-group counts (E6's "the count is live" scenario) — unclassified rows count toward
- *  neither group, only the all-versions pill. */
-export function groupCounts(rows: readonly HistoryRow[]): Record<FilterGroup, number> {
-  const counts: Record<FilterGroup, number> = { features: 0, look: 0, fixes: 0 };
-  for (const row of rows) if (row.group) counts[row.group] += 1;
-  return counts;
-}
-
-/** Narrows `rows` to one filter pill's group; `'all'` (the default selection) returns every row,
- *  unclassified included (E6's "unclassified versions are never hidden"). */
-export function filterRows(rows: readonly HistoryRow[], filter: 'all' | FilterGroup): HistoryRow[] {
-  return filter === 'all' ? [...rows] : rows.filter(row => row.group === filter);
 }

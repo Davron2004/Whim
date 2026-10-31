@@ -31,7 +31,7 @@ import {
   SAVED_DATA_LABELS,
   type UpgradeRecord,
 } from '../../../scripts/release/lib/upgrade-record';
-import { COPY, historySubtitle } from '../../../src/host/launcher/copy';
+import { COPY, historyVersionCount } from '../../../src/host/launcher/copy';
 import { RELEASE } from '../../../src/host/launcher/release-config';
 
 const REPO_ROOT = process.cwd();
@@ -188,7 +188,7 @@ function appStrings(): string[] {
     ...copy,
     // Eyebrow text renders uppercase ("YOUR APPS", "ADVANCED").
     ...copy.map((value) => value.toUpperCase()),
-    historySubtitle(2, 'just now'),
+    historyVersionCount(2),
     // The server-address field's placeholder (SettingsScreen): the full address in a build with
     // beta-1 D20, the bare host in 382511.
     RELEASE.serverUrl,
@@ -397,7 +397,9 @@ async function runCases(): Promise<void> {
   });
 
   await test('upgrade-record: reads the version count History shows, in the words copy.ts writes it', () => {
-    for (const count of [1, 2, 12]) nodeAssert.strictEqual(versionsFromHistory([historySubtitle(count, 'just now')]), count);
+    for (const count of [1, 2, 12]) nodeAssert.strictEqual(versionsFromHistory([historyVersionCount(count)]), count);
+    nodeAssert.strictEqual(versionsFromHistory(['2 versions · started 1d ago']), 2, 'and in the words of the builds before it');
+    nodeAssert.strictEqual(versionsFromHistory(['12 versions later']), null, 'never from other words that start alike');
   });
 
   await test("upgrade-record: the saved-data app and labels are the Water Counter example's own", () => {

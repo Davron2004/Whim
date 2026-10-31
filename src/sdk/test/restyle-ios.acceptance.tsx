@@ -50,6 +50,25 @@ try {
     assert.ok(empty >= 3, `the dark slider's empty track holds 3:1 on surface (${empty.toFixed(2)}:1)`);
     const on = mount(<Switch value onChange={() => {}} />).root.find((n) => n.type === 'span' && styleOf(n).width === '48px');
     assert.deepStrictEqual(styleOf(on).background, TINTS.purple.dark, 'and the tint when on');
+    // Task 6.7: in a Modal both sit on the sheet, or on sheet-group in a Card, and hold 3:1 there too.
+    const inModal = mount(
+      <Modal visible onClose={() => {}}>
+        <Card>
+          <Switch label="Remind me" value={false} onChange={() => {}} />
+          <Slider value={0} onChange={() => {}} />
+        </Card>
+      </Modal>,
+    ).root;
+    const tracks = {
+      'off switch track': inModal.find((n) => n.type === 'span' && styleOf(n).width === '48px'),
+      'empty slider track': inModal.find((n) => n.type === 'div' && styleOf(n).height === '6px'),
+    };
+    for (const [what, node] of Object.entries(tracks)) {
+      for (const surface of ['sheet', 'sheet-group'] as const) {
+        const ratio = contrastRatio(String(styleOf(node).background), dark[surface]);
+        assert.ok(ratio >= 3, `in a dark Modal the ${what} holds 3:1 on ${surface} (${ratio.toFixed(2)}:1)`);
+      }
+    }
   }
 
   // ── From 135%, paired buttons and labelled steppers stack ────────────────────

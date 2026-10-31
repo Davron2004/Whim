@@ -27,8 +27,10 @@ await build({
   // exercises the real VersionStore over MemoryFs, which pulls isomorphic-git). React's Node
   // build must keep its native require('timers'): async act otherwise falls back to MessageChannel
   // in the ESM bundle and leaves ports open after the suite completes. esbuild itself is called by
-  // the data-copy crash suite, to bundle the child process it kills mid-copy.
-  external: ['isomorphic-git', 'pako', 'sha.js', 'crc-32', 'buffer', 'text-encoding-polyfill', 'react', 'react-test-renderer', 'react-error-boundary', 'esbuild'],
+  // the data-copy crash suite, to bundle the child process it kills mid-copy. typescript is the
+  // server checker's parser (the version-record suite runs a change request through it), and
+  // cannot be bundled into ESM (its dynamic require of fs).
+  external: ['isomorphic-git', 'pako', 'sha.js', 'crc-32', 'buffer', 'text-encoding-polyfill', 'react', 'react-test-renderer', 'react-error-boundary', 'esbuild', 'typescript'],
   alias: {
     'react-native': path.join(here, 'native-host.tsx'),
     'react-native-safe-area-context': path.join(here, 'native-host.tsx'),

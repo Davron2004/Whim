@@ -106,13 +106,13 @@ export function reportLogFields(request: ReportRequest, outcome: string): Report
 }
 
 /** The draft every report entry point starts from (design D13): the app's display name
- *  (`InstalledApp.name`), the prompt behind its current version (`StoreAccess.activeDescription`),
- *  and its stored original source (`StoreAccess.activeSource`) — prompt included by default, no
+ *  (`InstalledApp.name`), and the prompt behind its current version and that version's stored
+ *  original source, read together (`StoreAccess.activeWords`) — prompt included by default, no
  *  reason chosen yet. Opening the sheet sends nothing: this only reads. With no `entry` (Settings'
  *  "Report a problem") the draft carries no app at all. */
 export async function reportDraftFor(entry: InstalledApp | null, access: StoreAccess): Promise<ReportDraft> {
   if (entry === null) return { reason: null, note: '', promptIncluded: false };
-  const [prompt, source] = await Promise.all([access.activeDescription(entry), access.activeSource(entry)]);
+  const { prompt, source } = await access.activeWords(entry);
   return {
     reason: null,
     note: '',

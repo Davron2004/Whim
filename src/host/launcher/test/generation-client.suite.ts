@@ -42,7 +42,7 @@ import {
 import { CONNECT_TIMEOUT_HINT } from '../transport-shared';
 import { appInfoReader } from '../app-info';
 import { TEST_APP_INFO, grantedOptions, streamResponse } from './client-fixtures';
-import { log } from '../../logging';
+import { fillRing, recordsSince } from './log-ring';
 import { CHANNELS } from '../../logging/channels';
 
 function sseFrame(event: GenerationEvent, id: number): string {
@@ -642,17 +642,15 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       const fetchImpl = (async () =>
         new Response('404 Not Found', { status: 404 })) as typeof fetch;
 
-      const before = log.buffer.snapshot().length;
+      fillRing();
+      const newRecords = recordsSince();
       await h.throws(
         () => clarifyPrompt({ ...BASE, fetchImpl }, 'hi'),
         '',
         'clarifyPrompt still throws on a 404',
       );
 
-      const logged = log.buffer
-        .snapshot()
-        .slice(before)
-        .find((r) => r.channel === CHANNELS.gen && r.fields.route === '/v1/clarify');
+      const logged = newRecords().find((r) => r.channel === CHANNELS.gen && r.fields.route === '/v1/clarify');
       h.ok(logged !== undefined, 'records a breadcrumb at the httpErrorFrom mapping site');
       if (logged) {
         h.eq(logged.fields.status, 404, 'the response status is a named field');

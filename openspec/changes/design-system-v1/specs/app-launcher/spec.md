@@ -137,6 +137,41 @@ The launcher SHALL offer "Make a copy" on every installed app (tile menu, and Hi
 
 ## ADDED Requirements
 
+### Requirement: Each version keeps its own manifest and schema
+Every version `StoreAccess` saves SHALL keep, beside its bundle, the app's host-held manifest and, when declared, its schema artifact. Using an older version, copying from a version, and a change landing on an older version (a rewind continuation) SHALL run the entry with that version's own manifest and schema, keeping the host's fields (app id, name, tile). The schema applied to saved data SHALL stay the accumulated union (additive-only evolution).
+
+#### Scenario: An older version runs with its own capabilities
+- **WHEN** version 1 of an app declares storage, version 2 declares none, and the user uses version 1
+- **THEN** version 1 runs with storage granted and reads the data saved before version 2
+
+#### Scenario: Going back runs no migration
+- **WHEN** the user uses a version whose schema lacks fields a newer one added
+- **THEN** no migration runs and nothing is deleted: those fields stay stored, unread, until a version that names them runs again
+
+#### Scenario: A copy runs the manifest of the version it was made from
+- **WHEN** the user makes a copy from version 1 while version 2 is current
+- **THEN** the copy runs with version 1's manifest and schema, and the original keeps version 2's
+
+#### Scenario: A version saved before manifests were kept (known limitation)
+- **WHEN** the user uses a version saved before versions kept their manifest
+- **THEN** it runs with the record the entry has now, and nothing errors; its own manifest is not known (accepted pre-release: no tester builds hold such versions)
+
+#### Scenario: A change from an older version never reuses a later version's field ids
+- **WHEN** a later version declared a field the saved data does not hold yet (it was never opened), and the user changes the app from an older version
+- **THEN** the change request sends that field as a declared field beside the store's own applied schema; the burned-ID floor counts it, a field reusing its id with another type is refused, while the older version's own schema, which never names it, is accepted
+
+#### Scenario: Reusing a never-opened version's field still needs a default
+- **WHEN** that change names the later version's field with its declared type and no default
+- **THEN** the change is refused before delivery with `missing_default`, as the store would refuse to open it, and is accepted with a default
+
+#### Scenario: A change describes the code it sends
+- **WHEN** the user uses version 1, goes back to Home, taps Undo on Home's toast (Home not yet refreshed) and then Change it, or taps "Ask Whim to fix it" on an app whose saved record lags the version it runs
+- **THEN** the change request carries the active version's source with that version's own manifest and schema, read together, never the caller's copy of the record
+
+#### Scenario: A change follows the active version
+- **WHEN** a running app still shows an older version because a change landed and was not reloaded, and the user asks for another change
+- **THEN** the change is made from the active version, the one delivery builds on, so the landed change is kept (a crash of that older version offers Reload instead of "Ask Whim to fix it", since its error is not the active version's)
+
 ### Requirement: The shell follows the phone's appearance through one scheme hook
 
 The shell SHALL render in light or dark following the phone's appearance setting, with no in-app picker. Launcher components SHALL read colours only through one hook that returns the token module's light or dark roles for the current scheme; no component SHALL accept a palette or theme as a prop or define its own colour literal, and styles SHALL be built per scheme so a change of appearance re-renders the shell without a restart. The status bar and system bars SHALL follow the scheme.
@@ -315,12 +350,17 @@ Opening a ready tile SHALL grow a `bg` container from the tile to the screen whi
 
 ### Requirement: A crashed app keeps the orb and offers a way forward
 
-When a running app fails, the container SHALL show "<name> ran into a problem", "It stopped and can't carry on right now. Your saved data is safe.", Reload, "Ask Whim to fix it" (opening the change field prefilled with "Fix the error that stops this app." and the error text attached) and Back to your apps, and the orb SHALL stay.
+When a running app fails, the container SHALL show "<name> ran into a problem", "It stopped and can't carry on right now. Your saved data is safe.", Reload, "Ask Whim to fix it" (opening the change field prefilled with "Fix the error that stops this app." and the error text attached) and Back to your apps, and the orb SHALL stay. When the crashed launch is behind its app's current version (a change landed and was not reloaded, or an Undo moved the app after it opened), the body SHALL say a newer version is ready and the screen SHALL offer only Reload and Back to your apps: the error belongs to code that is no longer current, and a change is made from the current version, so the fix is offered once Reload runs that version (decision #82).
 
 #### Scenario: A crash is a change request
 
 - **WHEN** the user taps "Ask Whim to fix it"
 - **THEN** the Whim sheet opens with the prefilled request and the error attached, and the app is not closed
+
+#### Scenario: A crash behind the current version leads with Reload
+
+- **WHEN** a change of the app landed while it ran, was not reloaded, and the app then crashes
+- **THEN** the crash screen says a newer version is ready and offers Reload and Back to your apps, without "Ask Whim to fix it", and after Reload a crash of the new version offers "Ask Whim to fix it" again
 
 ### Requirement: The shell plays haptics from a fixed map
 

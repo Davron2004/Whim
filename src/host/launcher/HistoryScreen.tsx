@@ -1,64 +1,61 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// HistoryScreen — the `4a` timeline (shell-redesign-v2 chain-E; version-history spec).
+// HistoryScreen — every version of an app on one timeline (version-history spec; system.md §9
+// History, §7.1 Timeline row; design-system-v1 task 20.1).
 // ─────────────────────────────────────────────────────────────────────────────
-// A full-screen sibling of SettingsScreen: its own hardware-back binding returning to where it
-// was opened from, `SHELL_PALETTE` colors, `TYPE_SCALE` faces, and every label from `copy.ts`.
-// History opens from Home's action sheet or the running app's orb, and replaces either screen,
-// so the app itself is never running while this screen is open — no live-realm interaction to
-// design for. All store access goes through
-// `StoreAccess` (never a raw `VersionStore`); the row model (the user's quoted prompt as the
-// headline, Whim's summary for the opened row, kind grouping, at-most-two actions) lives in
-// `history-logic.ts` so it is Node-testable without rendering this component.
+// A pushed screen on the native stack with the anatomy of §2.8: a 44 pt header row with the back
+// control and the `Report` text button, then "History" in `title1`, the app's 40 pt tile, its name
+// in its tint and how many versions it has. Its own header, not the platform's: History's Back and
+// system back are bound apart from a swipe (`handoff/navigation.md` "History's leave"), so the
+// visible back control is the shell's. Colours follow the phone through `useTokens()`: History is a
+// host screen, never the frame of the app it was opened over. Every text is capped at 200%.
 //
-// Tapping a row EXPANDS it (never restores) — restoring and forking are explicit actions inside
-// an expanded row, each behind a confirm sheet whose safe option is the large button (D11).
-// Headlines and the expanded result sentence are agent prose (the user's own words or Whim's own
-// summary) and render through the one shared `WhimProse` renderer; everything else on this
-// screen is product copy and is never marked (Whim Syntax rule 7).
+// One row per version, newest first, on a rail that stops at v1: the person's words quoted (italic
+// `title3`, the hero), Whim's summary, "v4 · 2 days ago" in tabular figures, a neutral kind chip
+// with its icon and `Current` on the active version. No filters. All store access goes through
+// `StoreAccess`; the row model lives in `history-logic.ts`, Node-testable without this component.
+//
+// Tapping a row EXPANDS it (never changes the version); at most one row is open. Its actions act at
+// once, with Undo instead of a question (decision #75, "undo over are you sure"): "Use this version"
+// makes it current and offers Undo in the toast, and the version it left stays listed, so the same
+// Undo is a row away once the toast has gone; "Make a copy from here" asks only "Copy the data, or
+// start fresh?" (`CopyQuestionSheet`, the one Home asks) and offers Open. Before either, the open row
+// says when going there would hide saved data. The summary and the expanded result are agent prose
+// and render through the one shared `WhimProse` renderer; everything else is product copy and is
+// never marked (Whim Syntax rule 7).
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { FlatList, StyleSheet, Text, TouchableOpacity, useWindowDimensions, View } from 'react-native';
-import { KIND_BADGE_COLORS, RADIUS, SPACING, STATUS_COLORS, TYPE_SCALE } from '../../sdk/theme';
-import type { SummaryKind } from '@whim/contract';
+import { FlatList, Pressable, Text as RNText, View } from 'react-native';
+import type { SummaryKind, SummaryMark } from '@whim/contract';
+import { LAYOUT, RADII, SPACE, TINTS, TYPE_SCALE, type ColorRole, type TypeToken } from '../../design/tokens';
+import type { IconName } from '../../design/icons/names';
 import { InstalledApp } from './app-index';
+import { annotationBetween, buildHistoryRows, fieldsLeavingViewOnRestore, listVersions, type HistoryRow } from './history-logic';
+import type { ForkOptions, StoreAccess } from './store-access';
+import type { SwitchWords } from './version-switches';
+import { addedFieldsLine, COPY, historyVersionCount } from './copy';
 import {
-  annotationBetween,
-  buildHistoryRows,
-  fieldsLeavingViewOnRestore,
-  filterRows,
-  formatRelativeTimestamp,
-  groupCounts,
-  listVersions,
-  type FilterGroup,
-  type HistoryRow,
-} from './history-logic';
-import { StoreAccess } from './store-access';
-import {
-  addedFieldsLine,
-  COPY,
-  copySheetBody,
-  copySheetTitle,
-  historyFilterAll,
-  historySubtitle,
-  restoreSheetBody,
-  restoreSheetTitle,
-  restoredToast,
-} from './copy';
-import {
-  ConfirmFlight,
   HISTORY_LOADING,
   RESTORE_DIFF_NONE,
   restoreDiffLine,
-  runConfirmOp,
+  RowActionFlight,
   runHistoryLoad,
+  runRowAction,
   type HistoryLoadState,
   type RestoreDiffState,
 } from './history-wait';
-import ConfirmSheet, { type ConfirmSheetContent } from './ConfirmSheet';
-import { BreathingView } from './flow-skeletons';
-import { SHELL_PALETTE } from './theme';
-import { tileColor } from './tiles';
+import { CopyQuestionSheet } from './CopyQuestionSheet';
+import { tileOf } from './tile-identity';
 import { useSystemBack } from './use-system-back';
 import WhimProse from '../ui/whim-prose/WhimProse';
+import { TilePlate } from '../ui/AppTile';
+import { Button } from '../ui/Button';
+import { Icon } from '../ui/Icon';
+import { BackButton } from '../ui/IconButton';
+import { Skeleton, SkeletonBlock } from '../ui/Skeleton';
+import { Text, wrappingType } from '../ui/Text';
+import { useToast } from '../ui/Toast';
+import { useTokens } from '../ui/tokens';
+import { ICON_BUTTON, makeStyles, MAX_FONT_SCALE, type ShellTokens } from '../ui/tokens-pure';
+import { haptics } from '../haptics';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 
@@ -67,278 +64,348 @@ export interface HistoryScreenProps {
   access: StoreAccess;
   /** Leaves History, for where it was opened from: the app it was opened over, or Home. */
   onBack: () => void;
-  /**
-   * Opens the compose step scoped to `app` — the current version's one action, "Change it from
-   * here" (E5). Optional and additive: `HistoryScreen`'s exported props signature is otherwise
-   * unchanged (chain-E's constraint), so every existing call site keeps compiling unchanged. The
-   * compose screen itself is chain-D's file (`LauncherRoot.tsx`'s `Screen` union); until that
-   * chain supplies this callback, the button renders and is tappable but does nothing.
-   */
+  /** Opens the compose step scoped to `app`: the current version's one action. */
   onChangeIt?: (app: InstalledApp) => void;
-  /** Opens the report sheet for the version the user is currently on (content-reporting
-   *  "Reporting from history") — a header action; no history row gains one. */
+  /** Opens the report screen for the version the user is currently on (content-reporting
+   *  "Reporting from history"): the header's text button; no row gains one. */
   onReport: () => void;
+  /** Whether "Make a copy from here" can copy the data (`StoreAccess.canCopyData`). When false the
+   *  copy starts fresh at once, with no question. */
+  canCopyData?: boolean;
+  /** Makes a copy of `app` from `versionId` with its own storage (`StoreAccess.fork`): the new entry,
+   *  or `null` when that app is busy with something else and nothing started; rejects when nothing
+   *  was made. */
+  onFork: (app: InstalledApp, versionId: string, opts: ForkOptions) => Promise<InstalledApp | null>;
+  /** Opens an app: the copy the "Copy made" toast names. */
+  onOpen: (app: InstalledApp) => void;
+  /** Makes `versionId` current, has History `reread` its rows, then offers its Undo back to
+   *  `previousId` in the shell's toast, worded from `words`; rejects when the switch failed. The shell
+   *  owns that Undo, so it outlives History (`VersionSwitches`). */
+  onUseVersion: (app: InstalledApp, versionId: string, words: SwitchWords, previousId: string | null, reread: () => Promise<void>) => Promise<void>;
+  /** Changes whenever the shell moved the app's version under History (an Undo): the rows are read again. */
+  versionsMoved?: number;
 }
 
-type Filter = 'all' | FilterGroup;
+/** The row action in flight, which shows its busy words. */
+type RowBusy = { id: string; action: 'use-version' | 'make-copy' } | null;
 
-interface ConfirmState {
-  kind: 'restore' | 'copy';
-  row: HistoryRow;
+function historyOperationFailed(operation: 'list' | 'hidden-data' | 'annotation' | 'use-version' | 'copy', e?: unknown): void {
+  log.warn(CHANNELS.app, 'history operation failed', { operation, ...(e === undefined ? {} : { detail: e instanceof Error ? e.message : String(e) }) });
 }
 
-interface ToastState {
-  text: string;
-}
-
-const TOAST_TIMEOUT_MS = 2200;
-
-/** History-screen kind-badge tints — the `4a` design prototype's byte-exact hues, moved into the
- *  tokens module (`KIND_BADGE_COLORS`, `src/sdk/design-tokens.ts`) so no inline hex lives on this
- *  screen. */
-const KIND_BADGE = KIND_BADGE_COLORS;
-
-function historyOperationFailed(operation: 'list' | 'restore-diff' | 'annotation'): void {
-  log.warn(CHANNELS.app, 'history operation failed', { operation });
-}
-
-/** The ring around the current version's timeline dot — design `4a` writes it as
- *  `rgba(13,148,136,.3)` (`Whim Mobile.dc.html:848`), which is exactly the reserved done/working
- *  hue at 30% alpha. Derived from the token rather than re-typed as a second hex literal:
- *  `0x4d` = 77/255 ≈ .302. Every other dot ring is the plain `cardBorder` hairline. */
-const CURRENT_DOT_RING = STATUS_COLORS.done + '4d';
-
-/** The dot's centre, measured down from the row wrapper's top edge — `styles.marker`'s `top` plus
- *  half its height. The timeline segment starts or stops here on the list's terminal rows. */
-const DOT_CENTRE = 21.5;
-
+/** §7.1 Timeline row: the rail's centre line (x = 27 from the screen's edge), its 2 pt width, the
+ *  10 pt dot on it with a 3 pt `bg` ring, and where the row's content starts. */
+const RAIL = { centre: 27, width: 2, dot: 10, ring: 3, content: 44 } as const;
+/** How far a collapsed row's words sit below its top, and an open card's padding. */
+const ROW_TOP = 2;
+const CARD_PADDING = { vertical: 14, horizontal: LAYOUT.cardPadding } as const;
+/** The space between one row and the next, which the rail spans. */
+const ROW_GAP = 22;
 /** How many placeholder rows the first load draws. The real count is not known until the read
  *  resolves, so this is a shape hint, not a prediction. */
 const HISTORY_SKELETON_ROWS = 3;
 
-/** Where a row's timeline segment begins and ends: an interior row's spans the whole wrapper, the
- *  first row's drops from the dot, the last row's rises to it. A list of one renders no segment at
- *  all — the caller checks that, since there is no extent that expresses "absent". */
-function timelineExtent(isFirst: boolean, isLast: boolean) {
-  if (isFirst) return { top: DOT_CENTRE, bottom: 0 };
-  if (isLast) return { top: 0, height: DOT_CENTRE };
+/** The dot's centre, down from the row's top: on the middle of the words' first line, at the
+ *  phone's text size up to the 200% cap. */
+function dotCentre(t: ShellTokens): number {
+  return ROW_TOP + (TYPE_SCALE.title3.lineHeight * Math.min(t.fontScale, MAX_FONT_SCALE)) / 2;
+}
+
+/** Where a row's rail segment begins and ends: an interior row's spans the whole row, the newest
+ *  row's drops from its dot, v1's comes down to its dot and stops. A list of one has no rail — the
+ *  caller checks that, since there is no extent that expresses "absent". */
+function railExtent(isFirst: boolean, isLast: boolean, centre: number) {
+  if (isFirst) return { top: centre, bottom: 0 };
+  if (isLast) return { top: 0, height: centre };
   return { top: 0, bottom: 0 };
 }
 
-const KIND_LABEL: Record<SummaryKind, string> = {
-  Start: COPY.historyKindStart,
-  Added: COPY.historyKindAdded,
-  Changed: COPY.historyKindChanged,
-  Removed: COPY.historyKindRemoved,
-  Look: COPY.historyKindLook,
-  Fixed: COPY.historyKindFixed,
+const KIND_CHIP: Record<SummaryKind, { label: string; icon: IconName }> = {
+  Start: { label: COPY.historyKindStart, icon: 'flag' },
+  Added: { label: COPY.historyKindAdded, icon: 'plus' },
+  Changed: { label: COPY.historyKindChanged, icon: 'pencil' },
+  Removed: { label: COPY.historyKindRemoved, icon: 'minus' },
+  Look: { label: COPY.historyKindLook, icon: 'palette' },
+  Fixed: { label: COPY.historyKindFixed, icon: 'wrench' },
 };
 
-export default function HistoryScreen({ app, access, onBack, onChangeIt, onReport }: Readonly<HistoryScreenProps>) {
-  const p = SHELL_PALETTE;
-  const appHue = tileColor(app.name, app.record.manifest);
+const styles = makeStyles((t) => {
+  const centre = dotCentre(t);
+  const ringSide = RAIL.dot + 2 * RAIL.ring;
+  return {
+    root: { flex: 1, backgroundColor: t.colors.bg },
+    header: {
+      minHeight: LAYOUT.headerRowHeight,
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      justifyContent: 'space-between' as const,
+      // The back glyph and the Report label line up with the gutter.
+      paddingLeft: LAYOUT.gutter - (ICON_BUTTON.size - 24) / 2,
+      paddingRight: LAYOUT.gutter - SPACE[4],
+    },
+    titleBlock: { paddingHorizontal: LAYOUT.gutter, paddingBottom: LAYOUT.gapTitleToContent },
+    appLine: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[3], marginTop: SPACE[3] },
+    appNames: { flex: 1 },
+    list: { paddingBottom: SPACE[10] },
+    row: { paddingLeft: RAIL.content, paddingRight: LAYOUT.gutter, paddingBottom: ROW_GAP },
+    rail: { position: 'absolute' as const, left: RAIL.centre - RAIL.width / 2, width: RAIL.width, backgroundColor: t.colors.separator },
+    ring: {
+      position: 'absolute' as const,
+      left: RAIL.centre - ringSide / 2,
+      top: centre - ringSide / 2,
+      width: ringSide,
+      height: ringSide,
+      borderRadius: ringSide / 2,
+      backgroundColor: t.colors.bg,
+      alignItems: 'center' as const,
+      justifyContent: 'center' as const,
+    },
+    dot: { width: RAIL.dot, height: RAIL.dot, borderRadius: RAIL.dot / 2, backgroundColor: t.colors.border },
+    dotCurrent: { backgroundColor: t.colors.ink },
+    // A row's words sit in the same place open or closed: a closed row keeps the open card's side
+    // padding, and the card reaches up by its top padding, so it grows around the words instead of
+    // pushing them in.
+    flat: { paddingTop: ROW_TOP, paddingHorizontal: CARD_PADDING.horizontal },
+    card: {
+      marginTop: ROW_TOP - CARD_PADDING.vertical,
+      borderRadius: RADII.lg.radius,
+      backgroundColor: t.colors.surface,
+      paddingVertical: CARD_PADDING.vertical,
+      paddingHorizontal: CARD_PADDING.horizontal,
+    },
+    summary: { marginTop: SPACE[1] },
+    meta: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, alignItems: 'center' as const, gap: SPACE[2], marginTop: SPACE[2] },
+    chip: {
+      flexDirection: 'row' as const,
+      alignItems: 'center' as const,
+      gap: SPACE[1],
+      paddingHorizontal: SPACE[2],
+      paddingVertical: 2,
+      borderRadius: RADII.full.radius,
+      backgroundColor: t.colors.fill,
+    },
+    current: { paddingHorizontal: SPACE[2], paddingVertical: 2, borderRadius: RADII.full.radius, backgroundColor: t.colors.ink },
+    expanded: { marginTop: SPACE[3] },
+    touched: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, gap: SPACE[2], marginTop: SPACE[1] },
+    actions: { flexDirection: 'row' as const, flexWrap: 'wrap' as const, gap: SPACE[2], marginTop: SPACE[3] },
+    hiddenData: { marginTop: SPACE[3] },
+    hiddenDataPending: {
+      height: TYPE_SCALE.footnote.lineHeight,
+      width: '76%' as const,
+      borderRadius: RADII.xs.radius,
+      marginTop: SPACE[3],
+      backgroundColor: t.colors['fill-strong'],
+    },
+    skeletonRow: {
+      paddingLeft: RAIL.content + CARD_PADDING.horizontal,
+      paddingRight: LAYOUT.gutter + CARD_PADDING.horizontal,
+      paddingBottom: ROW_GAP,
+      paddingTop: ROW_TOP,
+      gap: SPACE[1],
+    },
+  };
+});
+
+/** Agent prose on the type scale, capped at 200% like every shell text: the cap is set on a text
+ *  around the renderer's own, which a nested text takes from its parent. */
+function Prose({
+  text,
+  marks,
+  storedPrompt,
+  apps,
+  type,
+  color,
+}: Readonly<{ text: string; marks: SummaryMark[]; storedPrompt: string; apps: { name: string; color: string }[]; type: TypeToken; color: ColorRole }>) {
+  const t = useTokens();
+  const face = { ...wrappingType(type), color: t.colors[color] };
+  return (
+    <RNText style={face} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+      <WhimProse text={text} apps={apps} storedPrompt={storedPrompt} marks={marks} style={face} />
+    </RNText>
+  );
+}
+
+export default function HistoryScreen({ app, access, onBack, onChangeIt, onReport, canCopyData = false, onFork, onOpen, onUseVersion, versionsMoved = 0 }: Readonly<HistoryScreenProps>) {
+  const t = useTokens();
+  const s = styles(t);
+  const toast = useToast();
+  const { tint, icon } = tileOf(app);
+  const nameColor = TINTS[tint][t.scheme];
 
   // One state object rather than three: `loading`, the snapshot list and the active id all land
   // together from `runHistoryLoad`, so they can never be read half-applied (an empty list with
   // `loading` already false is exactly the fake-empty flash this screen had).
   const [{ loading, snapshots, activeId }, setLoad] = useState<HistoryLoadState>(HISTORY_LOADING);
   const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Filter>('all');
-  const [confirm, setConfirm] = useState<ConfirmState | null>(null);
-  const [restoreDiff, setRestoreDiff] = useState<RestoreDiffState>(RESTORE_DIFF_NONE);
-  // The confirm sheet's double-submit guard. A ref, not state: two taps inside one frame both read
-  // the same rendered `disabled` value, so only a synchronous claim can refuse the second.
-  const confirmFlight = useRef(new ConfirmFlight()).current;
-  const [confirmBusy, setConfirmBusy] = useState(false);
-  const [toast, setToast] = useState<ToastState | null>(null);
-  const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const { fontScale } = useWindowDimensions();
+  // The row actions' double-submit guard, shared by Use this version, its Undo and Make a copy. A
+  // ref, not state: two taps inside one frame both read the same rendered busy value, so only a
+  // synchronous claim can refuse the second.
+  const flight = useRef(new RowActionFlight()).current;
+  const [busy, setBusy] = useState<RowBusy>(null);
+  // Whether the copy question is open, and the row it was asked for. The first answer takes the row,
+  // so a second tap on an answer (the sheet is still on screen as it slides away, and the first copy
+  // may already be made) answers nothing: a ref, for the same reason as `flight`.
+  const [asking, setAsking] = useState(false);
+  const asked = useRef<HistoryRow | null>(null);
 
   const load = () =>
     runHistoryLoad(async () => {
       const [list, active] = await Promise.all([listVersions(access, app), access.activeId(app)]);
       return { snapshots: list, activeId: active };
     }, setLoad);
+  const reload = () =>
+    load().catch((e) => {
+      historyOperationFailed('list', e);
+    });
 
   useEffect(() => {
-    load().catch(() => {
-      historyOperationFailed('list');
-    });
+    reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [access, app]);
+  }, [access, app, versionsMoved]);
 
   useSystemBack(onBack);
 
-  useEffect(() => {
-    return () => {
-      if (toastTimer.current) clearTimeout(toastTimer.current);
-    };
-  }, []);
+  const rows = useMemo(() => buildHistoryRows(snapshots, activeId), [snapshots, activeId]);
+  const proseApps = useMemo(() => [{ name: app.name, color: nameColor }], [app.name, nameColor]);
 
-  useEffect(() => {
-    if (confirm?.kind !== 'restore' || activeId == null) {
-      setRestoreDiff(RESTORE_DIFF_NONE);
+  const busyFor = (row: HistoryRow, action: 'use-version' | 'make-copy') => (on: boolean) => setBusy(on ? { id: row.id, action } : null);
+
+  /** "Use this version": current at once, then the shell's toast with Undo, saying which way the app
+   *  went (`onUseVersion`). The Undo is the shell's, so it runs whether or not History is still
+   *  showing; when it lands, `versionsMoved` brings these rows up to date. Once the toast has gone,
+   *  the version the app left keeps its own row, which does the same. */
+  const switchVersion = async (row: HistoryRow) => {
+    const words = { to: row.number, from: rows.find((r) => r.isCurrent)?.number ?? null };
+    try {
+      if (!(await runRowAction(flight, busyFor(row, 'use-version'), () => onUseVersion(app, row.id, words, activeId, load)))) return;
+    } catch (e) {
+      historyOperationFailed('use-version', e);
+      haptics.play('failure');
+      toast.show({ message: COPY.historyUseVersionFailed });
+      await reload();
       return;
     }
-    setRestoreDiff({ status: 'pending' });
-    let cancelled = false;
-    fieldsLeavingViewOnRestore(access, app, confirm.row.id, activeId)
-      .then(fields => {
-        if (!cancelled) setRestoreDiff({ status: 'ready', fields });
-      })
-      .catch(() => {
-        if (!cancelled) {
-          setRestoreDiff(RESTORE_DIFF_NONE);
-          historyOperationFailed('restore-diff');
-        }
+    haptics.play('success');
+  };
+
+  /** Makes the copy from `row`'s version with the chosen data, then "Copy made" with Open. */
+  const makeCopy = async (row: HistoryRow, data: ForkOptions['data']) => {
+    const result: { made: InstalledApp | null } = { made: null };
+    try {
+      const ran = await runRowAction(flight, busyFor(row, 'make-copy'), async () => {
+        result.made = await onFork(app, row.id, { data });
       });
-    return () => {
-      cancelled = true;
-    };
-  }, [confirm, access, app, activeId]);
-
-  const rows = useMemo(() => buildHistoryRows(snapshots, activeId), [snapshots, activeId]);
-  const filtered = useMemo(() => filterRows(rows, filter), [rows, filter]);
-  const counts = useMemo(() => groupCounts(rows), [rows]);
-  const oldest = snapshots[snapshots.length - 1];
-
-  const showToast = (text: string) => {
-    if (toastTimer.current) clearTimeout(toastTimer.current);
-    setToast({ text });
-    toastTimer.current = setTimeout(() => setToast(null), TOAST_TIMEOUT_MS);
+      if (!ran) return;
+    } catch (e) {
+      historyOperationFailed('copy', e);
+      haptics.play('failure');
+      toast.show({ message: COPY.copyFailedToast });
+      return;
+    }
+    const { made } = result;
+    if (made) {
+      haptics.play('success');
+      toast.show({ message: COPY.copyMadeToast, action: { label: COPY.actionOpen, onPress: () => onOpen(made) } });
+    }
   };
 
-  const confirmRestore = async () => {
-    if (!confirm) return;
-    const { row } = confirm;
-    const ran = await runConfirmOp(confirmFlight, setConfirmBusy, () => access.rollback(app, row.id));
-    if (!ran) return;
-    setConfirm(null);
-    await load().catch(() => {
-      historyOperationFailed('list');
-    });
-    showToast(restoredToast(row.version));
+  const askCopy = (row: HistoryRow) => {
+    if (flight.inFlight) return;
+    if (canCopyData) {
+      asked.current = row;
+      setAsking(true);
+    } else {
+      makeCopy(row, 'fresh');
+    }
   };
 
-  // The sheet stays open for the duration of the fork (it used to close first) — the requirement
-  // is that the confirmed control itself shows the busy state until the fork completes, which a
-  // dismissed sheet cannot do.
-  const confirmCopy = async () => {
-    if (!confirm) return;
-    const { row } = confirm;
-    const ran = await runConfirmOp(confirmFlight, setConfirmBusy, () => access.fork(app, row.id));
-    if (!ran) return;
-    setConfirm(null);
-    showToast(COPY.historyCopyToast);
+  /** The copy question's answer, taken once per question. */
+  const answerCopy = (data: ForkOptions['data']) => {
+    const row = asked.current;
+    asked.current = null;
+    setAsking(false);
+    if (row) makeCopy(row, data);
   };
 
-  const pills: Array<{ key: Filter; label: string }> = [
-    { key: 'all', label: historyFilterAll(rows.length) },
-    { key: 'features', label: COPY.historyFilterWhatItDoes },
-    { key: 'look', label: COPY.historyFilterLook },
-    { key: 'fixes', label: COPY.historyFilterFixes },
-  ];
+  const leaveQuestion = () => {
+    asked.current = null;
+    setAsking(false);
+  };
+
+  const titleBlock = (
+    <View style={s.titleBlock}>
+      <Text type="title1">{COPY.historyTitle}</Text>
+      <View style={s.appLine}>
+        <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants">
+          <TilePlate size="menu" state="ready" tint={tint} glyph={icon} />
+        </View>
+        <View style={s.appNames}>
+          <RNText style={{ ...wrappingType('headline'), color: nameColor }} maxFontSizeMultiplier={MAX_FONT_SCALE}>
+            {app.name}
+          </RNText>
+          {/* Its line is kept while the versions are read, so nothing under it moves when they land. */}
+          <Text type="footnote" color="text-2">
+            {loading ? ' ' : historyVersionCount(rows.length)}
+          </Text>
+        </View>
+      </View>
+    </View>
+  );
 
   const renderRow = ({ item, index }: { item: HistoryRow; index: number }) => (
     <HistoryRowView
       row={item}
       app={app}
       access={access}
-      appHue={appHue}
+      proseApps={proseApps}
       predecessorId={snapshots[item.index + 1]?.id}
+      activeId={activeId}
       expanded={item.id === expandedId}
+      busy={busy?.id === item.id ? busy.action : null}
       isFirst={index === 0}
-      isLast={index === filtered.length - 1}
+      isLast={index === rows.length - 1}
       onToggle={() => setExpandedId(prev => (prev === item.id ? null : item.id))}
       onChangeIt={() => onChangeIt?.(app)}
-      onGoBack={() => setConfirm({ kind: 'restore', row: item })}
-      onStartCopy={() => setConfirm({ kind: 'copy', row: item })}
+      onUseVersion={() => switchVersion(item)}
+      onMakeCopy={() => askCopy(item)}
     />
   );
 
   return (
-    <View style={[styles.root, { backgroundColor: p.bg }]}>
+    <View style={s.root}>
       {/* Keyed by the text size, as a sheet's frame is: iOS keeps every text measured at the size it
           was first laid out at, so a size changed while History shows left the title and the rows cut
-          to pieces. What History holds (the versions, the open row, the filter, an open question) is
-          state above this and survives; the list's scroll position starts again. */}
-      <React.Fragment key={fontScale}>
-        <View style={[styles.header, { borderBottomColor: p.cardBorder }]}>
-          <TouchableOpacity
-            onPress={onBack}
-            hitSlop={10}
-            accessibilityRole="button"
-            accessibilityLabel={COPY.backLabel}
-            style={[styles.backBtn, { backgroundColor: p.card, borderColor: p.cardBorder }]}
-          >
-            <View style={[styles.backChevron, { borderColor: p.text }]} />
-          </TouchableOpacity>
-          <View style={styles.headerText}>
-            <Text style={TYPE_SCALE.screenTitle}>
-              <Text style={{ color: appHue }}>{app.name}</Text>
-              <Text style={{ color: p.text }}>{' ' + COPY.historyTitleSuffix}</Text>
-            </Text>
-            {oldest && (
-              <Text style={[TYPE_SCALE.caption, styles.subtitle, { color: p.textMuted }]}>
-                {historySubtitle(rows.length, formatRelativeTimestamp(oldest.createdAt))}
-              </Text>
-            )}
-          </View>
-          <TouchableOpacity
-            onPress={onReport}
-            hitSlop={10}
-            accessibilityRole="button"
-            style={[styles.headerReportBtn, { borderColor: p.cardBorder }]}
-          >
-            <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{COPY.historyReportAction}</Text>
-          </TouchableOpacity>
+          to pieces. What History holds (the versions, the open row, an open question) is state above
+          this and survives; the list's scroll position starts again. */}
+      <React.Fragment key={t.fontScale}>
+        <View style={s.header}>
+          <BackButton onPress={onBack} />
+          <Button label={COPY.historyReportAction} variant="plain" size="small" onPress={onReport} />
         </View>
-
-        {!loading && (
-        <View style={styles.pillRow}>
-          {pills.map(pill => {
-            const selected = pill.key === filter;
-            const count = pill.key === 'all' ? undefined : counts[pill.key];
-            if (pill.key !== 'all' && count === 0) return null;
-            return (
-              <TouchableOpacity
-                key={pill.key}
-                onPress={() => setFilter(pill.key)}
-                style={[
-                  styles.pill,
-                  { borderColor: p.cardBorder, backgroundColor: selected ? p.text : p.bg },
-                ]}
-              >
-                <Text style={[TYPE_SCALE.caption, { color: selected ? p.onAccent : p.textMuted }]}>{pill.label}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </View>
-        )}
 
         {loading ? (
-          <HistoryLoadingRows />
-        ) : (
-          <FlatList data={filtered} keyExtractor={row => row.id} renderItem={renderRow} contentContainerStyle={styles.list} />
-        )}
-
-        {toast && (
-          <View style={[styles.toast, { backgroundColor: p.text }]}>
-            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.onAccent }]}>{toast.text}</Text>
+          <View>
+            {titleBlock}
+            <HistoryLoadingRows />
           </View>
+        ) : (
+          <FlatList
+            data={rows}
+            keyExtractor={row => row.id}
+            renderItem={renderRow}
+            ListHeaderComponent={titleBlock}
+            contentContainerStyle={s.list}
+          />
         )}
       </React.Fragment>
 
-      {/* The confirm sheet (E7/D11): the SAFE option (`Cancel`) is the large, full-width button; the
-          consequential action is demoted to plain text beneath it — never the other way around. */}
-      <ConfirmSheet
-        confirm={confirm && confirmContent(confirm, app.name)}
-        busy={confirmBusy}
-        onCancel={() => setConfirm(null)}
-        onConfirm={confirm?.kind === 'restore' ? confirmRestore : confirmCopy}
-      >
-        {confirm?.kind === 'restore' && <RestoreReassurance diff={restoreDiff} />}
-      </ConfirmSheet>
+      <CopyQuestionSheet
+        visible={asking}
+        appName={app.name}
+        onCopyData={() => answerCopy('copy')}
+        onStartFresh={() => answerCopy('fresh')}
+        onClose={leaveQuestion}
+      />
     </View>
   );
 }
@@ -347,45 +414,68 @@ interface HistoryRowViewProps {
   row: HistoryRow;
   app: InstalledApp;
   access: StoreAccess;
-  appHue: string;
+  proseApps: { name: string; color: string }[];
   predecessorId: string | undefined;
+  /** The current version, which the hidden-data line compares this row's version with. */
+  activeId: string | null;
   expanded: boolean;
-  /** Timeline-segment terminators: the first row's line starts at the dot, the last row's ends
-   *  there, and a lone row draws no line at all. Derived from the `FlatList` index, so a filter
-   *  change re-terminates the visible list rather than the unfiltered one. */
+  /** This row's action in flight, which shows its busy words. */
+  busy: 'use-version' | 'make-copy' | null;
+  /** Rail terminators: the newest row's segment starts at its dot, v1's ends there, and a lone row
+   *  draws no rail at all. */
   isFirst: boolean;
   isLast: boolean;
   onToggle: () => void;
   onChangeIt: () => void;
-  onGoBack: () => void;
-  onStartCopy: () => void;
+  onUseVersion: () => void;
+  onMakeCopy: () => void;
 }
 
 function HistoryRowView({
   row,
   app,
   access,
-  appHue,
+  proseApps,
   predecessorId,
+  activeId,
   expanded,
+  busy,
   isFirst,
   isLast,
   onToggle,
   onChangeIt,
-  onGoBack,
-  onStartCopy,
+  onUseVersion,
+  onMakeCopy,
 }: Readonly<HistoryRowViewProps>) {
-  const p = SHELL_PALETTE;
+  const t = useTokens();
+  const s = styles(t);
   const [annotationFields, setAnnotationFields] = useState<string[]>([]);
-  const badge = row.kind ? KIND_BADGE[row.kind] : null;
-  const proseApps = useMemo(() => [{ name: app.name, color: appHue }], [app.name, appHue]);
+  const [hiddenData, setHiddenData] = useState<RestoreDiffState>(RESTORE_DIFF_NONE);
+  const chip = row.kind ? KIND_CHIP[row.kind] : null;
 
-  // The `4a` timeline (design :28, :31), painted as a per-row segment rather than one absolute
-  // overlay across the list: a bar spanning a scrolling `FlatList` either does not scroll with the
-  // content or needs measurement, and it re-breaks every time a filter changes the row count.
-  // Segments abut because `rowWrap` carries its 10px gap as padding, which the line spans.
-  const dotColor = row.isCurrent ? STATUS_COLORS.done : (badge?.fg ?? p.textMuted);
-  const ringColor = row.isCurrent ? CURRENT_DOT_RING : p.cardBorder;
+  // Whether going to this version would hide saved data, asked when the row opens: said before
+  // either action is tapped, since both act at once.
+  useEffect(() => {
+    if (!expanded || row.isCurrent || activeId == null) {
+      setHiddenData(RESTORE_DIFF_NONE);
+      return;
+    }
+    let cancelled = false;
+    setHiddenData({ status: 'pending' });
+    fieldsLeavingViewOnRestore(access, app, row.id, activeId)
+      .then(fields => {
+        if (!cancelled) setHiddenData({ status: 'ready', fields });
+      })
+      .catch((e) => {
+        if (!cancelled) {
+          setHiddenData(RESTORE_DIFF_NONE);
+          historyOperationFailed('hidden-data', e);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [expanded, row.isCurrent, activeId, access, app, row.id]);
 
   useEffect(() => {
     if (!expanded || predecessorId == null) {
@@ -409,277 +499,156 @@ function HistoryRowView({
     };
   }, [expanded, predecessorId, access, app, row.id]);
 
+  // The person's words are the hero, in the italic that marks them as theirs; a version made with
+  // no words of theirs leads with Whim's summary instead, upright.
+  const words =
+    row.promptText.length > 0 ? (
+      <Text type="title3" italic>
+        {row.headline}
+      </Text>
+    ) : (
+      <Prose text={row.headline} marks={row.marks} storedPrompt={row.promptText} apps={proseApps} type="title3" color="text" />
+    );
+  let summary: React.ReactNode = null;
+  if (row.result) {
+    summary = <Prose text={row.result.text} marks={row.result.marks} storedPrompt={row.promptText} apps={proseApps} type="callout" color="text-2" />;
+  } else if (row.isInstall) {
+    summary = (
+      <Text type="callout" color="text-2">
+        {COPY.historyInstallLabel}
+      </Text>
+    );
+  }
+
   return (
-    <View style={styles.rowWrap}>
-      {!(isFirst && isLast) && (
-        <View style={[styles.timeline, timelineExtent(isFirst, isLast), { backgroundColor: p.cardBorder }]} />
-      )}
-      <View style={[styles.marker, { backgroundColor: p.bg, borderColor: ringColor }]}>
-        <View style={[styles.markerDot, { backgroundColor: dotColor }]} />
+    <View style={s.row}>
+      {!(isFirst && isLast) && <View style={[s.rail, railExtent(isFirst, isLast, dotCentre(t))]} />}
+      <View style={s.ring}>
+        <View style={[s.dot, row.isCurrent && s.dotCurrent]} />
       </View>
-      <TouchableOpacity
-        style={[
-          styles.card,
-          { backgroundColor: expanded ? p.card : p.bg, borderColor: p.cardBorder },
-        ]}
-        onPress={onToggle}
-        activeOpacity={0.8}
-      >
-        <View style={styles.cardHeader}>
-          {badge && row.kind && (
-            <View style={[styles.kindBadge, { backgroundColor: badge.bg }]}>
-              <Text style={[TYPE_SCALE.kindBadge, { color: badge.fg }]}>{KIND_LABEL[row.kind]}</Text>
-            </View>
-          )}
-          <Text style={[TYPE_SCALE.metaPlain, { color: p.textMuted }]}>{row.when}</Text>
-          <Text style={[TYPE_SCALE.metaPlain, styles.versionLabel, { color: p.textMuted }]}>{row.version}</Text>
-        </View>
-        <Text style={[TYPE_SCALE.metaWide, styles.originLine, { color: p.textMuted }]}>
-          {row.origin === 'you-said' ? COPY.historyOriginYouSaid : COPY.historyOriginUnprompted}
-        </Text>
-        <WhimProse
-          text={row.headline}
-          apps={proseApps}
-          storedPrompt={row.promptText}
-          marks={row.marks}
-          style={[TYPE_SCALE.bodyEmphatic, styles.headline, { color: p.text }]}
-        />
-        {row.isInstall && (
-          <Text style={[TYPE_SCALE.caption, styles.installLabel, { color: p.textMuted }]}>
-            {COPY.historyInstallLabel}
-          </Text>
-        )}
+      <View style={expanded ? s.card : s.flat}>
+        <Pressable onPress={onToggle} accessibilityRole="button" accessibilityState={{ expanded }}>
+          {words}
+          {summary && <View style={s.summary}>{summary}</View>}
+          <View style={s.meta}>
+            <Text type="footnote" color="text-2" tabular>
+              {row.meta}
+            </Text>
+            {chip && (
+              <View style={s.chip}>
+                <Icon name={chip.icon} size={12} color={t.colors['text-2']} />
+                <Text type="caption" color="text-2">
+                  {chip.label}
+                </Text>
+              </View>
+            )}
+            {row.isCurrent && (
+              <View style={s.current}>
+                <Text type="caption" color="on-ink">
+                  {COPY.historyCurrent}
+                </Text>
+              </View>
+            )}
+          </View>
+        </Pressable>
 
         {expanded && (
-          <View style={[styles.expandedBody, { borderTopColor: p.cardBorder }]}>
-            {row.result && (
-              <WhimProse
-                text={row.result.text}
-                apps={proseApps}
-                storedPrompt={row.promptText}
-                marks={row.result.marks}
-                style={[TYPE_SCALE.body, { color: p.textMuted }]}
-              />
-            )}
+          <View style={s.expanded}>
             {row.touched.length > 0 && (
               <>
-                <Text style={[TYPE_SCALE.metaWide, { color: p.textMuted, marginTop: SPACING.sm }]}>
+                <Text type="footnote" color="text-2" header>
                   {COPY.historyTouchedEyebrow}
                 </Text>
-                <View style={styles.chipRow}>
+                <View style={s.touched}>
                   {row.touched.map(area => (
-                    <View key={area} style={[styles.chip, { backgroundColor: p.bg, borderColor: p.cardBorder }]}>
-                      <Text style={[TYPE_SCALE.caption, { color: p.textMuted }]}>{area}</Text>
+                    <View key={area} style={s.chip}>
+                      <Text type="caption" color="text-2">
+                        {area}
+                      </Text>
                     </View>
                   ))}
                 </View>
               </>
             )}
+            {/* Product copy, not agent prose: no mark, and never fainter than `text-2`. */}
             {annotationFields.length > 0 && (
-              <WhimProse
-                text={addedFieldsLine(annotationFields)}
-                marks={[{ cls: 'hedge', start: 0, end: addedFieldsLine(annotationFields).length }]}
-                style={[TYPE_SCALE.caption, { marginTop: SPACING.xs }]}
-              />
+              <Text type="footnote" color="text-2">
+                {addedFieldsLine(annotationFields)}
+              </Text>
             )}
-            <View style={styles.actionRow}>
-              {row.actions.includes('change-from-here') && (
-                <ActionButton label={COPY.historyChangeFromHere} primary onPress={onChangeIt} />
+            <HiddenDataLine diff={hiddenData} />
+            <View style={s.actions}>
+              {row.actions.includes('change-it') && <Button label={COPY.actionChangeIt} variant="ember" size="medium" onPress={onChangeIt} />}
+              {row.actions.includes('use-version') && (
+                <Button
+                  label={COPY.historyUseVersion}
+                  variant="secondary"
+                  size="medium"
+                  busy={busy === 'use-version' ? COPY.historyUseVersionBusy : undefined}
+                  onPress={onUseVersion}
+                />
               )}
-              {row.actions.includes('go-back') && (
-                <ActionButton label={COPY.historyGoBackToThis} primary onPress={onGoBack} />
-              )}
-              {row.actions.includes('start-copy') && (
-                <ActionButton label={COPY.historyStartCopyHere} primary={false} onPress={onStartCopy} />
+              {row.actions.includes('make-copy') && (
+                <Button
+                  label={COPY.historyMakeCopyHere}
+                  variant="plain"
+                  size="medium"
+                  busy={busy === 'make-copy' ? COPY.historyMakeCopyBusy : undefined}
+                  onPress={onMakeCopy}
+                />
               )}
             </View>
           </View>
         )}
-      </TouchableOpacity>
-      {row.isCurrent && (
-        <Text style={[TYPE_SCALE.eyebrow, styles.currentMarker, { color: STATUS_COLORS.done }]}>
-          {COPY.historyCurrentMarker}
-        </Text>
-      )}
+      </View>
     </View>
   );
 }
 
-function ActionButton({
-  label,
-  primary,
-  onPress,
-}: Readonly<{ label: string; primary: boolean; onPress: () => void }>) {
-  const p = SHELL_PALETTE;
-  return (
-    <TouchableOpacity
-      onPress={onPress}
-      style={[
-        styles.actionBtn,
-        primary ? { backgroundColor: p.text } : [styles.actionBtnSecondary, { borderColor: p.cardBorder }],
-      ]}
-    >
-      <Text style={[TYPE_SCALE.caption, styles.actionBtnLabel, { color: primary ? p.onAccent : p.textMuted }]}>
-        {label}
-      </Text>
-    </TouchableOpacity>
-  );
-}
-
-/** What the restore or copy confirm says about `confirm`'s row. */
-function confirmContent(confirm: ConfirmState, appName: string): ConfirmSheetContent {
-  const version = confirm.row.version;
-  return confirm.kind === 'restore'
-    ? { title: restoreSheetTitle(version), body: restoreSheetBody(version), confirmLabel: COPY.historyRestoreConfirm, busyLabel: COPY.historyRestoreConfirmBusy }
-    : { title: copySheetTitle(version), body: copySheetBody(appName), confirmLabel: COPY.historyCopyConfirm, busyLabel: COPY.historyCopyConfirmBusy };
-}
-
 /**
- * The restore confirm's reassurance line, which resolves IN PLACE: while the diff is being computed
- * a muted placeholder holds its space, so the sheet does not reflow when the sentence arrives (D6 —
+ * An open row's hidden-data line, which resolves IN PLACE: while the diff is being computed a
+ * placeholder holds its space, so the actions under it do not move when the sentence arrives (D6 —
  * a placeholder, deliberately not a skeleton: one sentence has no row shape to mimic).
  */
-function RestoreReassurance({ diff }: Readonly<{ diff: RestoreDiffState }>) {
-  const p = SHELL_PALETTE;
+function HiddenDataLine({ diff }: Readonly<{ diff: RestoreDiffState }>) {
+  const t = useTokens();
+  const s = styles(t);
   const line = restoreDiffLine(diff);
   if (line === 'pending') {
-    return (
-      <View
-        accessibilityRole="progressbar"
-        accessibilityLabel={COPY.historyReassurancePending}
-        style={[styles.reassurancePending, { backgroundColor: p.cardBorder }]}
-      />
-    );
+    return <View accessibilityRole="progressbar" accessibilityLabel={COPY.historyReassurancePending} style={s.hiddenDataPending} />;
   }
   if (line === 'reassurance') {
-    return <Text style={[TYPE_SCALE.caption, { color: p.textMuted, marginTop: SPACING.xs }]}>{COPY.historyReassurance}</Text>;
+    return (
+      <Text type="footnote" color="text-2" style={s.hiddenData}>
+        {COPY.historyHiddenData}
+      </Text>
+    );
   }
   return null;
 }
 
 /**
- * The first-load timeline (D4 — the one legitimate skeleton here: a true content load whose row
- * shape is already known). Geometry is the real row's own `rowWrap`/`marker`/`card` styles and the
- * `TYPE_SCALE` line heights the real text uses, so the list does not jump when the rows land; the
- * only motion is `BreathingView`'s. The row COUNT is unknown before the read, so it is a small
- * fixed number that reads as "a list is coming" rather than a promise of how long it is.
+ * The first-load timeline (D4 — a true content load whose row shape is already known): the real
+ * row's geometry, its dot on the rail and blocks the height of the words, the summary and the meta
+ * line. The row COUNT is unknown before the read, so it is a small fixed number that reads as "a
+ * list is coming" rather than a promise of how long it is.
  */
 function HistoryLoadingRows() {
-  const p = SHELL_PALETTE;
+  const t = useTokens();
+  const s = styles(t);
+  const scale = Math.min(t.fontScale, MAX_FONT_SCALE);
   return (
-    <View style={styles.list} accessibilityRole="progressbar" accessibilityLabel={COPY.historyLoadingLabel}>
+    <Skeleton label={COPY.historyLoadingLabel}>
       {Array.from({ length: HISTORY_SKELETON_ROWS }, (_, i) => (
-        <View key={`skeleton-${i}`} style={styles.rowWrap}>
-          <View style={[styles.marker, { backgroundColor: p.bg, borderColor: p.cardBorder }]}>
-            <View style={[styles.markerDot, { backgroundColor: p.cardBorder }]} />
+        <View key={`skeleton-${i}`} style={s.skeletonRow}>
+          <View style={s.ring}>
+            <View style={s.dot} />
           </View>
-          <View style={[styles.card, { backgroundColor: p.bg, borderColor: p.cardBorder }]}>
-            <BreathingView delayMs={i * 120} style={[styles.skeletonMeta, { backgroundColor: p.cardBorder }]} />
-            <BreathingView delayMs={i * 120 + 90} style={[styles.skeletonHeadline, { backgroundColor: p.cardBorder }]} />
-          </View>
+          <SkeletonBlock width="72%" height={TYPE_SCALE.title3.lineHeight * scale} radius={RADII.xs.radius} />
+          <SkeletonBlock width="56%" height={TYPE_SCALE.callout.lineHeight * scale} radius={RADII.xs.radius} />
+          <SkeletonBlock width="32%" height={TYPE_SCALE.footnote.lineHeight * scale} radius={RADII.xs.radius} />
         </View>
       ))}
-    </View>
+    </Skeleton>
   );
 }
-
-const styles = StyleSheet.create({
-  root: { flex: 1 },
-  header: {
-    flexDirection: 'row',
-    alignItems: 'center',
-    gap: 12,
-    paddingHorizontal: SPACING.md,
-    paddingVertical: SPACING.sm,
-    borderBottomWidth: StyleSheet.hairlineWidth,
-  },
-  // Design :23 — a 42x42 circular button, no text label. There is no SVG library in this app, so
-  // the chevron is a 10x10 box wearing two borders, rotated 45°. RN renders square line-caps where
-  // the design asks for round ones; that is an accepted, unavoidable gap, NOT something to
-  // compensate for with a different stroke width.
-  backBtn: {
-    width: 42,
-    height: 42,
-    borderRadius: RADIUS.chip,
-    borderWidth: 1,
-    alignItems: 'center',
-    justifyContent: 'center',
-    flexShrink: 0,
-  },
-  backChevron: {
-    width: 10,
-    height: 10,
-    borderLeftWidth: 2.4,
-    borderBottomWidth: 2.4,
-    transform: [{ rotate: '45deg' }],
-    marginLeft: 2,
-  },
-  // Design :24's `min-width:0`: without it a long app name pushes the title past the now
-  // fixed-width back button instead of wrapping inside the header.
-  headerText: { flex: 1 },
-  headerReportBtn: {
-    borderRadius: RADIUS.chip,
-    borderWidth: 1,
-    paddingHorizontal: SPACING.sm,
-    paddingVertical: 6,
-    flexShrink: 0,
-  },
-  subtitle: { marginTop: 2 },
-  pillRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, paddingHorizontal: SPACING.md, paddingVertical: SPACING.sm },
-  pill: { borderRadius: RADIUS.chip, borderWidth: 1, paddingHorizontal: SPACING.sm, paddingVertical: 6 },
-  list: { paddingHorizontal: SPACING.md, paddingBottom: 40 },
-  // The row's inter-row gap is PADDING, not margin, so the absolute timeline segment spans it and
-  // meets the next row's segment (design :30). That continuity is guaranteed, not hoped for:
-  // Yoga's inset path (`ReactCommon/yoga/yoga/algorithm/AbsoluteLayout.cpp`,
-  // `positionAbsoluteChild`, and the both-insets sizing beneath it) resolves a child that defines
-  // its insets as inset + the containing node's BORDER + margin, never consulting padding and with
-  // no errata check at all. Padding only enters for an absolute child that defines NO inset —
-  // that is the case `Errata::AbsolutePositionWithoutInsetsExcludesPadding` is named after, and
-  // the only case where border-box-vs-padding-box resolution is version-dependent. `rowWrap` has
-  // no border, so `{top: 0, bottom: 0}` covers its full measured height, the 10px included.
-  // The 26px gutter clearing the dot therefore did NOT have to live on the flow children
-  // (`card`, `currentMarker`) as `marginLeft` — `paddingLeft: 26` here would render identically,
-  // matching the design's own CSS. It stays as-is because it is correct and churn is not free.
-  rowWrap: { paddingBottom: 10 },
-  // 12.75 + 1.5/2 = 13.5, the dot's centre line (design :28).
-  timeline: { position: 'absolute', left: 12.75, width: 1.5 },
-  // 2.5 + 22/2 = 13.5 across, 10.5 + 22/2 = 21.5 down — the same centre. The 19px paper-coloured
-  // interior is what makes the line appear to pass behind the dot (design :31's
-  // `box-shadow: 0 0 0 4px #fbfaf8`); the 1.5px border is the ring outside it.
-  marker: {
-    position: 'absolute',
-    left: 2.5,
-    top: 10.5,
-    width: 22,
-    height: 22,
-    borderRadius: 11,
-    borderWidth: 1.5,
-    alignItems: 'center',
-    justifyContent: 'center',
-  },
-  markerDot: { width: 11, height: 11, borderRadius: 6 },
-  // 14/15 is design :32; no SPACING step matches, so it stays a cited literal (ruling R9).
-  card: { borderRadius: RADIUS.card, borderWidth: 1, marginLeft: 26, paddingVertical: 14, paddingHorizontal: 15 },
-  cardHeader: { flexDirection: 'row', alignItems: 'center', gap: 8 },
-  versionLabel: { marginLeft: 'auto' },
-  originLine: { marginTop: 4 },
-  headline: { marginTop: 4 },
-  // Upright: Instrument Sans ships no italic face, and a synthesized one is the system font's.
-  installLabel: { marginTop: 4 },
-  currentMarker: { marginTop: 8, marginLeft: 26 },
-  kindBadge: { borderRadius: 6, paddingHorizontal: 8, paddingVertical: 3 },
-  expandedBody: { marginTop: SPACING.sm, paddingTop: SPACING.sm, borderTopWidth: StyleSheet.hairlineWidth },
-  chipRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 6, marginTop: 6 },
-  chip: { borderRadius: 8, borderWidth: 1, paddingHorizontal: 10, paddingVertical: 6 },
-  actionRow: { flexDirection: 'row', flexWrap: 'wrap', gap: 8, marginTop: SPACING.sm },
-  actionBtn: { borderRadius: 12, paddingHorizontal: 14, paddingVertical: 10 },
-  actionBtnSecondary: { backgroundColor: 'transparent', borderWidth: 1 },
-  actionBtnLabel: { fontWeight: '600' },
-  // Design :73 — dark ink face, white text, no border. `16` is deliberate and has no RADIUS step
-  // between `field` (14) and `card` (18); do not "correct" it to a token.
-  toast: { position: 'absolute', left: 24, right: 24, bottom: 34, borderRadius: 16, paddingVertical: 13, paddingHorizontal: 16 },
-  // The reassurance line's placeholder holds exactly the height that one caption line will take.
-  reassurancePending: { height: TYPE_SCALE.caption.lineHeight, width: '76%', borderRadius: RADIUS.chip, marginTop: SPACING.xs, opacity: 0.6 },
-  skeletonMeta: { height: TYPE_SCALE.metaPlain.lineHeight, width: '46%', borderRadius: RADIUS.chip },
-  skeletonHeadline: { height: TYPE_SCALE.bodyEmphatic.lineHeight, borderRadius: RADIUS.chip, marginTop: 4 },
-});

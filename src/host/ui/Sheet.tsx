@@ -22,7 +22,8 @@
  * - Closes by scrim, close, Android back (and a hardware Escape, which Android delivers as back),
  *   the screen reader's escape gesture, or a drag. `onClose` must close it (`visible` false). Android
  *   back is the exception a page may take over (`useSheetBack`): the Modal consumes the press, so a
- *   page that steps back before it closes registers there, never on `BackHandler`.
+ *   page that steps back before it closes registers there, never on `BackHandler`. From the moment
+ *   it starts to close, neither the card nor the scrim takes a touch.
  * - Modal to screen readers (`accessibilityViewIsModal`; its own window on Android), focus moves to
  *   its title on open, close reads "Close".
  * - The keyboard: the card's bottom padding follows the keyboard frame by frame on the keyboard's own
@@ -314,6 +315,7 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
           <OverlayShownContext.Provider value={presented}>
             <SheetFrame
               key={t.fontScale}
+              closing={!open}
               motion={{ y, height, fade }}
               reduceMotion={t.reduceMotion}
               title={title}
@@ -334,6 +336,8 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
 }
 
 interface SheetFrameProps {
+  /** The sheet is leaving (or not yet open): neither the card nor the scrim takes a touch. */
+  closing: boolean;
   motion: SheetMotion;
   reduceMotion: boolean;
   title?: string;
@@ -357,7 +361,7 @@ const FLING = springConfig('fling');
 const FADE_OUT = timing('fadeOut', true);
 const FADE_IN = timing('fadeIn', true);
 
-function SheetFrame({ motion, reduceMotion, title, detent, closeLabel, onClose, onBack, onDragClosed, onSettled, children }: Readonly<SheetFrameProps>) {
+function SheetFrame({ closing, motion, reduceMotion, title, detent, closeLabel, onClose, onBack, onDragClosed, onSettled, children }: Readonly<SheetFrameProps>) {
   const t = useTokens();
   const s = styles(t);
   const insets = useSafeAreaInsets();
@@ -425,8 +429,10 @@ function SheetFrame({ motion, reduceMotion, title, detent, closeLabel, onClose, 
     height.value = event.nativeEvent.layout.height;
   };
 
+  // A sheet that has started to leave takes no touch, from the commit that closes it on: a tap meant
+  // for what is under it (the orb, right after a close) would otherwise land on a row still sliding out.
   return (
-    <View ref={frame} collapsable={false} onLayout={onFrameLayout} style={s.frame}>
+    <View ref={frame} collapsable={false} onLayout={onFrameLayout} style={s.frame} pointerEvents={closing ? 'none' : 'auto'}>
       <Animated.View style={[s.scrim, scrimMotion]} pointerEvents="box-none">
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessible={false} accessibilityRole="none" importantForAccessibility="no" />
       </Animated.View>
