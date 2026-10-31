@@ -1,0 +1,242 @@
+import {
+  defineApp,
+  Screen,
+  Stack,
+  Row,
+  Grid,
+  Card,
+  Text,
+  Icon,
+  Button,
+  TextInput,
+  Modal,
+  List,
+  ListItem,
+  EmptyState,
+  toast,
+  cues,
+  useState,
+  useEffect,
+  storage,
+  type SchemaArtifact,
+} from 'vc-sdk';
+
+// Scores live in two key-value values: the players, and the stack of point changes still
+// undoable. Nothing else is needed, so the schema declares no collections.
+const SCHEMA: SchemaArtifact = { schemaVersion: 1, collections: {} };
+
+type Player = { id: number; name: string; score: number };
+type Change = { playerId: number; points: number };
+
+const DEFAULT_NAMES = ['Player 1', 'Player 2', 'Player 3', 'Player 4'];
+
+// The board opens ready to play: four players on zero until the person changes them.
+function seedPlayers(): Player[] {
+  return DEFAULT_NAMES.map((name, index) => ({ id: index + 1, name, score: 0 }));
+}
+
+function readPlayers(value: unknown): Player[] | null {
+  if (!Array.isArray(value)) return null;
+  const players: Player[] = [];
+  for (const row of value) {
+    if (typeof row !== 'object' || row === null) continue;
+    const record = row as { [field: string]: unknown };
+    const id = Number(record.id);
+    const name = String(record.name ?? '').trim();
+    if (!Number.isFinite(id) || name === '') continue;
+    const score = Number(record.score);
+    players.push({ id, name, score: Number.isFinite(score) ? score : 0 });
+  }
+  return players.length > 0 ? players : null;
+}
+
+function readChanges(value: unknown): Change[] {
+  if (!Array.isArray(value)) return [];
+  const changes: Change[] = [];
+  for (const row of value) {
+    if (typeof row !== 'object' || row === null) continue;
+    const record = row as { [field: string]: unknown };
+    const playerId = Number(record.playerId);
+    const points = Number(record.points);
+    if (!Number.isFinite(playerId) || !Number.isFinite(points)) continue;
+    changes.push({ playerId, points });
+  }
+  return changes;
+}
+
+function Scoreboard() {
+  const [players, setPlayers] = useState<Player[]>(seedPlayers);
+  const [history, setHistory] = useState<Change[]>([]);
+  const [ready, setReady] = useState(false);
+  const [managing, setManaging] = useState(false);
+  const [name, setName] = useState('');
+
+  // Load once, when the screen opens.
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      const savedPlayers = await storage.kv.get('players');
+      const savedHistory = await storage.kv.get('history');
+      if (!live) return;
+      const loaded = readPlayers(savedPlayers);
+      if (loaded !== null) setPlayers(loaded);
+      setHistory(readChanges(savedHistory));
+      setReady(true);
+    })().catch(() => {
+      if (!live) return;
+      setReady(true);
+      toast('Couldn’t load your saved scores.');
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // Save on every change, once the saved game has been read.
+  useEffect(() => {
+    if (!ready) return;
+    storage.kv.set('players', players).catch(() => toast('Couldn’t save the scores.'));
+  }, [players, ready]);
+
+  useEffect(() => {
+    if (!ready) return;
+    storage.kv.set('history', history).catch(() => toast('Couldn’t save the undo history.'));
+  }, [history, ready]);
+
+  const addPoint = (player: Player) => {
+    setPlayers(players.map((p) => (p.id === player.id ? { ...p, score: p.score + 1 } : p)));
+    setHistory([...history, { playerId: player.id, points: 1 }]);
+    cues.haptic('tap').catch(() => {});
+  };
+
+  const undo = () => {
+    const last = history[history.length - 1];
+    if (last === undefined) return;
+    const player = players.find((p) => p.id === last.playerId);
+    setPlayers(players.map((p) => (p.id === last.playerId ? { ...p, score: p.score - last.points } : p)));
+    setHistory(history.slice(0, -1));
+    cues.haptic('double').catch(() => {});
+    toast(player === undefined ? 'Undid the last point' : `Undid ${last.points} point for ${player.name}`);
+  };
+
+  const newGame = () => {
+    setPlayers(players.map((p) => ({ ...p, score: 0 })));
+    setHistory([]);
+    toast('Scores reset — the same players play on');
+  };
+
+  const addPlayer = () => {
+    const trimmed = name.trim();
+    if (trimmed === '') return;
+    const nextId = players.reduce((max, p) => Math.max(max, p.id), 0) + 1;
+    setPlayers([...players, { id: nextId, name: trimmed, score: 0 }]);
+    setName('');
+    setManaging(false);
+    toast(`${trimmed} joined the table`);
+  };
+
+  const removePlayer = (player: Player) => {
+    setPlayers(players.filter((p) => p.id !== player.id));
+    setHistory(history.filter((change) => change.playerId !== player.id));
+    toast(`${player.name} left the table`);
+  };
+
+  const leader = players.length === 0 ? undefined : players.reduce((best, p) => (p.score > best.score ? p : best), players[0]);
+  const undoable = history.length;
+
+  return (
+    <Screen
+      title="Game Night"
+      action={{ icon: 'plus', label: 'Add or remove players', onPress: () => setManaging(true) }}
+    >
+      <Stack gap="lg">
+        {leader === undefined ? (
+          <EmptyState icon="dice-5" title="No players yet" hint="Tap + to add the first player." />
+        ) : (
+          <Stack gap="lg">
+            <Card>
+              <Row justify="between">
+                <Row gap="sm">
+                  <Icon name="trophy" color="warning" label="Leading" />
+                  <Stack gap="none">
+                    <Text size="caption" color="text-muted">Leading</Text>
+                    <Text size="subtitle">{leader.name}</Text>
+                  </Stack>
+                </Row>
+                <Text size="display" color="primary">{String(leader.score)}</Text>
+              </Row>
+            </Card>
+
+            <Grid columns={2}>
+              {players.map((player) => (
+                <Card key={player.id} onPress={() => addPoint(player)}>
+                  <Stack gap="xs">
+                    <Row justify="between">
+                      <Text weight="semibold">{player.name}</Text>
+                      <Icon name="plus" size="sm" color="primary" label={`Add a point for ${player.name}`} />
+                    </Row>
+                    <Text size="display" color="primary" align="center">{String(player.score)}</Text>
+                  </Stack>
+                </Card>
+              ))}
+            </Grid>
+          </Stack>
+        )}
+
+        <Row>
+          <Button
+            label="Undo last point"
+            variant="secondary"
+            icon="arrow-left"
+            disabled={undoable === 0}
+            onPress={undo}
+          />
+          <Button label="New game" variant="ghost" icon="repeat" disabled={players.length === 0} onPress={newGame} />
+        </Row>
+
+        <Text size="caption" color="text-muted" align="center">
+          {undoable === 0
+            ? 'Tap a player’s card to add a point.'
+            : `${undoable} ${undoable === 1 ? 'point' : 'points'} can still be undone.`}
+        </Text>
+      </Stack>
+
+      <Modal visible={managing} title="Players" onClose={() => setManaging(false)}>
+        <Stack gap="lg">
+          <TextInput label="New player" value={name} placeholder="Name" onChange={setName} />
+          <Button label="Add player" icon="plus" disabled={name.trim() === ''} onPress={addPlayer} />
+          <Stack gap="sm">
+            <Text size="caption" color="text-muted">Tap a player to remove them.</Text>
+            {players.length === 0 ? (
+              <Card>
+                <EmptyState icon="users" title="Nobody at the table" hint="Add a player above." />
+              </Card>
+            ) : (
+              <List>
+                {players.map((player) => (
+                  <ListItem
+                    key={player.id}
+                    title={player.name}
+                    trailing={String(player.score)}
+                    icon="user"
+                    onPress={() => removePlayer(player)}
+                  />
+                ))}
+              </List>
+            )}
+          </Stack>
+        </Stack>
+      </Modal>
+    </Screen>
+  );
+}
+
+export default defineApp({
+  name: 'Game Night Scores',
+  initial: 'Scoreboard',
+  screens: { Scoreboard },
+  capabilities: ['storage', 'cues'],
+  schema: SCHEMA,
+  tint: ['violet', 'indigo', 'purple'],
+  icon: 'dice-5',
+});

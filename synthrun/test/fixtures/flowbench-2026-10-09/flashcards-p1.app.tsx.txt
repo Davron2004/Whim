@@ -1,0 +1,353 @@
+import {
+  defineApp,
+  nav,
+  Screen,
+  Stack,
+  Row,
+  Card,
+  Divider,
+  Text,
+  Icon,
+  Button,
+  List,
+  ListItem,
+  EmptyState,
+  Modal,
+  TextInput,
+  ProgressBar,
+  toast,
+  useState,
+  useEffect,
+  storage,
+  type SchemaArtifact,
+} from 'vc-sdk';
+
+// Flashcards: the cards due today, in due-date order, are reviewed one at a time. Marking a card
+// known pushes it further out on a small spacing ladder, so tomorrow's list stays short. The deck
+// is one kv value; the session queue and cursor live at module level because a screen gets only
+// its own name.
+const SCHEMA: SchemaArtifact = { schemaVersion: 1, collections: {} };
+
+const DAY = 86_400_000;
+// Days until a card comes back, by how many times it has already been marked known.
+const INTERVALS = [1, 3, 7, 14, 30];
+
+interface Card {
+  id: number;
+  front: string;
+  back: string;
+  due: number;
+  streak: number;
+}
+
+const DEFAULT_CARDS: Card[] = [
+  { id: 1, front: 'What is the capital of Australia?', back: 'Canberra', due: Date.now() - 2 * DAY - 3_600_000, streak: 0 },
+  { id: 2, front: 'What is 7 × 8?', back: '56', due: Date.now() - DAY, streak: 1 },
+  { id: 3, front: 'Who wrote Pride and Prejudice?', back: 'Jane Austen', due: Date.now() - 5 * 3_600_000, streak: 0 },
+  { id: 4, front: 'Which planet is the largest in our solar system?', back: 'Jupiter', due: Date.now() - 600_000, streak: 2 },
+  { id: 5, front: 'What gas do plants take in to make food?', back: 'Carbon dioxide', due: Date.now() - 2 * 3_600_000, streak: 1 },
+  { id: 6, front: 'How many continents are there on Earth?', back: 'Seven', due: Date.now() + 3 * DAY, streak: 3 },
+];
+
+// The deck, the ids due in this session, where we are in it, and whether one is running.
+let cards: Card[] = [];
+let dueQueue: number[] = [];
+let currentIndex = 0;
+let sessionActive = false;
+
+function startOfToday(): number {
+  const d = new Date();
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+
+function endOfToday(): number {
+  return startOfToday() + DAY;
+}
+
+function dueNow(all: Card[]): Card[] {
+  const cutoff = endOfToday();
+  return all.filter((c) => c.due < cutoff).sort((a, b) => a.due - b.due);
+}
+
+function dueLabel(due: number): string {
+  const today = startOfToday();
+  if (due >= today) return 'Due today';
+  const days = Math.round((today - due) / DAY);
+  return days <= 1 ? 'Due yesterday' : `Due ${days} days ago`;
+}
+
+function nextId(all: Card[]): number {
+  return all.reduce((max, c) => Math.max(max, c.id), 0) + 1;
+}
+
+function toCards(value: unknown): Card[] {
+  if (!Array.isArray(value)) return [];
+  return value.map((row, i) => {
+    const r = row as Record<string, unknown>;
+    return {
+      id: typeof r.id === 'number' ? r.id : i + 1,
+      front: String(r.front ?? ''),
+      back: String(r.back ?? ''),
+      due: typeof r.due === 'number' ? r.due : Date.now(),
+      streak: typeof r.streak === 'number' ? r.streak : 0,
+    };
+  });
+}
+
+function Due() {
+  const [list, setList] = useState<Card[]>([]);
+  const [later, setLater] = useState(0);
+  const [ready, setReady] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [front, setFront] = useState('');
+  const [back, setBack] = useState('');
+  const [opened, setOpened] = useState<Card | null>(null);
+
+  const show = (all: Card[]) => {
+    setList(dueNow(all));
+    setLater(all.filter((c) => c.due >= endOfToday()).length);
+  };
+
+  useEffect(() => {
+    let live = true;
+    (async () => {
+      const saved = await storage.kv.get('cards');
+      let loaded: Card[];
+      if (Array.isArray(saved)) {
+        loaded = toCards(saved);
+      } else {
+        loaded = DEFAULT_CARDS;
+        await storage.kv.set('cards', loaded);
+      }
+      if (!live) return;
+      cards = loaded;
+      show(loaded);
+      setReady(true);
+    })().catch(() => {
+      if (!live) return;
+      cards = DEFAULT_CARDS;
+      show(DEFAULT_CARDS);
+      setReady(true);
+      toast('Couldn’t load your deck.');
+    });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const addCard = () => {
+    const next: Card[] = [
+      ...cards,
+      { id: nextId(cards), front: front.trim(), back: back.trim(), due: Date.now(), streak: 0 },
+    ];
+    cards = next;
+    show(next);
+    setAdding(false);
+    setFront('');
+    setBack('');
+    storage.kv
+      .set('cards', next)
+      .then(() => toast('Card added'))
+      .catch(() => toast('Couldn’t save that card.'));
+  };
+
+  const removeCard = (card: Card) => {
+    const next = cards.filter((c) => c.id !== card.id);
+    cards = next;
+    show(next);
+    setOpened(null);
+    storage.kv
+      .set('cards', next)
+      .then(() => toast('Card removed'))
+      .catch(() => toast('Couldn’t remove that card.'));
+  };
+
+  const start = () => {
+    dueQueue = list.map((c) => c.id);
+    currentIndex = 0;
+    sessionActive = true;
+    if (dueQueue.length === 0) {
+      nav.navigate('Done');
+      return;
+    }
+    nav.navigate('Review');
+  };
+
+  return (
+    <Screen title="Flashcards" action={{ icon: 'plus', label: 'Add a card', onPress: () => setAdding(true) }}>
+      <Stack gap="lg">
+        <Card>
+          <Stack gap="sm">
+            <Row justify="between">
+              <Text>Due today</Text>
+              <Text size="title" color="primary">{String(list.length)}</Text>
+            </Row>
+            <Text size="caption" color="text-muted">
+              {later === 0
+                ? 'Nothing else scheduled yet.'
+                : `${later} more ${later === 1 ? 'card' : 'cards'} scheduled for later.`}
+            </Text>
+          </Stack>
+        </Card>
+
+        {list.length === 0 ? (
+          <EmptyState
+            icon={ready ? 'square-check' : 'hourglass'}
+            title={ready ? 'Nothing due today' : 'Loading your deck'}
+            hint={ready ? 'Tap + to add a card, or come back tomorrow.' : undefined}
+          />
+        ) : (
+          <List
+            items={list}
+            keyBy="id"
+            renderItem={(card) => (
+              <ListItem
+                title={card.front}
+                subtitle={dueLabel(card.due)}
+                icon="notebook-pen"
+                onPress={() => setOpened(card)}
+              />
+            )}
+          />
+        )}
+
+        <Button label="Start review" icon="list-checks" disabled={list.length === 0} onPress={start} />
+      </Stack>
+
+      <Modal visible={adding} title="Add a card" onClose={() => setAdding(false)}>
+        <TextInput label="Front" value={front} placeholder="What is the capital of Australia?" onChange={setFront} />
+        <TextInput label="Back" value={back} placeholder="Canberra" onChange={setBack} />
+        <Button label="Add card" icon="plus" disabled={front.trim() === ''} onPress={addCard} />
+      </Modal>
+
+      <Modal visible={opened !== null} title="Card" onClose={() => setOpened(null)}>
+        {opened && (
+          <Stack gap="lg">
+            <Stack gap="xs">
+              <Text size="caption" color="text-muted">Front</Text>
+              <Text>{opened.front}</Text>
+            </Stack>
+            <Stack gap="xs">
+              <Text size="caption" color="text-muted">Back</Text>
+              <Text>{opened.back === '' ? 'No answer written for this card.' : opened.back}</Text>
+            </Stack>
+            <Text size="caption" color="text-muted">
+              {opened.streak === 0 ? 'Not reviewed yet.' : `Marked known ${opened.streak} ${opened.streak === 1 ? 'time' : 'times'}.`}
+            </Text>
+            <Row>
+              <Button label="Remove" variant="danger" icon="trash-2" onPress={() => removeCard(opened)} />
+              <Button label="Done" variant="secondary" onPress={() => setOpened(null)} />
+            </Row>
+          </Stack>
+        )}
+      </Modal>
+    </Screen>
+  );
+}
+
+function Review() {
+  const [pos, setPos] = useState(currentIndex);
+  const [revealed, setRevealed] = useState(false);
+
+  const current = cards.find((c) => c.id === dueQueue[pos]);
+
+  const markKnown = () => {
+    if (current === undefined) return;
+    const gap = INTERVALS[Math.min(current.streak, INTERVALS.length - 1)];
+    const next = cards.map((c) =>
+      c.id === current.id ? { ...c, streak: c.streak + 1, due: startOfToday() + gap * DAY } : c,
+    );
+    cards = next;
+    storage.kv.set('cards', next).catch(() => toast('Couldn’t save that card.'));
+
+    const nextIndex = pos + 1;
+    currentIndex = nextIndex;
+    if (nextIndex >= dueQueue.length) {
+      nav.navigate('Done');
+      return;
+    }
+    setPos(nextIndex);
+    setRevealed(false);
+  };
+
+  if (!sessionActive || current === undefined) {
+    return (
+      <Screen title="Review">
+        <EmptyState icon="circle-check" title="Session complete" hint="Tap back to return to your cards." />
+        <Button label="See summary" icon="arrow-right" onPress={() => nav.navigate('Done')} />
+      </Screen>
+    );
+  }
+
+  return (
+    <Screen title="Review">
+      <Stack gap="lg">
+        <ProgressBar value={(pos + 1) / dueQueue.length} label={`${pos + 1} of ${dueQueue.length}`} />
+
+        <Card>
+          <Stack gap="lg">
+            <Stack gap="xs">
+              <Text size="caption" color="text-muted">Front</Text>
+              <Text size="subtitle">{current.front}</Text>
+            </Stack>
+            {revealed ? (
+              <>
+                <Divider />
+                <Stack gap="xs">
+                  <Text size="caption" color="text-muted">Back</Text>
+                  <Text>{current.back === '' ? 'No answer written for this card.' : current.back}</Text>
+                </Stack>
+              </>
+            ) : null}
+          </Stack>
+        </Card>
+
+        {revealed ? (
+          <Button label="Mark as known" icon="check" onPress={markKnown} />
+        ) : (
+          <Button label="Show answer" onPress={() => setRevealed(true)} />
+        )}
+
+        <Text size="caption" color="text-muted" align="center">
+          {revealed
+            ? 'Known cards come back later, further apart each time.'
+            : 'Answer it in your head, then check yourself.'}
+        </Text>
+      </Stack>
+    </Screen>
+  );
+}
+
+function Done() {
+  const reviewed = dueQueue.length;
+  return (
+    <Screen title="Session complete">
+      <Stack gap="lg">
+        <Card>
+          <Stack gap="md">
+            <Row gap="sm">
+              <Icon name="circle-check" size="lg" color="positive" />
+              <Text size="subtitle">All caught up</Text>
+            </Row>
+            <Text color="text-muted">
+              {reviewed} {reviewed === 1 ? 'card' : 'cards'} marked as known. Each one is scheduled further out, so
+              tomorrow’s list stays short.
+            </Text>
+          </Stack>
+        </Card>
+        <Button label="Back" icon="arrow-left" onPress={() => nav.back()} />
+      </Stack>
+    </Screen>
+  );
+}
+
+export default defineApp({
+  name: 'Flashcards',
+  initial: 'Due',
+  screens: { Due, Review, Done },
+  capabilities: ['storage'],
+  schema: SCHEMA,
+  tint: ['violet', 'indigo', 'slate'],
+  icon: 'brain',
+});

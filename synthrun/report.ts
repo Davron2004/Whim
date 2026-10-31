@@ -15,9 +15,9 @@ import type { StorageErrorKind } from '../src/host/storage-engine/contract';
 import { DIAGNOSTIC_KINDS, type DiagnosticKind } from '../checks/contract';
 import { runStaticChecks } from '../checks';
 import { wireCapabilityBridge, type CapabilityTraceEntry } from './capability';
-import { attachObserversEarly, awaitMount, finalizeContainmentVerdict, mergeBudgets, withTotalBudget, type EarlyObservers } from './observe';
+import { attachObserversEarly, awaitMount, finalizeContainmentVerdict, mergeBudgets, noteActivity, withTotalBudget, type EarlyObservers } from './observe';
 import type { RunContext, SynthRunSession } from './session';
-import { sweepApp } from './sweep';
+import { newSweepAccumulator, sweepApp, sweepResultOf } from './sweep';
 import type { EgressBlockedTraceEntry, RunCandidate, RunOptions, RunReport, RuntimeDiagnostic } from './contract';
 
 const CLOSED_KINDS: readonly string[] = DIAGNOSTIC_KINDS;
@@ -97,6 +97,20 @@ function egressBlockedEntry(ctx: RunContext): EgressBlockedTraceEntry {
   return { kind: 'egress_blocked', method: 'network', atMs: (ctx.egress.firstAt ?? ctx.startedAt) - ctx.startedAt, count: ctx.egress.count };
 }
 
+/** The `AppRecord` a run launches the candidate under, read from the candidate's own source: the
+ *  name, capabilities and schema its static manifest declares. A candidate that declares `storage`
+ *  and no schema gets none here, so the launch is refused as `missing_schema`, as a generated app
+ *  without one would be. The one builder: `createRunCandidate` and the suites' wired runs use it. */
+export function appRecordForSource(source: string, appId: string): AppRecord {
+  const manifest = runStaticChecks(source).manifest;
+  return {
+    appId,
+    name: manifest?.name ?? appId,
+    manifest: { capabilities: manifest?.capabilities ?? [] },
+    schemaArtifact: manifest?.schema as AppRecord['schemaArtifact'],
+  };
+}
+
 /**
  * Build the `RunCandidate` entry point bound to one session. Each call: statically extracts the
  * candidate's manifest (capabilities + schema) ONLY to build the `AppRecord` capability wiring
@@ -109,17 +123,17 @@ function egressBlockedEntry(ctx: RunContext): EgressBlockedTraceEntry {
 export function createRunCandidate(session: SynthRunSession): RunCandidate {
   return async function runCandidate(source: string, opts: RunOptions = {}): Promise<RunReport> {
     const budgets = mergeBudgets(opts.budgets);
-    const manifest = runStaticChecks(source).manifest;
     const appId = opts.appId ?? crypto.randomUUID();
-    const appRecord: AppRecord = {
-      appId,
-      name: manifest?.name ?? appId,
-      manifest: { capabilities: manifest?.capabilities ?? [] },
-      schemaArtifact: manifest?.schema as AppRecord['schemaArtifact'],
-    };
-    const wiring = wireCapabilityBridge(appRecord);
-
+    const appRecord = appRecordForSource(source, appId);
+    // Declared before the wiring so its activity callback can reach the observers once they exist
+    // (they attach in `beforeNavigate`, ahead of any capability call).
     let early: EarlyObservers | undefined;
+    const wiring = wireCapabilityBridge(appRecord, {
+      onActivity: () => {
+        if (early) noteActivity(early.state);
+      },
+    });
+
     const { ctx, dispose } = await session.openRun(source, {
       ...opts,
       appId,
@@ -154,11 +168,10 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
       // ends promptly on either (design D12/D14).
       const mountDiag = await awaitMount(obs, budgets, ctx.signal);
 
-      let sweepMs = 0;
-      let declared: string[] = [];
-      let visited: string[] = [];
-      let sweepTruncated = false;
-      let perScreenMs: Record<string, number> = {};
+      // The sweep keeps this current as it goes, so a run the budget kills or an abort cuts short
+      // still reports the screens and counts it had reached.
+      const swept = newSweepAccumulator();
+      let sweepStartedAt: number | undefined;
 
       const { truncated: budgetTruncated } = await withTotalBudget(
         ctx,
@@ -167,17 +180,15 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
         async () => {
           if (mountDiag) return; // a hung mount never reaches a swept-able page (spec: no reason to burn the budget)
           if (ctx.signal.aborted) return; // an abandoned run is never swept
-          const sweepStart = Date.now();
-          const sweep = await sweepApp(ctx, obs, source, budgets);
-          sweepMs = Date.now() - sweepStart;
-          declared = sweep.declaredScreens;
-          visited = sweep.visitedScreens;
-          sweepTruncated = sweep.truncated;
-          perScreenMs = sweep.perScreenMs;
-          diagnostics.push(...sweep.diagnostics);
+          sweepStartedAt = Date.now();
+          await sweepApp(ctx, obs, source, budgets, undefined, swept);
         },
         ctx.signal,
       );
+      const sweepMs = sweepStartedAt === undefined ? 0 : Date.now() - sweepStartedAt;
+      // Copied once, here: an abandoned sweep that has not noticed its page is gone may still write.
+      const sweepResult = sweepResultOf(swept);
+      diagnostics.push(...sweepResult.diagnostics);
 
       // A report read off a dead browser would blame the candidate for the crash.
       const lost = ctx.browserLost();
@@ -219,17 +230,18 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
         // cap with unvisited fingerprints remaining — both mean the report is not a complete
         // pass (spec "A truncated sweep SHALL be marked in the report, never silently reported
         // as complete").
-        truncated: budgetTruncated || sweepTruncated,
+        truncated: budgetTruncated || sweepResult.truncated,
         timings: {
           buildMs: ctx.timings.buildMs,
           bootMs: ctx.timings.bootMs,
           mountToPaintMs: obs.state.paintAtMs ?? budgets.mountBudgetMs,
           sweepMs,
-          perScreenMs,
+          perScreenMs: sweepResult.perScreenMs,
         },
         // Read once, here: refusals recorded after this point belong to a report already built.
         trace: ctx.egress.count > 0 ? [...wiring.trace, egressBlockedEntry(ctx)] : wiring.trace,
-        screens: { declared, visited },
+        screens: { declared: sweepResult.declaredScreens, visited: sweepResult.visitedScreens, coldMounted: sweepResult.coldMountedScreens },
+        sweep: sweepResult.sweep,
         budgets,
       };
     } catch (err) {

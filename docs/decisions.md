@@ -1612,3 +1612,39 @@ and accepts or rejects each. Full mechanism: `docs/harness.md` §4.3.
   (`report(...)`, `errors.push(...)`, `ctx.report(...)`).
 - **Rejected.** `checks/` in `CONFIG_SET` (a human edit per new test); a per-line `Check-removal`
   marker in the source (an agent can write it itself, and it hides the removal in a diff).
+
+### 79. The synthetic run serves its page as an opaque-origin document `[DECIDED — openspec: synthrun-reach D1; fixes #166]`
+
+Since 2026-09-22 the run page was served from `https://synthrun.invalid`, and the runtime's syscall
+marshaller drops any reply whose parent origin is not `null`. No generated app had received a
+storage result in a synthetic run since then: lists stayed empty and save-then-navigate never
+navigated. The route that serves the page now adds `Content-Security-Policy: sandbox allow-scripts`,
+so the document has an opaque origin, as it does in a device WebView.
+
+- **Why a header.** It changes delivery only. Policies intersect, so nothing the page's own CSP
+  allowed is widened, and the page bytes and both binding guards are untouched.
+- **Rejected.** Relaxing the origin test in `syscall.js` (it is the production runtime and correct
+  on a device); `file://` delivery (the in-memory route is one of the three egress layers); a
+  `data:` URL (it bypasses the route that counts and refuses requests).
+- **Test consequence.** An opaque origin cannot register a service worker at all, so the isolation
+  suite asserts the refusal (`SecurityError` in the outer page and in the candidate's realm) with a
+  real-origin positive control, in place of counting an aborted worker-script fetch.
+
+### 80. `unreachable_screen` is raised only for a screen no navigate call names `[DECIDED — openspec: synthrun-reach D6; fixes #162]`
+
+The warning says a screen was never reached by navigation and tells the model to add a path to it.
+In the flowbench evidence that was false 12 times out of 12: every flagged screen had a navigate
+call, and 7 of 7 warnings-only repair turns changed nothing. The sweep now raises the warning only
+for a screen that no `navigate` call in the source names, a real orphan that one repair turn can
+fix. A screen the app does navigate to but the sweep could not reach is cold-mounted as before and
+listed in `RunReport.screens.coldMounted` with no diagnostic, so it never costs a repair.
+
+- **How "names it" is decided.** A text scan for a `navigate(` call whose first argument is the
+  screen name as a string literal, with the method names from `checks/contract.ts`. The static
+  check already rejects non-literal targets. A navigate call in a comment fools the scan toward no
+  repair, which costs nothing.
+- **Rejected.** A kind filter in the machine (an orphan would never be repaired); downgrading the
+  warning (two severities only, and the zero-warning steady state of #19 would be lost); leaving
+  routing alone (screens gated by chained state would still cost a turn that cannot fix them).
+- **Unchanged.** The machine's warnings policy; a gated screen that throws on render is still an error.
+

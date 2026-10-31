@@ -1,0 +1,407 @@
+import {
+  defineApp,
+  nav,
+  Screen,
+  Stack,
+  Row,
+  Card,
+  Text,
+  TextInput,
+  NumberInput,
+  Stepper,
+  List,
+  ListItem,
+  EmptyState,
+  Badge,
+  Modal,
+  Button,
+  toast,
+  useState,
+  useEffect,
+  storage,
+  type SchemaArtifact,
+} from 'vc-sdk';
+
+// Recipes live in one kv value keyed by the literal string 'recipes'.
+const SCHEMA: SchemaArtifact = {
+  schemaVersion: 1,
+  collections: {},
+};
+
+interface Recipe {
+  id: number;
+  name: string;
+  ingredients: string;
+  steps: string;
+  prep: number;
+  servings: number;
+}
+
+const DEFAULT_RECIPES: Recipe[] = [
+  {
+    id: 1,
+    name: 'Banana Oat Pancakes',
+    ingredients: '2 ripe bananas, 2 eggs, 1 cup oats, 1 pinch cinnamon, 1 tsp oil',
+    steps:
+      'Mash the bananas in a bowl, Stir in the eggs and oats until smooth, Warm a little oil in a pan, Cook spoonfuls for 2 minutes a side',
+    prep: 10,
+    servings: 2,
+  },
+  {
+    id: 2,
+    name: 'Tomato Pasta',
+    ingredients: '400 g pasta, 2 cups tomato sauce, 2 cloves garlic, 1 handful basil, 1 pinch salt',
+    steps:
+      'Boil the pasta in salted water, Warm the garlic in a wide pan, Add the sauce and simmer for 5 minutes, Toss with the pasta and tear in the basil',
+    prep: 20,
+    servings: 4,
+  },
+  {
+    id: 3,
+    name: 'Berry Yogurt Bowl',
+    ingredients: '1 cup yogurt, 1 handful berries, 2 tbsp granola, 1 drizzle honey',
+    steps: 'Spoon the yogurt into a bowl, Pile the berries on top, Sprinkle over the granola, Drizzle with honey',
+    prep: 5,
+    servings: 1,
+  },
+];
+
+function toRecipe(raw: unknown): Recipe {
+  const row = (raw ?? {}) as Record<string, unknown>;
+  return {
+    id: Number(row.id ?? 0),
+    name: String(row.name ?? ''),
+    ingredients: String(row.ingredients ?? ''),
+    steps: String(row.steps ?? ''),
+    prep: Number(row.prep ?? 0),
+    servings: Number(row.servings ?? 1),
+  };
+}
+
+/** One list split into parts: commas, or newlines if they ever arrive. */
+function splitList(text: string): string[] {
+  return text
+    .split(/[,\n]/)
+    .map((part) => part.trim())
+    .filter((part) => part !== '');
+}
+
+// A tiny module-level store, so every mounted screen shows the same recipe box.
+let CACHE: Recipe[] = [];
+let selectedId = 0;
+let editingId: number | null = null;
+const listeners = new Set<(recipes: Recipe[]) => void>();
+
+function publish(recipes: Recipe[]): void {
+  CACHE = recipes;
+  listeners.forEach((listener) => listener(recipes));
+}
+
+function subscribe(listener: (recipes: Recipe[]) => void): () => void {
+  listeners.add(listener);
+  return () => {
+    listeners.delete(listener);
+  };
+}
+
+async function loadRecipes(): Promise<Recipe[]> {
+  const saved = await storage.kv.get('recipes');
+  const list = Array.isArray(saved) ? (saved as unknown[]).map(toRecipe) : DEFAULT_RECIPES;
+  if (!Array.isArray(saved)) await storage.kv.set('recipes', list);
+  publish(list);
+  return list;
+}
+
+async function saveRecipes(list: Recipe[]): Promise<void> {
+  await storage.kv.set('recipes', list);
+  publish(list);
+}
+
+function RecipeList() {
+  const [recipes, setRecipes] = useState<Recipe[]>(CACHE);
+  const [search, setSearch] = useState('');
+
+  useEffect(() => {
+    let live = true;
+    const unsubscribe = subscribe((list) => {
+      if (live) setRecipes(list);
+    });
+    loadRecipes()
+      .then((list) => {
+        if (live) setRecipes(list);
+      })
+      .catch(() => {
+        if (live) toast('Couldn’t load your recipes.');
+      });
+    return () => {
+      live = false;
+      unsubscribe();
+    };
+  }, []);
+
+  const query = search.trim().toLowerCase();
+  const shown = query === '' ? recipes : recipes.filter((recipe) => recipe.name.toLowerCase().includes(query));
+
+  return (
+    <Screen
+      title="Recipe Box"
+      action={{
+        icon: 'plus',
+        label: 'Add a recipe',
+        onPress: () => {
+          editingId = null;
+          nav.navigate('RecipeForm');
+        },
+      }}
+    >
+      <Stack gap="lg">
+        <TextInput value={search} placeholder="Search by recipe name" onChange={setSearch} />
+        {recipes.length === 0 ? (
+          <EmptyState icon="utensils" title="No recipes yet" hint="Tap + to add your first recipe." />
+        ) : shown.length === 0 ? (
+          <EmptyState icon="search" title="No recipes match" hint={`Nothing named “${search.trim()}” yet.`} />
+        ) : (
+          <Stack gap="lg">
+            <Text size="caption" color="text-muted">
+              {query === '' ? `${recipes.length} recipes` : `${shown.length} of ${recipes.length} recipes`}
+            </Text>
+            <List
+              items={shown}
+              keyBy="id"
+              renderItem={(recipe) => (
+                <ListItem
+                  title={recipe.name}
+                  subtitle={`${recipe.prep} min prep · ${recipe.servings} servings`}
+                  icon="utensils"
+                  onPress={() => {
+                    selectedId = recipe.id;
+                    nav.navigate('RecipeDetail');
+                  }}
+                />
+              )}
+            />
+          </Stack>
+        )}
+      </Stack>
+    </Screen>
+  );
+}
+
+function RecipeDetail() {
+  const [recipes, setRecipes] = useState<Recipe[]>(CACHE);
+  const [confirming, setConfirming] = useState(false);
+
+  useEffect(() => {
+    let live = true;
+    const unsubscribe = subscribe((list) => {
+      if (live) setRecipes(list);
+    });
+    loadRecipes()
+      .then((list) => {
+        if (live) setRecipes(list);
+      })
+      .catch(() => {
+        if (live) toast('Couldn’t load this recipe.');
+      });
+    return () => {
+      live = false;
+      unsubscribe();
+    };
+  }, []);
+
+  const recipe = recipes.find((item) => item.id === selectedId);
+
+  if (recipe === undefined) {
+    return (
+      <Screen title="Recipe">
+        <EmptyState icon="utensils" title="Recipe not found" hint="It may have been deleted." />
+      </Screen>
+    );
+  }
+
+  const ingredients = splitList(recipe.ingredients);
+  const steps = splitList(recipe.steps);
+
+  const removeRecipe = () => {
+    const name = recipe.name;
+    saveRecipes(recipes.filter((item) => item.id !== recipe.id))
+      .then(() => {
+        setConfirming(false);
+        toast(`${name} deleted`);
+        nav.back();
+      })
+      .catch(() => toast('Couldn’t delete that recipe.'));
+  };
+
+  return (
+    <Screen
+      title={recipe.name}
+      action={{
+        icon: 'pencil',
+        label: 'Edit recipe',
+        onPress: () => {
+          editingId = recipe.id;
+          nav.navigate('RecipeForm');
+        },
+      }}
+    >
+      <Stack gap="lg">
+        <Row gap="sm">
+          <Badge label={`${recipe.prep} min prep`} tone="primary" />
+          <Badge label={`${recipe.servings} servings`} />
+        </Row>
+
+        <Stack gap="sm">
+          <Text size="subtitle">Ingredients</Text>
+          {ingredients.length === 0 ? (
+            <Text color="text-muted">No ingredients listed yet.</Text>
+          ) : (
+            <List>
+              {ingredients.map((ingredient, index) => (
+                <ListItem key={index} title={ingredient} />
+              ))}
+            </List>
+          )}
+        </Stack>
+
+        <Stack gap="sm">
+          <Text size="subtitle">Steps</Text>
+          {steps.length === 0 ? (
+            <Text color="text-muted">No steps listed yet.</Text>
+          ) : (
+            <List>
+              {steps.map((step, index) => (
+                <ListItem key={index} title={step} trailing={`Step ${index + 1}`} />
+              ))}
+            </List>
+          )}
+        </Stack>
+
+        <Button label="Delete recipe" variant="danger" icon="trash-2" onPress={() => setConfirming(true)} />
+      </Stack>
+
+      <Modal visible={confirming} title="Delete this recipe?" onClose={() => setConfirming(false)}>
+        <Text color="text-muted">{recipe.name} will be removed from your box.</Text>
+        <Row>
+          <Button label="Delete" variant="danger" icon="trash-2" onPress={removeRecipe} />
+          <Button label="Keep it" variant="secondary" onPress={() => setConfirming(false)} />
+        </Row>
+      </Modal>
+    </Screen>
+  );
+}
+
+function RecipeForm() {
+  const [editId] = useState<number | null>(editingId);
+  const [name, setName] = useState('');
+  const [ingredients, setIngredients] = useState('');
+  const [steps, setSteps] = useState('');
+  const [prep, setPrep] = useState(15);
+  const [servings, setServings] = useState(4);
+
+  useEffect(() => {
+    if (editId === null) return;
+    let live = true;
+    loadRecipes()
+      .then((list) => {
+        if (!live) return;
+        const recipe = list.find((item) => item.id === editId);
+        if (recipe === undefined) return;
+        setName(recipe.name);
+        setIngredients(recipe.ingredients);
+        setSteps(recipe.steps);
+        setPrep(recipe.prep);
+        setServings(recipe.servings);
+      })
+      .catch(() => {
+        if (live) toast('Couldn’t load that recipe.');
+      });
+    return () => {
+      live = false;
+    };
+  }, [editId]);
+
+  const save = () => {
+    const trimmed = name.trim();
+    if (trimmed === '') return;
+    const fields = {
+      name: trimmed,
+      ingredients: ingredients.trim(),
+      steps: steps.trim(),
+      prep,
+      servings,
+    };
+    loadRecipes()
+      .then((list) => {
+        let next: Recipe[];
+        if (editId === null) {
+          const id = list.reduce((max, item) => Math.max(max, item.id), 0) + 1;
+          next = [...list, { id, ...fields }];
+        } else {
+          next = list.map((item) => (item.id === editId ? { ...item, ...fields } : item));
+        }
+        return saveRecipes(next).then(() => {
+          toast(editId === null ? `${trimmed} saved` : `${trimmed} updated`);
+          if (editId === null) {
+            nav.back();
+          } else {
+            selectedId = editId;
+            nav.back();
+          }
+        });
+      })
+      .catch(() => toast('Couldn’t save that recipe. Try again.'));
+  };
+
+  return (
+    <Screen title={editId === null ? 'New recipe' : 'Edit recipe'}>
+      <Stack gap="lg">
+        <TextInput label="Recipe name" value={name} placeholder="Banana oat pancakes" onChange={setName} />
+
+        <Stack gap="sm">
+          <TextInput
+            label="Ingredients"
+            value={ingredients}
+            placeholder="2 bananas, 2 eggs, 1 cup oats"
+            onChange={setIngredients}
+          />
+          <Text size="caption" color="text-muted">Separate ingredients with commas.</Text>
+        </Stack>
+
+        <Stack gap="sm">
+          <TextInput
+            label="Steps"
+            value={steps}
+            placeholder="Mash the bananas, Stir in the eggs and oats, Cook on a warm pan"
+            onChange={setSteps}
+          />
+          <Text size="caption" color="text-muted">Separate steps with commas — they are numbered for you.</Text>
+        </Stack>
+
+        <Card>
+          <Stack>
+            <NumberInput label="Prep time (minutes)" value={prep} min={0} step={5} onChange={setPrep} />
+            <Stepper label="Servings" value={servings} min={1} max={12} onChange={setServings} />
+          </Stack>
+        </Card>
+
+        <Button
+          label={editId === null ? 'Save recipe' : 'Save changes'}
+          icon="check"
+          disabled={name.trim() === ''}
+          onPress={save}
+        />
+      </Stack>
+    </Screen>
+  );
+}
+
+export default defineApp({
+  name: 'Recipe Box',
+  initial: 'RecipeList',
+  screens: { RecipeList, RecipeDetail, RecipeForm },
+  capabilities: ['storage'],
+  schema: SCHEMA,
+  tint: ['berry', 'rose', 'stone'],
+  icon: 'utensils',
+});

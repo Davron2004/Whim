@@ -21,7 +21,8 @@ export function fakeReport(overrides: Partial<RunReport>): RunReport {
     truncated: false,
     timings: { buildMs: 0, bootMs: 0, mountToPaintMs: 0, sweepMs: 0, perScreenMs: {} },
     trace: [],
-    screens: { declared: [], visited: [] },
+    screens: { declared: [], visited: [], coldMounted: [] },
+    sweep: { actions: 0, blocked: 0, failedActions: 0 },
     budgets: EMPTY_BUDGETS,
     ...overrides,
   };
