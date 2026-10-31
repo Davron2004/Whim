@@ -8,11 +8,18 @@ import React from 'react';
 import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import { accessibilitySettings, setColorScheme, StyleSheet, windowMetrics } from './native-host';
-import { animations, cancelled, isStep, type Animation, type Step } from './native-reanimated';
+import { animations, cancelled, elapse, holdAnimations, isStep, type Animation, type Step } from './native-reanimated';
 import { hostType, renderScreen, textOf, unmountScreen } from './react-screen';
 import { Notice } from '../../ui/Notice';
 import { Skeleton, SkeletonBlock } from '../../ui/Skeleton';
 import { AmbientLight, Ember } from '../../ui/Ember';
+import { TilePlate } from '../../ui/AppTile';
+import { ambientOpacity, flickerOffset } from '../../ui/tokens-pure';
+import MakingPage from '../MakingPage';
+import Orb from '../Orb';
+import type { FlickerPulse } from '../home-live';
+import type { RunSignals } from '../prompt-flow';
+import { createRunLight, lightArrived } from '../run-light';
 import { COLORS, SPRINGS, TIMINGS } from '../../../design/tokens';
 import { ICON_PATHS } from '../../../design/icons/paths';
 import { EMBER_PATH } from '../../../design/icons/ember';
@@ -43,6 +50,52 @@ function honestLight() {
   const stuck = doc(/`I` eases to ([\d.]+) over ([\d.]+) s and holds still/, '§4.6 stuck');
   return { base: +intensity[1], gain: +intensity[2], response: +intensity[3], stuck: +stuck[1], stuckMs: +stuck[2] * 1000 };
 }
+
+/** §4.6's flicker: its amplitude per unit of `ã`, and how long after an arrival it lasts. */
+function flickerDoc() {
+  const m = doc(/Flicker amplitude `([\d.]+)·ã`, only while a token arrived in the last (\d+) ms; timing from token\s+arrivals, never a timer/, '§4.6 flicker');
+  return { amplitude: +m[1], windowMs: +m[2] };
+}
+
+const noop = () => {};
+/** A run that is writing: a token a moment ago. */
+const WRITING: RunSignals = { startedAt: 0, aggregates: { chars: 10, tokens: 3 }, lastTokenAt: 1_000, lastThinkingAt: null, lastFrameAt: 1_000 };
+
+/** The body of the ember `ember` draws: the faded layer holding the flame's gradient (centred low). */
+const emberBody = (ember: Node): Node =>
+  ember.find((v) => hostType(v) === 'Animated.View' && style(v).opacity !== undefined && v.findAll((n) => hostType(n) === 'RadialGradient' && n.props.cy === '74%').length === 1);
+
+/** The five lights M20 flickers (system.md §4.4), each drawn for a run streaming at `activity` with
+ *  the run's pulse, and the view whose opacity is that light. */
+const LIGHTS: { name: string; draw: (activity: number, pulse?: FlickerPulse) => React.ReactElement; light: (tree: TestRenderer.ReactTestRenderer) => Node }[] = [
+  {
+    name: 'the making ember',
+    draw: (activity, pulse) => <MakingPage name="Tea timer" changing={false} words="A tea timer" stage="generate" delivering={false} stepSince={0} signals={WRITING} now={1_500} activity={activity} flicker={pulse} onStop={noop} />,
+    light: (tree) => emberBody(tree.root.findByType(Ember)),
+  },
+  {
+    name: 'the making ambient light',
+    draw: (activity, pulse) => <MakingPage name="Tea timer" changing={false} words="A tea timer" stage="generate" delivering={false} stepSince={0} signals={WRITING} now={1_500} activity={activity} flicker={pulse} onStop={noop} />,
+    light: (tree) => tree.root.findByType(AmbientLight).find((v) => hostType(v) === 'Animated.View'),
+  },
+  {
+    name: 'a ghost tile’s ember',
+    draw: (activity, pulse) => <TilePlate size="grid" state="making" tint="rose" glyph="coffee" activity={activity} flicker={pulse} />,
+    light: (tree) => emberBody(tree.root.findByType(Ember)),
+  },
+  {
+    name: 'a changing tile’s ring',
+    draw: (activity, pulse) => <TilePlate size="grid" state="changing" tint="rose" glyph="coffee" activity={activity} flicker={pulse} />,
+    light: (tree) => tree.root.find((v) => hostType(v) === 'Animated.View' && style(v).position === 'absolute' && v.findAll((n) => hostType(n) === 'Path' && n.props.stroke === COLORS.light.ember).length === 1),
+  },
+  {
+    name: 'the orb',
+    draw: (activity, pulse) => <Orb appId="flicker" state="changing" activity={activity} flicker={pulse} onOpen={noop} />,
+    light: (tree) => emberBody(tree.root.findByType(Ember)),
+  },
+];
+
+const opacityOf = (node: Node): number => style(node).opacity as number;
 
 /** Where an animation comes to rest and every spring/timing it is made of, depth first. */
 function leaves(a: Animation): Step[] {
@@ -213,6 +266,112 @@ export async function runShellStatusUiTests(h: Harness): Promise<void> {
     await unmountScreen(quiet);
     await unmountScreen(busy);
     await resetPhone();
+  });
+
+  await h.test('honest light: the flicker moves a light by 0.06·ã of the pulse, ã clamped to 0–1, and not at all when off', () => {
+    const { amplitude } = flickerDoc();
+    for (const a of [0, 0.25, 1]) {
+      for (const pulse of [1, -1, 0.5]) h.ok(Math.abs(flickerOffset(true, a, pulse) - amplitude * a * pulse) < 1e-12, `ã ${a}, pulse ${pulse}: ${amplitude}·ã·pulse`);
+    }
+    h.eq([flickerOffset(true, 1.7, 1), flickerOffset(true, -0.3, 1), flickerOffset(true, Number.NaN, 1)], [amplitude, 0, 0], 'ã past full is full; below none or unknown is none');
+    h.eq(flickerOffset(false, 1, 1), 0, 'a light that does not flicker (stuck, Reduce Motion) moves not at all');
+  });
+
+  await h.test('honest light: each arrival kicks the run’s pulse, alternating, between half and full height; it is gone 500 ms after the last one; arrivals within a frame kick once', async () => {
+    const { windowMs } = flickerDoc();
+    const run = createRunLight();
+    const release = holdAnimations();
+    try {
+      const kicks: number[] = [];
+      for (let i = 0; i < 6; i++) {
+        lightArrived(run, 10_000 + i * 40, false);
+        kicks.push(run.pulse.value);
+      }
+      h.ok(kicks.every((k) => Math.abs(k) >= 0.5 && Math.abs(k) <= 1), `every kick between half and full height: ${kicks.map((k) => k.toFixed(2)).join(', ')}`);
+      h.ok(kicks.every((k, i) => i === 0 || Math.sign(k) === -Math.sign(kicks[i - 1])), 'each kick the other way from the one before');
+      const last = run.pulse.value;
+      lightArrived(run, 10_000 + 5 * 40 + 5, false);
+      h.eq(run.pulse.value, last, 'an arrival 5 ms after the last kicks nothing more');
+      elapse(windowMs - 1);
+      h.ok(run.pulse.value !== 0, `${windowMs - 1} ms after the last arrival the pulse still stands`);
+      elapse(2);
+      h.eq(run.pulse.value, 0, `${windowMs + 1} ms after it, it is gone`);
+    } finally {
+      release();
+    }
+    h.eq(createRunLight().pulse.value, 0, 'a run with no arrival has no pulse at all');
+  });
+
+  await h.test('honest light: an arrival flickers every light of the run (making ember, ambient light, ghost tile, changing ring, orb) by 0.06·ã of the same pulse, until 500 ms pass with no other', async () => {
+    const { amplitude, windowMs } = flickerDoc();
+    for (const { name, draw, light } of LIGHTS) {
+      const run = createRunLight();
+      const tree = await renderScreen(draw(1, run.pulse));
+      const release = holdAnimations();
+      try {
+        const rest = opacityOf(light(tree));
+        await act(() => lightArrived(run, 10_000, false));
+        const moved = opacityOf(light(tree)) - rest;
+        h.ok(Math.abs(moved - amplitude * run.pulse.value) < 1e-9 && moved !== 0, `${name}: moved ${moved.toFixed(4)}, ${amplitude}·1·pulse`);
+        await act(() => elapse(windowMs - 1));
+        h.ok(opacityOf(light(tree)) !== rest, `${name}: still flickering ${windowMs - 1} ms after the arrival`);
+        await act(() => elapse(2));
+        h.eq(opacityOf(light(tree)), rest, `${name}: still again ${windowMs + 1} ms after it`);
+      } finally {
+        await act(release);
+        await unmountScreen(tree);
+      }
+    }
+  });
+
+  await h.test('honest light: without an arrival nothing flickers, however high the sampled activity — each light rests at the intensity its activity gives', async () => {
+    const light = honestLight();
+    for (const { name, draw, light: lit } of LIGHTS) {
+      const run = createRunLight();
+      // The ambient light's opacity carries the activity through its own curve; every other light is the intensity itself.
+      const resting = (a: number) => (name === 'the making ambient light' ? ambientOpacity(a) : light.base + light.gain * a);
+      const tree = await renderScreen(draw(1, run.pulse));
+      try {
+        for (const activity of [0.2, 1]) {
+          await act(() => tree.update(draw(activity, run.pulse)));
+          h.ok(Math.abs(opacityOf(lit(tree)) - resting(activity)) < 1e-9, `${name} at sampled activity ${activity}: ${opacityOf(lit(tree))}, no flicker`);
+        }
+        h.eq(run.pulse.value, 0, `${name}: the run’s pulse never moved`);
+      } finally {
+        await unmountScreen(tree);
+      }
+    }
+  });
+
+  await h.test('honest light under Reduce Motion: an arrival starts no pulse animation, and a pulse kicked before it was on moves no light', async () => {
+    const { windowMs } = flickerDoc();
+    accessibilitySettings.reduceMotion = true;
+    try {
+      for (const { name, draw, light } of LIGHTS) {
+        const run = createRunLight();
+        const tree = await renderScreen(draw(1, run.pulse));
+        const release = holdAnimations();
+        const pulse = run.pulse as unknown as { value: number; listen: (fn: () => void) => () => void };
+        let writes = 0;
+        const stop = pulse.listen(() => { writes += 1; });
+        try {
+          const rest = opacityOf(light(tree));
+          await act(() => lightArrived(run, 10_000, true));
+          h.eq([writes, run.pulse.value], [0, 0], `${name}: the arrival under Reduce Motion writes nothing to the pulse, no kick and no fall`);
+          await act(() => lightArrived(run, 20_000, false));
+          h.ok(run.pulse.value !== 0, `${name}: a pulse kicked as if Reduce Motion were off`);
+          h.eq(opacityOf(light(tree)), rest, `${name}: still moves no light`);
+          await act(() => elapse(windowMs + 1));
+          h.eq(opacityOf(light(tree)), rest, `${name}: nor after`);
+        } finally {
+          stop();
+          await act(release);
+          await unmountScreen(tree);
+        }
+      }
+    } finally {
+      await resetPhone();
+    }
   });
 
   await h.test('AmbientLight grows with activity on the same smoothing, never blocks touches, and is hidden', async () => {

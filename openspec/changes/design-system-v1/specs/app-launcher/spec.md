@@ -350,7 +350,7 @@ While a change to an open app is being made the app SHALL stay open on its curre
 
 ### Requirement: Opening an app grows out of its tile and waits for the realm's paint
 
-Opening a ready tile SHALL grow a `bg` container from the tile to the screen while the tint stays a tile-sized plate with its glyph, and the WebView SHALL stay hidden until the opening signal for that launch arrives (the generation-stamped `paint` of `sandbox-rendering`) or 600 ms pass, then fade in. "Opening…" SHALL appear under the plate only after 1.5 s. A launch failure SHALL replace the opening state. Closing SHALL shrink the app back into its tile. One WebView SHALL be kept warm in a pool, and opening SHALL NOT regress tap-to-first-paint.
+Opening a ready tile SHALL grow a `bg` container from the tile to the screen while the tint stays a tile-sized plate with its glyph, and the WebView SHALL stay hidden until both the opening signal for that launch has arrived (the generation-stamped `paint` of `sandbox-rendering`, or the 600 ms cap) and the growing container covers the screen, then fade in. "Opening…" SHALL appear under the plate only after 1.5 s. A launch failure SHALL replace the opening state. Closing SHALL shrink the app back into its tile. One WebView SHALL be kept warm in a pool, and opening SHALL NOT regress tap-to-first-paint.
 
 #### Scenario: A stale paint does not release the opening
 

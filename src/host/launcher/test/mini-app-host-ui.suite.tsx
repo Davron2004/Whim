@@ -478,8 +478,9 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     await withStage(async ({ tree, webViews, send }) => {
       h.eq(webViews().length, 1, 'one WebView waits');
       const [waiting] = webViews();
-      const container = containerOf(tree);
-      h.eq([flat(container).opacity, container.props.pointerEvents, container.props.accessibilityElementsHidden, container.props.importantForAccessibility],
+      // The container itself holds the screen the launcher shows; the WebView's own slot is what hides it.
+      const slot = slotOf(tree, waiting);
+      h.eq([flat(slot).opacity, slot.props.pointerEvents, slot.props.accessibilityElementsHidden, slot.props.importantForAccessibility],
         [0, 'none', true, 'no-hide-descendants'], 'unseen, untouchable and out of the accessibility tree');
       h.eq(waiting.props.source, { html: RUNTIME_HTML }, 'it loads the runtime page');
       h.eq(settingsOf(waiting), cold, 'with exactly the settings of a WebView a launch creates cold');
@@ -1240,12 +1241,12 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     });
   });
 
-  await h.test('mini-app: leaving through Android back at the app’s root, or unmounting, disarms the startup deadline', async () => {
+  await h.test('mini-app: leaving through Android back at the app’s root leaves the startup deadline to the close, which may still turn the app back out; unmounting disarms it', async () => {
     await withMiniApp(TIP, async ({ loadEnd, clock, exits }) => {
       await loadEnd();
       await TestRenderer.act(async () => { hardwareBack(); });
       h.eq(exits(), 1, 'back at the root leaves the app');
-      h.eq(clock.count(STARTUP_DEADLINE_MS), 0, 'and no deadline outlives it');
+      h.eq(clock.count(STARTUP_DEADLINE_MS), 1, 'and its startup deadline runs on until the launch ends');
     });
     await withMiniApp(TIP, async ({ loadEnd, clock, tree }) => {
       await loadEnd();

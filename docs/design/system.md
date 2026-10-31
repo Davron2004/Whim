@@ -405,7 +405,7 @@ tip that rises and curls slightly up, no face, no eyes, no name. Fill: radial `g
 | Out | Failure, failed or stopped tile | 1.5 pt `text-2` outline of the silhouette, no fill, no glow |
 
 Done is one `spark` flare. Sizes 24, 48, 96, 128 (128 drops to 64 from 135% text); the orb carries a
-20 pt mark. It appears on the making page (128), the plan wait (48), Ready and failure (96), the empty
+20 pt mark. It appears on the making page (128), setting out from Make it (48), Ready and failure (96), the empty
 home (128), inline status (24), the orb, the app icon and the launch screen; never inside an app's
 content, in settings or legal, as decoration, with a speech bubble or a name. **Ambient light**, the
 second signature: a soft radial glow behind the making header and under the composer, same signal,
@@ -462,8 +462,13 @@ Reanimated's `duration`/`dampingRatio` mode.
    velocity. Never restart from a stored value; never disable input while something moves.
 3. **Same path out as in**, faster out: a morph opens with `morph`, closes with `smooth`.
 4. **No JS-driven layout per frame.** Transform and opacity by default; shell reflow uses Reanimated
-   layout transitions; one leaf view's width, height and radius may animate on the UI thread (M2). The
-   SDK uses FLIP. No non-uniform scale on a rounded shape.
+   layout transitions. M2 and M3 move by transforms only: two straight bars stretched to the shape's
+   width and height, and four uniformly scaled corner discs, because a per-frame size animation
+   commits the shadow tree on every frame and delayed the app's first paint by ~2 frames. M5 and M6
+   may animate one leaf plate's width, height and radius on the UI thread. The SDK uses FLIP. No
+   non-uniform scale on a rounded shape.
+   A container's content never draws outside the growing shape: it fades in with `fade-in` once the
+   shape covers it, and out with `fade-out` before the shape shrinks inside it, mid-flight turns included.
 5. **Press:** scale 0.97 (buttons, rows), 0.96 (tiles, cards, chips), 0.92 (icon buttons) on touch-down
    with `instant`, release with `snappy`; 10 pt off the control cancels, back re-presses.
 6. **Drags** track 1:1 after 10 pt slop. Release projects `current + (v/1000)·0.998/(1−0.998)`, snaps to
@@ -482,14 +487,14 @@ Numbers are stable; R-numbers are the animation research's (`docs/research/anima
 |---|---|---|---|---|---|
 | M1 (R2) Press | Touch-down on any pressable | Scale per §4.3 rule 5 | `instant` / `snappy` | Drag off cancels | Opacity 0.7 over 100 ms |
 | M15 (R12) Selection | Chip, switch, segment, checkbox, stepper | Chip fill (`color`), knob/thumb x, check stroke drawn over 160 ms, stepper digit rolls 6 px | `snappy` (rAF spring in apps) | New value retargets with velocity | Instant state, colour fade kept |
-| M2 (R3) Open an app | Tap a ready tile | A `bg` container grows from the tile rect to the screen (width, height, radius on the UI thread, one leaf view); the tint stays a tile-sized plate with its glyph and fades as the app paints. The pooled warm WebView stays hidden until this launch's generation-stamped `paint` (decision #75), cap 600 ms, then fades in over 160 ms. "Opening…" only after 1.5 s | `morph` | Back reverses from the current frame | 160 ms cross-fade |
+| M2 (R3) Open an app | Tap a ready tile | A `bg` container grows from the tile rect to the screen (transforms only, §4.3 rule 4: two stretched straight bars and four uniformly scaled corner discs); the tint stays a tile-sized plate with its glyph and fades as the app paints. The pooled warm WebView stays hidden until this launch's generation-stamped `paint` (decision #75), cap 600 ms, then fades in over 160 ms. "Opening…" only after 1.5 s | `morph` | Back reverses from the current frame | 160 ms cross-fade |
 | M3 (R4) Close an app | Orb → "Back to your apps"; Android back at depth 0 | The reverse into the tile; not finger-tracked | `smooth` | Reopening retargets | Cross-fade |
 | M20 (R9) Honest light | Stream activity | Glow and flicker on the making mark, ambient lights, ghost tile, changing ring, orb (§4.6) | Smoothing spring 0.6 s | Continuous | Still intensity per state, cross-faded |
 | M6 Composer → Describe | Tap the composer | The capsule grows into the sheet; the placeholder stays in place; the keyboard rises on its own curve | `morph` | Swipe down returns into the bar | Cross-fade |
 | M7 (R10) Describe → Plan | Continue | Plan pushes in from the trailing edge; the description travels to the top as the quote | `smooth` | Back reverses | Cross-fade |
 | M8 (R7) Plan arrives | Questions (~1.8 s), then rows (~2.3 s more) | Skeletons swap with `fade-in`; rows rise 8 px with `stagger` the first time; answered questions collapse when scrolled past | `fade-in` + `smooth` | Reopen retargets | Cross-fade |
 | M25 Edit a plan row | Tap a row | The row grows into a text area; Save and Cancel fade in | `smooth` | Cancel reverses | Instant |
-| M9 Make it | Tap Make it | The 48 ember travels and scales to the making 128; plan fades out; words and steps fade in; the marker moves to a repair row with `snappy` | `morph` | Closing leaves for home (M5) | Cross-fade |
+| M9 Make it | Tap Make it | The ember sets out from Make it at 48 (or the button's height, if less) and travels and scales to the making 128; plan fades out; words and steps fade in; the marker moves to a repair row with `snappy` | `morph` | Closing leaves for home (M5) | Cross-fade |
 | M5 Leave it running | Close X, back, swipe down, scrim | The sheet shrinks into its ghost tile, ember first | `smooth` | Tapping the tile reverses | Cross-fade |
 | M10 Ready | Delivery with the sheet open | Ember flares (1 → 1.18 → 1) and settles into the 96 tile rising 0.6 → 1; name, words, buttons fade in 80 ms apart | `spark` | Done jumps to the end | Cross-fade, no flare |
 | M4 (R1) Ghost → tile | Delivery with the grid visible | Glow flares; a circle mask fills the squircle with the tint from the centre; glyph fades in from 0.9 | `morph`, glow `spark` | Opening finishes it | Cross-fade |
@@ -501,7 +506,7 @@ Numbers are stable; R-numbers are the animation research's (`docs/research/anima
 | M16 Orb corner | Drag the orb | 1:1 after 10 pt; projects to bottom-trailing or bottom-leading; remembered per app | `fling` | Grab any time | Tracks, settles by cross-fade |
 | M14 Toast | Show, auto-dismiss, swipe | Rises 16 px with a fade; swipe down tracks | `smooth`; swipe `fling` | A new toast replaces in place | Cross-fade |
 | M26 History row | Tap a version | Expands; rows below move; actions fade in | `smooth` layout | Tap again collapses | Instant |
-| M17 (R5) Grid appears | First launch, back from onboarding | Tiles rise 8 px and fade, `stagger` | `smooth` | Touch finishes it | At once |
+| M17 (R5) Grid appears | The first time Home shows after each launch | Tiles rise 8 px and fade, `stagger` | `smooth` | Touch finishes it | At once |
 | M18 Delete an app | Delete in the menu | Tile to 0.8 and fades, neighbours reflow; Undo plays it back | `smooth` reflow | Undo retargets | Removed, neighbours cross-fade |
 | M19 (R8) Skeleton | Local load past 300 ms | `breathe` | | Content replaces with `fade-in` | Static 0.6 |
 | M27 Launch → home | Cold start | Native launch screen holds until Home's first frame, then fades 160 ms (iOS: an overlay copying the storyboard; Android 12+: the system splash) | `fade-in` | | Same |

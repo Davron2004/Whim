@@ -36,6 +36,7 @@ import { Text } from '../ui/Text';
 import { useTokens, type ShellTokens } from '../ui/tokens';
 import { useScrimsUp } from '../ui/OverlayModal';
 import { statusBarStyleOver } from '../ui/status-bar-style';
+import { timingOf } from '../ui/tokens-pure';
 import { AppIndex, InstalledApp } from './app-index';
 import { AppBusy, runAppOp } from './app-busy';
 import { runFork } from './fork-op';
@@ -95,8 +96,11 @@ import DevLogOverlay from './DevLogOverlay';
 import { devLogOverlayEnabled } from './dev-log-view';
 import { repairAttemptsIn, runTimelineDevModeEnabled } from './run-timeline-view';
 import { HomeSkeleton } from './HomeSkeleton';
-import { toastClearance } from './ComposerBar';
+import { COMPOSER_ANCHOR, toastClearance } from './ComposerBar';
+import { SheetAnchors, tileAnchor } from '../ui/SheetAnchor';
 import { useHomeLive } from './use-home-live';
+import type { LiveAttemptView, LiveView } from './home-live';
+import { createRunLight, lightArrived, lightReleased, type RunLight } from './run-light';
 import { PendingPurgeStore, completeInterruptedPurges, completePurge } from './pending-purge';
 import { PurgeWindows } from './soft-delete';
 import type { TileIdentity } from './tile-identity';
@@ -204,6 +208,8 @@ type Screen =
       tappedAt: number;
       versionId: string;
       sheet?: WhimSheetPage;
+      // Opened by a tap on its tile: it grows out of it (M2).
+      fromTile?: boolean;
     }
   | { kind: 'dev' }
   | { kind: 'settings' }
@@ -340,8 +346,11 @@ function changeOver(
 /** What the orb shows (system.md §7.1 Orb, §9 Changing in use), most recent first: a change being
  *  made (its stream's sampled activity), a change that failed, a change that landed, another app
  *  that finished, else rest. */
-function orbOver(change: ChangeOver, activity: Readonly<Record<string, number>>): MiniAppLaunch['orb'] {
-  if (change.changing !== undefined) return { state: 'changing', activity: activity[change.changing.id] ?? 0 };
+function orbOver(change: ChangeOver, live: LiveView): MiniAppLaunch['orb'] {
+  if (change.changing !== undefined) {
+    const id = change.changing.id;
+    return { state: 'changing', activity: live.activity[id] ?? 0, flicker: live.flicker[id], stuck: live.stalled.has(id) };
+  }
   if (change.failed !== undefined) return { state: 'failed', activity: 0 };
   if (change.landed !== undefined) return { state: 'ready', activity: 0 };
   return { state: change.finished ? 'finished' : 'rest', activity: 0 };
@@ -398,6 +407,36 @@ function stackFor(screen: Screen): readonly StackScreen[] | null {
   }
   if (screen.kind === 'report') return [...(stackFor(screen.from) ?? []), screen];
   return null;
+}
+
+const HOME: Screen = { kind: 'home' };
+
+/** `node`, except while `hold`: then the one rendered last before it, the same element, which React
+ *  does not render again. */
+function useHeld(node: React.ReactNode, hold: boolean): React.ReactNode {
+  const held = useRef(node);
+  if (!hold) held.current = node;
+  return held.current;
+}
+
+/** An app coming out of its tile or going back into it (`AppMorph`), named by its launch's `tappedAt`. */
+interface StageMorph {
+  readonly at: number;
+  readonly homeUnder: boolean;
+  readonly leaving: boolean;
+}
+
+/** The morph of the launch on screen, or `null`: one recorded for a launch no longer shown is stale. */
+function morphOf(morph: StageMorph | null, screen: Screen): StageMorph | null {
+  return morph !== null && screen.kind === 'app' && screen.tappedAt === morph.at ? morph : null;
+}
+
+/** The native stack the shell draws (Home's under an app coming out of it or going back into it), and
+ *  whether `base` itself is on the stack, which lays the frame out (`frameEdgesFor`). */
+function stacksOf(ready: boolean, base: Screen, homeUnder: boolean) {
+  if (!ready) return { stack: null, baseOnStack: false };
+  const own = stackFor(base);
+  return { stack: homeUnder ? stackFor(HOME) : own, baseOnStack: own !== null };
 }
 
 /** The native header's title; none on Home and History, which draw their own header. */
@@ -832,6 +871,9 @@ function LauncherShell({
   hideLaunchScreen: () => void;
 }>) {
   const tokens = useTokens();
+  // Reduce Motion as the stream handlers read it: they outlive the render that started them.
+  const reduceMotionRef = useRef(tokens.reduceMotion);
+  reduceMotionRef.current = tokens.reduceMotion;
   const scrimsUp = useScrimsUp();
   // The settings an open app's frame is held to from its delivery (`MiniAppStage`), `null` before it.
   const [appFrame, setAppFrame] = useState<ShellTokens | null>(null);
@@ -857,6 +899,18 @@ function LauncherShell({
     if (!overApp(screen)) setUnder(null);
   }, [screen]);
   const running = screen.kind === 'app' ? screen : appUnder(screen, under);
+  // The running app coming out of its tile or going back into it (M2, M3, `AppMorph`), by its launch's
+  // `tappedAt`: whether Home is drawn under it, and whether the person is leaving it. It ends with the
+  // launch: a stale one names a launch no longer running.
+  const [stageMorph, setStageMorph] = useState<StageMorph | null>(null);
+  const morphNow = morphOf(stageMorph, screen);
+  const morphRef = useRef(morphNow);
+  morphRef.current = morphNow;
+  // Whether Home is drawn: on its own, or under an app coming out of its tile or going back into it.
+  const homeDrawn = useRef(false);
+  homeDrawn.current = screen.kind === 'home' || morphNow?.homeUnder === true;
+  // Tile taps that opened an app, counted, and the count of the last one whose app showed.
+  const tileTaps = useRef({ tapped: 0, shown: 0 });
   // The same, for a run or a toast that acts later than the render it was started from.
   const runningRef = useRef(running);
   runningRef.current = running;
@@ -887,6 +941,12 @@ function LauncherShell({
   const [apps, setApps] = useState<InstalledApp[]>([]);
   const [pendingBuilds, setPendingBuilds] = useState<PendingBuildView[]>([]);
   const [ready, setReady] = useState(false);
+  // M17: the grid rises in the first time it shows after launch, not on every return to Home, and
+  // not under the launch screen: it waits for that to have faded (M27).
+  const gridAppeared = useRef(false);
+  /** The description on screen was begun from the composer, which the sheet grows out of (M6). */
+  const composerBegun = useRef(false);
+  const [launchCovered, setLaunchCovered] = useState(true);
   // Read by the mount-once app-link listener effect below, which cannot depend on `ready` without
   // resubscribing `Linking`'s event on every first-run tick.
   const readyRef = useRef(ready);
@@ -1105,6 +1165,8 @@ function LauncherShell({
     ctl: GenerationControl;
     /** A Try again's record and journal as they were before it: what a Stop brings back. */
     retrySnapshot: AttemptSnapshot | undefined;
+    /** The flicker its arrivals kick, which every light of the run reads (system.md §4.6). */
+    light: RunLight;
   };
   // Every active attempt keeps its own reattachment state. `liveRef` names the one selected by
   // the current build screen, so background frames can update their own journal without replacing
@@ -1162,8 +1224,10 @@ function LauncherShell({
 
   // The view of the attempts running right now: which wait for a spot, how hard each stream works.
   // Home's tiles read it, and so do the Making page's ember and the orb, each for its own run only.
-  const liveView = useHomeLive(screen.kind === 'home' || screen.kind === 'making' || runningChange.changing !== undefined, () => [...liveAttemptsRef.values()]);
-  const orb = orbOver(runningChange, liveView.activity);
+  const liveView = useHomeLive(screen.kind === 'home' || screen.kind === 'making' || runningChange.changing !== undefined, () =>
+    [...liveAttemptsRef.values()].map(({ id, signals, light }): LiveAttemptView => ({ id, signals, pulse: light.pulse })),
+  );
+  const orb = orbOver(runningChange, liveView);
 
   /** The installed apps and the attempts a person can reach: those whose purge is armed are gone as far
    *  as a link or a tile is concerned (an attempt only for the run its Discard named). */
@@ -1326,13 +1390,24 @@ function LauncherShell({
    *  open's alert, for a caller that must not stay where it is. An open arriving while History's
    *  pop to Home runs (a tile, the "is ready" toast) is busy from the tap and waits for the pop to
    *  finish; it is dropped when something else arrived after it, or the person left Home meanwhile. */
-  const onOpen = (app: InstalledApp, onFailed?: () => void): Promise<boolean> => {
+  const onOpen = (app: InstalledApp, onFailed?: () => void, fromTile = false): Promise<boolean> => {
     const tappedAt = Date.now();
     const holding = stackPop.current !== null;
+    // From its tile, Home stays under the app until it has grown over the screen. Of two tiles tapped
+    // quickly, the app of the later tap is the one that shows: the earlier one's read landing after it
+    // shows nothing, and leaves the morph to the launch on screen. Nor does one land once Home has gone
+    // from the screen (an app covers it).
+    const tap = fromTile ? ++tileTaps.current.tapped : 0;
+    const show = (launch: AppScreen) => {
+      if (tileTaps.current.shown > tap || !homeDrawn.current) return;
+      tileTaps.current.shown = tap;
+      setScreen({ ...launch, fromTile: true });
+      setStageMorph({ at: tappedAt, homeUnder: true, leaving: false });
+    };
     return runAppOp(appOps, setAppBusy, app.id, 'open', async () => {
       if (holding && !((await stackPopOver()) && screenKindRef.current === 'home')) return;
       try {
-        await launchApp(app, tappedAt, setScreen);
+        await launchApp(app, tappedAt, fromTile ? show : setScreen);
       } catch (e) {
         openFailed(e);
         onFailed?.();
@@ -1344,8 +1419,8 @@ function LauncherShell({
    *  now current, in place — a new launch, so a fresh WebView and realm (`MiniAppStage`), with nothing
    *  in between: no Home, no closed frame. A change that landed on a continuation opens that entry
    *  instead, and so does `landedOn`, the entry a toast named (the app opened again since, it runs
-   *  behind that entry). A launch the person has left meanwhile is not reopened; one whose bundle
-   *  cannot be read keeps running as it was. */
+   *  behind that entry). A launch the person has left meanwhile is not reopened, nor one going back
+   *  into its tile (M3) as the bundle is read; one whose bundle cannot be read keeps running as it was. */
   const reloadRunning = async (landedOn?: InstalledApp): Promise<void> => {
     if (running === null) return;
     const from = running;
@@ -1362,8 +1437,11 @@ function LauncherShell({
       }
     });
   };
-  /** Puts a new launch in the place of `from`, wherever it still is: on screen, or under a sheet. */
+  /** Puts a new launch in the place of `from`, wherever it still is: on screen, or under a sheet; not
+   *  while the person is leaving it. */
   const replacing = (from: AppScreen) => (next: AppScreen) => {
+    const morph = morphRef.current;
+    if (morph?.at === from.tappedAt && morph.leaving) return;
     setScreen((s) => (s.kind === 'app' && s.tappedAt === from.tappedAt ? next : s));
     setUnder((u) => (u?.tappedAt === from.tappedAt ? next : u));
   };
@@ -1526,6 +1604,29 @@ function LauncherShell({
     aboutRef.current = null;
     refresh();
     setScreen({ kind: 'home' });
+  };
+
+  /** Leaving the running app (the Whim sheet's Back to your apps, Android back at its depth 0, its
+   *  failure screens): it goes back into its tile on Home (M3), which ends the launch (`AppMorph`). */
+  const leaveApp = () => {
+    if (screen.kind !== 'app') {
+      goHome();
+      return;
+    }
+    const { tappedAt } = screen;
+    if (screen.sheet !== undefined) setScreen({ ...screen, sheet: undefined });
+    setStageMorph((m) => ({ at: tappedAt, homeUnder: m?.at === tappedAt && m.homeUnder, leaving: true }));
+  };
+  /** A tile on Home: the app it opens, out of the tile. Its own app's tile, while that app is going
+   *  back into it, turns it back out (M3 "Reopening retargets"); while it is coming out, nothing. */
+  const openFromHome = (app: InstalledApp, fromTile?: boolean) => {
+    // Read through refs: Home under an app coming out of its tile is the one drawn before it (`useHeld`).
+    const morph = morphRef.current;
+    if (morph !== null && runningRef.current?.app.id === app.id) {
+      if (morph.leaving) setStageMorph({ ...morph, leaving: false });
+      return;
+    }
+    onOpen(app, undefined, fromTile === true).catch(() => undefined);
   };
 
   /** The update screen's `Not now`, and system back: Home, carrying the prompt the screen held for
@@ -2060,8 +2161,15 @@ function LauncherShell({
     if (genRef.current === ctl) genRef.current = null;
   };
   const releaseLiveRef = (lease: PendingAttemptLease) => {
-    if (liveAttemptsRef.get(lease.id)?.lease === lease) liveAttemptsRef.delete(lease.id);
-    if (liveRef.current?.lease === lease) liveRef.current = null;
+    const owned = liveAttemptsRef.get(lease.id);
+    if (owned?.lease === lease) {
+      liveAttemptsRef.delete(lease.id);
+      lightReleased(owned.light);
+    }
+    if (liveRef.current?.lease === lease) {
+      lightReleased(liveRef.current.light);
+      liveRef.current = null;
+    }
   };
   const whenLiveAttemptOwns = (lease: PendingAttemptLease, complete: (selected: boolean) => void) => {
     if (liveAttemptsRef.get(lease.id)?.lease === lease) complete(liveRef.current?.lease === lease);
@@ -2104,6 +2212,8 @@ function LauncherShell({
       currentLive.screen = nextScreen;
       if (selected) setScreen((previous) => (previous.kind === 'making' ? withStreamEvent(previous, event, at) : previous));
     }
+    // Last: the journal and the screen already hold this frame, whatever the light does.
+    if (event.type === 'token' || event.type === 'thinking') lightArrived(currentLive.light, at, reduceMotionRef.current);
     return nextSignals;
   };
 
@@ -2816,7 +2926,7 @@ function LauncherShell({
       lastThinkingAt: null,
       lastFrameAt: startedAt,
     };
-    const live: LiveAttempt = { id: attemptId, lease, screen: building, signals, ctl, retrySnapshot };
+    const live: LiveAttempt = { id: attemptId, lease, screen: building, signals, ctl, retrySnapshot, light: createRunLight() };
     liveAttemptsRef.set(attemptId, live);
     showStartedAttempt(live, over);
     // The keepalive comment frame (`: keepalive\n\n`, build-liveness B2) is transport noise, never
@@ -3419,7 +3529,7 @@ function LauncherShell({
           onReload={onWhimReload}
           onHistory={() => onHistory(app, 'app')}
           onReport={() => setScreen((s) => (s.kind === 'app' ? { ...s, sheet: 'report' } : s))}
-          onExit={goHome}
+          onExit={leaveApp}
         />
       ),
     };
@@ -3446,6 +3556,16 @@ function LauncherShell({
     } else {
       goHome();
     }
+  };
+
+  /** Where the making sheet grows out of and goes back into on Home (`SheetAnchor`): the composer for a
+   *  description begun there (M6), the run's own tile while it is made (M5). Nothing over a running
+   *  app, whose sheet rises and falls under the orb. */
+  const sheetAnchor = (): string | undefined => {
+    if (running !== null) return undefined;
+    if ((screen.kind === 'describe' || screen.kind === 'plan') && composerBegun.current) return COMPOSER_ANCHOR;
+    if (screen.kind === 'making' && screen.runId != null) return tileAnchor(screen.runId);
+    return undefined;
   };
 
   /** The page the making sheet shows for the current screen, with the key it is shown under; `null`
@@ -3509,6 +3629,7 @@ function LauncherShell({
           signals={signalsRef.current}
           now={Date.now()}
           activity={from.runId != null ? liveView.activity[from.runId] ?? 0 : 0}
+          flicker={from.runId != null ? liveView.flicker[from.runId] : undefined}
           onStop={onStopMaking}
         />
       );
@@ -3544,10 +3665,15 @@ function LauncherShell({
 
   const renderHome = (): React.ReactNode => (
     <HomeScreen
+      firstAppearance={!gridAppeared.current}
+      covered={launchCovered}
+      onAppeared={() => {
+        gridAppeared.current = true;
+      }}
       apps={apps}
       pending={pendingBuilds.map((view) => view.record)}
       purges={purges}
-      onOpen={onOpen}
+      onOpen={openFromHome}
       onFork={onFork}
       onDelete={onDelete}
       onUndoDelete={onUndoDelete}
@@ -3560,15 +3686,27 @@ function LauncherShell({
       draft={composerDraft}
       queued={liveView.queued}
       activity={liveView.activity}
+      stalled={liveView.stalled}
+      flicker={liveView.flicker}
       onHistory={(app) => onHistory(app, 'home')}
-      onPromptAgain={(app) => openWithConsent({ kind: 'compose', editing: app })}
-      onCreate={(idea) => openWithConsent({ kind: 'compose', text: idea })}
+      onPromptAgain={(app) => {
+        composerBegun.current = false;
+        openWithConsent({ kind: 'compose', editing: app });
+      }}
+      onCreate={(idea) => {
+        // An idea chip begins a description too, but only the composer itself grows into the sheet.
+        composerBegun.current = idea === undefined;
+        openWithConsent({ kind: 'compose', text: idea });
+      }}
       onSettings={() => setScreen({ kind: 'settings' })}
       onOpenDevProbe={onOpenDevProbe}
       offline={showOfflineIndicator(connectivity)}
       onOpenPending={onOpenPending}
       onCancelPending={onCancelPending}
-      onRetryPending={(rec) => openWithConsent({ kind: 'retry', record: rec })}
+      onRetryPending={(rec) => {
+        composerBegun.current = false;
+        openWithConsent({ kind: 'retry', record: rec });
+      }}
       onCustomizeTile={onCustomizeTile}
       onResetTile={onResetTile}
     />
@@ -3686,15 +3824,16 @@ function LauncherShell({
    *  task 18.4): hidden, with one WebView waiting, while no app is open; the open app when one is.
    *  Both branches render it at the same place, so opening and closing never remount it. The app stays
    *  open under a change's pages the Whim sheet grew into (`running`). */
-  const renderMiniApp = (sheetOpen: boolean): React.ReactNode => {
-    if (!ready) return null;
-    if (running === null) return <MiniAppStage launch={null} onFrame={setAppFrame} />;
+  const renderMiniApp = (sheetOpen: boolean, screenContent: React.ReactNode): React.ReactNode => {
+    if (!ready) return screenContent;
+    if (running === null) return <MiniAppStage launch={null} onFrame={setAppFrame}>{screenContent}</MiniAppStage>;
+    const { tappedAt } = running;
     const launch: MiniAppLaunch = {
       record: running.record,
       bundleSource: running.source,
       engineAppId: running.engineAppId,
-      tappedAt: running.tappedAt,
-      onExit: goHome,
+      tappedAt,
+      onExit: leaveApp,
       onOpenSheet: openWhimSheet,
       sheetOpen,
       onCloseSheet: closeSheet,
@@ -3703,14 +3842,29 @@ function LauncherShell({
       onReload: onWhimReload,
       onAskFix: askWhimToFix,
       behind: runningBehind,
+      morph: {
+        fromTile: running.fromTile === true,
+        homeUnder: morphNow?.homeUnder === true,
+        leaving: morphNow?.leaving === true,
+        onCovered: () => setStageMorph((m) => (m?.at === tappedAt && !m.leaving ? { ...m, homeUnder: false } : m)),
+        onVeiled: () => setStageMorph((m) => (m?.at === tappedAt && m.leaving ? { ...m, homeUnder: true } : m)),
+        // Only for the launch on screen: one replaced while it went back in (another tile tapped) ends nothing.
+        onClosed: () => {
+          const now = morphRef.current;
+          if (now?.at !== tappedAt || !now.leaving) return;
+          setStageMorph(null);
+          goHome();
+        },
+        onReopen: () => setStageMorph((m) => (m?.at === tappedAt && m.leaving ? { ...m, leaving: false } : m)),
+      },
     };
-    return <MiniAppStage launch={launch} onFrame={setAppFrame} />;
+    return <MiniAppStage launch={launch} onFrame={setAppFrame}>{screenContent}</MiniAppStage>;
   };
 
   // What the shell is laid out around: the running app while a change's pages sit over it, else the screen.
   const base: Screen = running ?? screen;
   const sheetPage = renderSheetPage();
-  const stack = ready ? stackFor(base) : null;
+  const { stack, baseOnStack } = stacksOf(ready, base, morphNow?.homeUnder === true);
   // A deeper stack is a push the platform now draws; a stack mounted afresh (History over an app)
   // is not drawn as a move, and one gone will never say a move finished.
   const stackDepth = stack?.length ?? 0;
@@ -3728,6 +3882,9 @@ function LauncherShell({
   } else {
     content = renderScreenContent();
   }
+  // Home under an app coming out of its tile is the Home drawn as it was tapped, not drawn again: the
+  // app's first frames go to its page (tap-to-first-paint).
+  content = useHeld(content, morphNow?.homeUnder === true && !morphNow.leaving);
 
   // Task 15.2 (design-system-v1 D12): the shell root, not HomeScreen's layout, ends the launch-screen
   // hold, on the frame after the first real screen (Home, or a link's landing) commits; the skeleton
@@ -3736,11 +3893,17 @@ function LauncherShell({
   useEffect(() => {
     const hide = hideLaunchScreenRef.current;
     if (!ready || hide === null) return undefined;
+    let faded: ReturnType<typeof setTimeout> | undefined;
     const frame = requestAnimationFrame(() => {
       hideLaunchScreenRef.current = null;
       hide();
+      // The native side fades the launch screen out over M27's `fade-in`.
+      faded = setTimeout(() => setLaunchCovered(false), timingOf('fadeIn').duration);
     });
-    return () => cancelAnimationFrame(frame);
+    return () => {
+      cancelAnimationFrame(frame);
+      clearTimeout(faded);
+    };
   }, [ready]);
 
   // The boundary wraps the screen switch's `content` and NOTHING above it (design D1): a screen
@@ -3752,18 +3915,18 @@ function LauncherShell({
   const frame = shellFrame(base, tokens, appFrame, scrimsUp);
 
   return (
-    <SafeAreaView edges={frameEdgesFor(base.kind, stack !== null)} style={[styles.root, { backgroundColor: frame.background }]}>
+    <SafeAreaView edges={frameEdgesFor(base.kind, baseOnStack)} style={[styles.root, { backgroundColor: frame.background }]}>
       <StatusBar barStyle={frame.barStyle} />
       <ToastHost bottomOffset={toastOffset(base.kind)}>
         <ToastBridge api={toastRef} />
+        <SheetAnchors>
         <ScreenBoundary
           screen={screen.kind}
           FallbackComponent={ScreenErrorFallback}
           onLeave={exit.back === 'root' ? undefined : goHome}
         >
-          {renderMiniApp(sheetPage !== null)}
-          {content}
-          <MakingSheet content={sheetPage} onClose={closeSheet} />
+          {renderMiniApp(sheetPage !== null, content)}
+          <MakingSheet content={sheetPage} onClose={closeSheet} anchor={sheetAnchor()} />
           {checkingAge !== undefined && <AgeCheckBack onLeave={() => onLegalDecline(checkingAge.returnTo)} />}
           <FirstRunHost
             ask={firstRunAskOf(screen)}
@@ -3775,6 +3938,7 @@ function LauncherShell({
             onDecline={onLegalDecline}
           />
         </ScreenBoundary>
+        </SheetAnchors>
       </ToastHost>
       <DevLogTools />
     </SafeAreaView>

@@ -103,6 +103,8 @@ export function sseStream(signal?: AbortSignal) {
     /** Send one event; a stream already ended or aborted takes nothing more. */
     push: (event: unknown) => { if (open) controller.enqueue(encoder.encode(`data: ${JSON.stringify(event)}\n\n`)); },
     end: () => { if (open) { open = false; controller.close(); } },
+    /** Send the keepalive comment frame (build-liveness B2): transport noise, never an event. */
+    keepalive: () => { if (open) controller.enqueue(encoder.encode(': keepalive\n\n')); },
   };
 }
 

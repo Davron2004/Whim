@@ -7,6 +7,7 @@ import TestRenderer from 'react-test-renderer';
 import { Harness } from './harness';
 import {
   accessibilityListenerCount,
+  accessibilityQueryFailure,
   accessibilitySettings,
   emitAccessibility,
   Platform,
@@ -15,10 +16,11 @@ import {
   windowMetrics,
 } from './native-host';
 import { hostType, renderScreen, unmountScreen } from './react-screen';
+import { log } from '../../logging';
 import { useTokens } from '../../ui/tokens';
-import { makeStyles, resolveTokens, springConfig, type ShellTokens } from '../../ui/tokens-pure';
+import { makeStyles, resolveTokens, springConfig, staggerDelay, type ShellTokens } from '../../ui/tokens-pure';
 import { Text } from '../../ui/Text';
-import { COLORS, LAYOUT, SPRINGS, type SpringName } from '../../../design/tokens';
+import { COLORS, LAYOUT, SPRINGS, TIMINGS, type SpringName } from '../../../design/tokens';
 import { SAMPLED_SPRINGS } from '../../../design/generated/springs';
 import { contrastRatio } from '../../../design/tints';
 import { backdropOf, statusBarStyleOver } from '../../ui/status-bar-style';
@@ -124,6 +126,34 @@ export async function runShellTokensTests(h: Harness): Promise<void> {
     await resetPhone();
   });
 
+  await h.test('a Reduce Motion read the OS rejects is logged with its reason, never as "[object Object]", and the hook keeps its default', async () => {
+    const unreadable = () => log.buffer.snapshot().filter((r) => r.message === 'accessibility setting unreadable');
+    try {
+      log.buffer.clear();
+      accessibilityQueryFailure.reason = { code: 'E_UNAVAILABLE' };
+      const tree = await renderScreen(<Probe />);
+      h.eq(probeTokens(tree).reduceMotion, false, 'the unreadable setting leaves Reduce Motion at its default');
+      const logged = unreadable().map((r) => r.fields as { flag: string; detail: string });
+      h.eq(logged.length, 1, 'one log line for the one rejected read');
+      h.eq(logged[0].flag, 'reduceMotion', 'it names the setting');
+      h.eq(logged[0].detail, 'rejected with a non-error object', `the reason is not an object's default stringification: ${logged[0].detail}`);
+      await unmountScreen(tree);
+      log.buffer.clear();
+      accessibilityQueryFailure.reason = new Error('no accessibility service');
+      const again = await renderScreen(<Probe />);
+      h.eq(unreadable().map((r) => (r.fields as { detail: string }).detail), ['no accessibility service'], 'an Error is logged by its message');
+      await unmountScreen(again);
+      log.buffer.clear();
+      accessibilityQueryFailure.reason = 42;
+      const numeric = await renderScreen(<Probe />);
+      h.eq(unreadable().map((r) => (r.fields as { detail: string }).detail), ['42'], 'a primitive reason is logged as its value');
+      await unmountScreen(numeric);
+    } finally {
+      delete accessibilityQueryFailure.reason;
+    }
+    await resetPhone();
+  });
+
   await h.test('every subscriber shares one set of OS listeners, released when the last one goes', async () => {
     h.eq(accessibilityListenerCount(), 0, 'nothing listens before the shell renders');
     const first = await renderScreen(<Probe />);
@@ -186,5 +216,15 @@ export async function runShellTokensTests(h: Harness): Promise<void> {
       const documented = SAMPLED_SPRINGS[name].durationMs;
       h.ok(Math.abs(measured - documented) <= 1000 / 60 + 1, `${name} settles in ${documented} ms (Reanimated config settles in ${measured.toFixed(0)} ms)`);
     }
+  });
+
+  await h.test('stagger: one step per item over the first items, the rest together one step later; nothing waits under Reduce Motion', async () => {
+    const first = TIMINGS.staggerFirst;
+    const delays = Array.from({ length: first + 4 }, (_, i) => staggerDelay(i, false));
+    h.eq(delays[0], 0, 'the first item does not wait');
+    h.eq(delays.slice(1, first + 1).map((d, i) => d - delays[i]), Array(first).fill(TIMINGS.staggerPerItem), `each of the first ${first} items starts one ${TIMINGS.staggerPerItem} ms step after the one before`);
+    h.eq(new Set(delays.slice(first)).size, 1, `every item from the ${first + 1}th on arrives together`);
+    h.ok(delays[first] > delays[first - 1], 'and after the staggered ones, never before them');
+    h.eq(delays.map((_, i) => staggerDelay(i, true)), Array(delays.length).fill(0), 'Reduce Motion: no stagger');
   });
 }

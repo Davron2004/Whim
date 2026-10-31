@@ -25,6 +25,7 @@ import { EMBER_PATH } from '../../../design/icons/ember';
 import { squirclePath } from '../../../design/icons/squircle';
 import { mixHex } from '../../../design/tints';
 import { Share, StyleSheet, accessibilitySettings, setColorScheme, windowMetrics } from './native-host';
+import { animations, isStep } from './native-reanimated';
 import { captureTimeouts, press, renderScreen, screenReaderElement, textOf, unmountScreen, hostType } from './react-screen';
 import {
   CELL_RECT, STATUS_BAR_OFFSET, chooseRow, longPress, menuCard, menuLabels, menuRows, pressToastAction, renderHome, settle, sheetRows, sheetTitled,
@@ -35,6 +36,13 @@ type Style = Record<string, unknown>;
 const flat = (node: TestRenderer.ReactTestInstance): Style => StyleSheet.flatten(node.props.style) as Style;
 
 const DAY = 24 * 60 * 60 * 1000;
+
+/** An ember's body: the faded layer holding the flame's gradient (centred low). */
+const isEmberBody = (v: TestRenderer.ReactTestInstance) =>
+  hostType(v) === 'Animated.View' && flat(v).opacity !== undefined && v.findAll((n) => hostType(n) === 'RadialGradient' && n.props.cy === '74%').length === 1;
+/** A changing tile's ring: the absolutely placed layer around the plate holding the ember-stroked outline. */
+const isRing = (v: TestRenderer.ReactTestInstance) =>
+  hostType(v) === 'Animated.View' && flat(v).position === 'absolute' && v.findAll((n) => hostType(n) === 'Path' && n.props.stroke === COLORS.light.ember).length === 1;
 
 function app(id: string, createdAt: number, extra: Partial<InstalledApp> = {}): InstalledApp {
   return { id, name: id, createdAt, lineageId: 'main', record: { appId: id, name: id, manifest: { capabilities: [] } }, ...extra };
@@ -382,6 +390,33 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
       h.eq(tileLabels(tree), ['Timer, changing'], 'one tile: the app’s, changing');
       await press(tile(tree, 'Timer'));
       h.eq(opened, ['Timer'], 'it opens the app');
+    } finally { await unmountScreen(tree); }
+  });
+
+  await h.test('home grid: a stream with no bytes for 40 s makes its tile’s light stuck — a making tile’s ember and a changing tile’s ring ease to the stuck level over the stuck time and hold; bytes resume and each burns as before', async () => {
+    await resetPhone();
+    const stuckDoc = /`I` eases to ([\d.]+) over ([\d.]+) s and holds still/.exec(fs.readFileSync(path.join(process.cwd(), 'docs/design/system.md'), 'utf8'));
+    const [level, ms] = [Number(stuckDoc?.[1]), Number(stuckDoc?.[2]) * 1000];
+    const pending = attempts([
+      { id: 'p-making', prompt: 'A pour over timer', state: 'building' },
+      { id: 'p-other', prompt: 'A dice roller game', state: 'building' },
+      { id: 'Timer', prompt: 'Add laps', state: 'building', editingAppId: 'Timer' },
+    ]);
+    const live = { apps: [TIMER], pending, activity: { 'p-making': 0.8, 'p-other': 0.8, Timer: 0.8 } };
+    const tree = await renderHome(live);
+    const body = (name: string) => tile(tree, name).findByType(Ember).find(isEmberBody);
+    const ring = (name: string) => tile(tree, name).find(isRing);
+    const burning = { making: flat(body('Pour over timer')).opacity, ring: flat(ring('Timer')).opacity };
+    try {
+      animations.splice(0);
+      await updateHome(tree, { ...live, stalled: new Set(['p-making', 'Timer']) });
+      const eases = animations.filter(isStep).filter((a) => a.kind === 'timing' && a.to === level && (a.config as Style | undefined)?.duration === ms);
+      h.ok(eases.length >= 2, `the ember and the ring each ease to ${level} over ${ms} ms (${eases.length} eases)`);
+      h.eq(animations.some((a) => a.kind === 'repeat'), false, 'nothing loops');
+      h.eq([tile(tree, 'Pour over timer').findByType(Ember).props.state, flat(body('Pour over timer')).opacity, flat(ring('Timer')).opacity], ['stuck', level, level], 'they hold there, the ember stuck');
+      h.eq(tile(tree, 'Dice roller game').findByType(Ember).props.state, 'working', 'a run that did not stall burns on');
+      await updateHome(tree, { ...live, stalled: new Set() });
+      h.eq([flat(body('Pour over timer')).opacity, flat(ring('Timer')).opacity], [burning.making, burning.ring], 'bytes again: each burns as it did');
     } finally { await unmountScreen(tree); }
   });
 

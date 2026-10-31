@@ -15,19 +15,21 @@
 // fresh WebView starts waiting, unseen, once the launch has painted, so the next is warm too.
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
-import Animated, { useAnimatedStyle, useSharedValue, withTiming } from 'react-native-reanimated';
+import Animated, { useAnimatedReaction, useAnimatedRef, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type { AppRecord } from '../bridge';
 import { RUNTIME_HTML } from '../../runtime/generated/runtime-html';
 import { LAYOUT, SPACE } from '../../design/tokens';
 import { TilePlate } from '../ui/AppTile';
-import { TILE_SIDE } from '../ui/AppTile-geometry';
+import { TILE, TILE_SIDE } from '../ui/AppTile-geometry';
 import { timing } from '../ui/motion';
+import { appAnchor, placeIn, useAnchorEntry, type PlaceRef } from '../ui/SheetAnchor';
 import { Button } from '../ui/Button';
 import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
-import type { ShellTokens } from '../ui/tokens-pure';
+import { springConfig, type ShellTokens } from '../ui/tokens-pure';
 import { themeFrame } from './theme-frame';
 import { tileOf } from './tile-identity';
 import { log } from '../logging';
@@ -35,10 +37,11 @@ import { CHANNELS } from '../logging/channels';
 import { loadEndAction } from './realm-delivery';
 import { logWebViewError } from './webview-error';
 import { useMiniAppHost } from './useMiniAppHost';
+import { useSystemBack } from './use-system-back';
 import { useKeyboardInset } from './KeyboardShell';
 import { padsWebViewForKeyboard } from './keyboard-shell';
 import { COPY } from './copy';
-import { miniAppSurface, OPENING_LABEL_AFTER_MS, OPENING_REVEAL_CAP_MS, openingLook } from './boot-state';
+import { miniAppSurface, OPENING_LABEL_AFTER_MS, OPENING_REVEAL_CAP_MS, openingLook, type OpeningLook } from './boot-state';
 import {
   EMPTY_POOL,
   launchFailed,
@@ -83,7 +86,7 @@ export interface MiniAppLaunch {
   installedApp: InstalledApp;
   /** What the orb shows of a change to this app (`app-launcher` "Changing an app keeps it running
    *  and offers Reload"): being made, with its stream's activity; landed; failed; or nothing. */
-  orb: Required<Pick<OrbProps, 'state' | 'activity'>>;
+  orb: Required<Pick<OrbProps, 'state' | 'activity'>> & Pick<OrbProps, 'flicker' | 'stuck'>;
   /** The crash screen's Reload: the launcher opens the app again in place, a new launch. */
   onReload: () => void;
   /** The crash screen's "Ask Whim to fix it", with the error to attach (`crashAttachment`, plain
@@ -92,6 +95,38 @@ export interface MiniAppLaunch {
   /** A newer version of the app than this launch runs is current: the crash screen leads with Reload
    *  and offers no fix of an error from code no longer current. */
   behind: boolean;
+  /** How the app comes out of its tile on Home and goes back into it (M2, M3); none, and it shows and
+   *  goes at once. */
+  morph?: AppMorph;
+}
+
+/**
+ * Opening and closing between Home and the screen (system.md §4.4 M2, M3). The app's `bg` grows out of
+ * its tile (`appAnchor`, measured on the UI thread) to the screen on `morph`, moved by transforms only
+ * (`BgShape`: two stretched bars and four corner discs), with the tint a tile-sized plate where the tile is; leaving, the
+ * page is covered first (`fade-out`) and the `bg` shrinks back into the tile on `smooth`, the plate
+ * fading back in there. The launcher draws Home under the app while either runs (`homeUnder`), never
+ * over its page: Home is added only once the page is covered, and goes once the `bg` covers the screen.
+ * Meanwhile the `bg` takes every touch inside it and Home only those outside it (§4.3 rule 2): one
+ * inside it does nothing while the app comes out, and turns it back out while it goes back in.
+ * Under Reduce Motion the `bg` keeps the screen's size and cross-fades over Home instead.
+ */
+export interface AppMorph {
+  /** The person tapped its tile: it grows out of it. Else it is on the screen from the start. */
+  fromTile: boolean;
+  /** Home is drawn under the app. */
+  homeUnder: boolean;
+  /** The person is leaving the app: back into its tile, from wherever it has got to. False again
+   *  (its tile tapped mid-way) reopens it from there. */
+  leaving: boolean;
+  /** The app's `bg` covers the screen: Home under it can go. */
+  onCovered: () => void;
+  /** Leaving, the page is covered: Home can be drawn under the app. */
+  onVeiled: () => void;
+  /** Leaving, the app is back in its tile (or has faded, with no tile to go into): the launch ends. */
+  onClosed: () => void;
+  /** Leaving, a touch on the app's `bg`: it turns back out from where it is (M3 "Reopening retargets"). */
+  onReopen: () => void;
 }
 
 export interface MiniAppStageProps {
@@ -100,6 +135,9 @@ export interface MiniAppStageProps {
   /** The tokens the open app's frame is held to (those captured at its delivery), or `null` while
    *  nothing is delivered: the shell's status-bar strip and status bar follow them over the app. */
   onFrame: (pinned: ShellTokens | null) => void;
+  /** The screen the launcher shows: drawn under the open app's layers and over its page, so Home can
+   *  sit under an app growing out of it or shrinking back into it (`AppMorph`). */
+  children?: React.ReactNode;
 }
 
 /** The current launch's end of its WebView's events. Frames and load events reach a launch only
@@ -122,7 +160,7 @@ function openingOf(launch: MiniAppLaunch | null): string | null {
 }
 
 /** The container: the pool's WebViews, and the open app's `MiniAppView` over its own. */
-export function MiniAppStage({ launch, onFrame }: Readonly<MiniAppStageProps>) {
+export function MiniAppStage({ launch, onFrame, children }: Readonly<MiniAppStageProps>) {
   const tokens = useTokens();
   // An open app's area keeps the settings it was delivered with (app-launcher "Settings changed
   // while an app runs apply next time"; system.md: no live theme frame); before its delivery, and
@@ -165,6 +203,15 @@ export function MiniAppStage({ launch, onFrame }: Readonly<MiniAppStageProps>) {
   // (`loader.js`). iOS's WebView avoids the keyboard itself (`padsWebViewForKeyboard`).
   const frame = useRef<View>(null);
   const keyboard = useKeyboardInset(frame, launch !== null && padsWebViewForKeyboard(Platform.OS));
+  // The same view, for what the app's opening and closing measure on the UI thread.
+  const place = useAnimatedRef<View>();
+  const setFrame = useCallback((view: View | null) => {
+    frame.current = view;
+    place(view);
+  }, [place]);
+  // Home under an app sits where it sits on its own, at the window's top: the app's frame starts below
+  // the status-bar strip, Home's above it.
+  const top = useSafeAreaInsets().top;
   const onFailed = useCallback(() => setPool(launchFailed), []);
   const onOpened = useCallback(() => setPool(launchOpened), []);
 
@@ -190,15 +237,9 @@ export function MiniAppStage({ launch, onFrame }: Readonly<MiniAppStageProps>) {
   };
 
   const open = launch !== null && !switching && pool.launch !== null;
+  const homeUnder = open && launch.morph?.homeUnder === true;
   return (
-    <View
-      ref={frame}
-      collapsable={false}
-      style={open ? [styles.root, { backgroundColor: bg, paddingBottom: keyboard }] : styles.waiting}
-      pointerEvents={open ? 'auto' : 'none'}
-      accessibilityElementsHidden={!open}
-      importantForAccessibility={open ? 'auto' : 'no-hide-descendants'}
-    >
+    <View ref={setFrame} collapsable={false} style={open ? [styles.root, { backgroundColor: bg, paddingBottom: keyboard }] : styles.root}>
       {/* Every WebView, waiting or bound, is this one element: the same page, the same settings, the
           same native view manager (whose network refusal, decision #74, every instance gets). Its
           slot, a native view for the WebView's whole life, carries layout, visibility, touch and
@@ -241,10 +282,14 @@ export function MiniAppStage({ launch, onFrame }: Readonly<MiniAppStageProps>) {
           </View>
         );
       })}
+      <View style={homeUnder ? [styles.layer, { top: -top }] : styles.layer} pointerEvents="box-none">
+        {children}
+      </View>
       {open ? (
         <MiniAppView
           key={pool.launch}
           {...launch}
+          frame={place}
           slot={launchSlot(pool)}
           outlet={outlet}
           natives={natives}
@@ -259,6 +304,8 @@ export function MiniAppStage({ launch, onFrame }: Readonly<MiniAppStageProps>) {
 
 /** One launch's view, over the WebView `MiniAppStage` bound to it. */
 interface MiniAppViewProps extends MiniAppLaunch {
+  /** The stage's own view, which the opening and closing measure from. */
+  frame: PlaceRef;
   /** The WebView bound to this launch; none on a failure surface. */
   slot: PoolSlot | undefined;
   outlet: React.MutableRefObject<LaunchOutlet | null>;
@@ -271,9 +318,351 @@ interface MiniAppViewProps extends MiniAppLaunch {
   onPinned: (pinned: ShellTokens | null) => void;
 }
 
+/** Where the app's tile is drawn, from the stage's top-left, and the stage's size, as last measured. */
+interface TileAt {
+  readonly x: number;
+  readonly y: number;
+  readonly width: number;
+  readonly height: number;
+  readonly frameWidth: number;
+  readonly frameHeight: number;
+}
+
+// Spring configs as module constants: a worklet never calls `springConfig` (motion.ts).
+const MORPH = springConfig('morph');
+const SMOOTH = springConfig('smooth');
+
+/** Frames a tile going back in must hold still on before its plate shows there. */
+const TILE_SETTLE_FRAMES = 3;
+
+/** The same place, give or take half a point. */
+const sameTileAt = (a: TileAt, b: TileAt) => {
+  'worklet';
+  return Math.abs(a.x - b.x) < 0.5 && Math.abs(a.y - b.y) < 0.5 && Math.abs(a.width - b.width) < 0.5 && Math.abs(a.height - b.height) < 0.5;
+};
+
+const clamp01 = (v: number) => {
+  'worklet';
+  return Math.min(1, Math.max(0, v));
+};
+
+/** Whether the `bg` going back in, `k` of the way from the tile `at` to the stage, is drawn where it
+ *  lands: faded out under Reduce Motion, else every edge within half a point of the tile's. Unmeasured,
+ *  the `bg` is the whole stage (`shapeOf`), which is far from landed. */
+function closeLanded(k: number, at: TileAt | null, reduced: boolean): boolean {
+  'worklet';
+  if (reduced) return k <= 1 / 255;
+  if (at === null) return false;
+  const span = Math.max(Math.abs(at.x), Math.abs(at.y), Math.abs(at.frameWidth - at.x - at.width), Math.abs(at.frameHeight - at.y - at.height));
+  return clamp01(k) * span <= 0.5;
+}
+const lerp = (a: number, b: number, p: number) => {
+  'worklet';
+  return a + (b - a) * p;
+};
+
+interface MorphInputs {
+  morph: AppMorph | undefined;
+  appId: string;
+  frame: PlaceRef;
+  reduceMotion: boolean;
+  look: OpeningLook;
+  failed: boolean;
+}
+
+/** M2 and M3 (`AppMorph`) over the opening state (task 18.3): how far the app's `bg` has grown, how
+ *  much of it covers the page and where the tile is (`shape`, drawn by `BgShape`); the plate's opacity and its place on the tile
+ *  (`plateMove`, "Opening…" under it: `labelMove`), centred when the app came from no tile; the orb,
+ *  which comes and goes with the app. The page is revealed once the `bg` covers the screen and this
+ *  launch has painted (or the 600 ms cap passed). */
+function useAppMorph({ morph, appId, frame, reduceMotion, look, failed }: MorphInputs) {
+  const fromTile = morph?.fromTile === true;
+  const leaving = morph?.leaving === true;
+  const homeUnder = morph?.homeUnder === true;
+  const latest = useRef(morph);
+  latest.current = morph;
+  const tile = useAnchorEntry(morph === undefined ? undefined : appAnchor(appId))?.ref ?? null;
+  // 0 the tile, 1 the screen. Under Reduce Motion the `bg` keeps the screen's size, and this is how
+  // much of it shows.
+  const grown = useSharedValue(fromTile ? 0 : 1);
+  // 1 while the page is covered, 0 once it shows.
+  const veil = useSharedValue(1);
+  const plate = useSharedValue(1);
+  // The orb comes in once the app covers the screen and goes as it leaves.
+  const orbShown = useSharedValue(fromTile ? 0 : 1);
+  const tileAt = useSharedValue<TileAt | null>(null);
+  // Leaving, whether the tile has been measured in one place on `TILE_SETTLE_FRAMES` frames in a row
+  // (`tileStill`: how many, and the last one's `grown`, which tells one frame from the next).
+  const tileSettled = useSharedValue(true);
+  const tileStill = useSharedValue({ frames: 0, k: Number.NaN });
+  const [covered, setCovered] = useState(!fromTile);
+
+  // Where the tile is: measured once as the app comes out of it, kept once Home has gone (every view a
+  // frame moves is a commit of its own, and the page paints its first frame meanwhile); on every frame
+  // it goes back into it, where Home under it may still be settling: Home is drawn afresh under the
+  // app, and its first frames can lay the tile out higher than it ends up (by the status bar and a
+  // navigation bar: 108 pt on an iOS 27 simulator, 117 dp on an Android emulator, for one or two
+  // frames), so the plate fades in there only once the tile has held still. Under Reduce Motion going
+  // back is the cross-fade alone, with no plate.
+  const reducedNow = useRef(reduceMotion);
+  reducedNow.current = reduceMotion;
+  const tileSettledNow = useCallback(() => {
+    if (latest.current?.leaving === true && !reducedNow.current) plate.value = withTiming(1, timing('fadeIn'));
+  }, [plate]);
+  useAnimatedReaction(
+    () => (Number.isFinite(grown.value) && tile !== null && (leaving || tileAt.value === null) ? placeIn(frame, tile) : null),
+    (at) => {
+      if (at === null) return;
+      const before = tileAt.value;
+      tileAt.value = at;
+      if (tileSettled.value) return;
+      const k = grown.value;
+      const still = tileStill.value;
+      if (before === null || !sameTileAt(before, at)) tileStill.value = { frames: 1, k };
+      else if (k !== still.k) tileStill.value = { frames: still.frames + 1, k };
+      if (tileStill.value.frames < TILE_SETTLE_FRAMES) return;
+      tileSettled.value = true;
+      scheduleOnRN(tileSettledNow);
+    },
+    [frame, tile, leaving],
+  );
+  const coveredNow = useCallback(() => {
+    setCovered(true);
+    latest.current?.onCovered();
+  }, []);
+  const veiled = useCallback(() => latest.current?.onVeiled(), []);
+  const closed = useCallback(() => latest.current?.onClosed(), []);
+  useAnimatedReaction(
+    () => grown.value >= 1,
+    (now, before) => {
+      if (now && before !== true) scheduleOnRN(coveredNow);
+    },
+    [coveredNow],
+  );
+
+  // Android back while it comes out of its tile turns it round, even before its realm is bound (when
+  // the app's own back policy would leave Whim); while it goes back in, back has nothing more to do.
+  const moving = morph !== undefined && (!covered || leaving);
+
+  // Out of the tile from the first frame the app is drawn: once, as the launch mounts.
+  useLayoutEffect(() => {
+    if (fromTile) grown.value = reduceMotion ? withTiming(1, timing('fadeIn', true)) : withSpring(1, MORPH);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // A failure surface replaces the opening at once, over the whole screen; leaving it goes at once.
+  useEffect(() => {
+    if (!failed) return;
+    grown.value = 1;
+    if (leaving) closed();
+  }, [failed, leaving, grown, closed]);
+
+  useEffect(() => {
+    if (leaving) return;
+    veil.value = look.revealed && covered ? withTiming(0, timing('fadeIn', reduceMotion)) : 1;
+  }, [veil, look.revealed, covered, leaving, reduceMotion]);
+  useEffect(() => {
+    if (leaving) return;
+    plate.value = look.plate ? 1 : withTiming(0, timing('fadeIn', reduceMotion));
+  }, [plate, look.plate, leaving, reduceMotion]);
+  useEffect(() => {
+    const shown = covered && !leaving ? 1 : 0;
+    if (orbShown.value !== shown) orbShown.value = withTiming(shown, timing(shown === 1 ? 'fadeIn' : 'fadeOut', reduceMotion));
+  }, [orbShown, covered, leaving, reduceMotion]);
+
+  // Leaving: the page goes under the `bg` first (§4.3 rule 4), so the launcher can draw Home under the
+  // app; then back into the tile from wherever it is, the plate coming back where the tile is. A tap on
+  // the tile mid-way (`leaving` false again) turns it back out from there.
+  const left = useRef(false);
+  useEffect(() => {
+    if (failed) return;
+    if (!leaving) {
+      if (!left.current) return;
+      left.current = false;
+      grown.value = reduceMotion ? withTiming(1, timing('fadeIn', true)) : withSpring(1, MORPH);
+      return;
+    }
+    left.current = true;
+    if (!homeUnder) {
+      tileAt.value = null;
+      tileSettled.value = false;
+      tileStill.value = { frames: 0, k: Number.NaN };
+      if (veil.value >= 1) {
+        veiled();
+        return;
+      }
+      veil.value = withTiming(1, timing('fadeOut', reduceMotion), (finished?: boolean) => {
+        'worklet';
+        if (finished) scheduleOnRN(veiled);
+      });
+      return;
+    }
+    setCovered(false);
+    // Back while it still comes out: Home never left, so its tile has not moved, and the plate (gone
+    // with the page's paint) comes back there at once rather than after the tile holds still.
+    if (tileSettled.value) tileSettledNow();
+    const done = (finished?: boolean) => {
+      'worklet';
+      if (finished) scheduleOnRN(closed);
+    };
+    if (reduceMotion) {
+      grown.value = withTiming(0, timing('fadeIn', true), done);
+      return;
+    }
+    grown.value = withSpring(0, SMOOTH, done);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [leaving, homeUnder, failed]);
+  // The close ends on the frame it is seen to land: Reanimated 4.6 ends `smooth` at 6e-9 of its
+  // starting energy, ~0.35 s after the `bg` is within half a point of the tile, and until the close
+  // ends Android back is held (`BackWhileMoving`) and a Reload refused. The animation's end stays the
+  // fallback (`onClosed` ends only the launch still leaving).
+  useAnimatedReaction(
+    () => leaving && homeUnder && !failed && closeLanded(grown.value, tileAt.value, reduceMotion),
+    (landed, before) => {
+      if (landed && before !== true) scheduleOnRN(closed);
+    },
+    [leaving, homeUnder, failed, reduceMotion, closed],
+  );
+
+  const plateStyle = useAnimatedStyle(() => ({ opacity: plate.value }));
+  // The plate sits where the tile is, at its drawn size, for an app that came out of it or is going
+  // back into it, and is not drawn until the tile has been measured (going back, measured settled);
+  // centred otherwise.
+  const onTile = fromTile || leaving;
+  const plateMove = useAnimatedStyle(() => {
+    const at = tileAt.value;
+    if (at === null) return { opacity: onTile ? 0 : 1, transform: [{ translateX: 0 }, { translateY: 0 }, { scale: 1 }] };
+    const dx = at.x + at.width / 2 - at.frameWidth / 2;
+    const dy = at.y + at.height / 2 - at.frameHeight / 2;
+    return { opacity: leaving && !tileSettled.value ? 0 : 1, transform: [{ translateX: dx }, { translateY: dy }, { scale: at.width / TILE_SIDE.grid }] };
+  });
+  const labelMove = useAnimatedStyle(() => {
+    const at = tileAt.value;
+    if (at === null) return { opacity: onTile ? 0 : 1, transform: [{ translateX: 0 }, { translateY: 0 }] };
+    const dx = at.x + at.width / 2 - at.frameWidth / 2;
+    const dy = at.y + at.height - (at.frameHeight + TILE_SIDE.grid) / 2;
+    return { opacity: leaving && !tileSettled.value ? 0 : 1, transform: [{ translateX: dx }, { translateY: dy }] };
+  });
+  const orbStyle = useAnimatedStyle(() => ({ opacity: orbShown.value }));
+  // Fading out or faded, the orb takes no touch and is out of the accessibility tree.
+  const orbOn = covered && !leaving;
+  return { shape: { grown, veil, tileAt, reduceMotion }, plateStyle, plateMove, labelMove, orbStyle, orbOn, moving };
+}
+
+/** Where the app's `bg` is, `k` of the way from the tile `at` to the stage, and its corner radius;
+ *  `full` when it is the whole stage (grown, or with no tile to grow from, or under Reduce Motion,
+ *  where only its opacity moves). */
+function shapeOf(k: number, at: TileAt | null, reduced: boolean) {
+  'worklet';
+  if (reduced || at === null || k >= 1) return { full: true, x: 0, y: 0, w: 1, h: 1, r: 0, fw: 1, fh: 1 };
+  return {
+    full: false,
+    x: lerp(at.x, 0, k),
+    y: lerp(at.y, 0, k),
+    w: lerp(at.width, at.frameWidth, k),
+    h: lerp(at.height, at.frameHeight, k),
+    r: lerp(TILE.corner * at.width, 0, k),
+    fw: at.frameWidth,
+    fh: at.frameHeight,
+  };
+}
+
+/** A layer that takes touches where it draws something and is read, or, `on` false, neither. */
+const reachOf = (on: boolean) =>
+  on
+    ? { pointerEvents: 'box-none' as const, accessibilityElementsHidden: false, importantForAccessibility: 'auto' as const }
+    : { pointerEvents: 'none' as const, accessibilityElementsHidden: true, importantForAccessibility: 'no-hide-descendants' as const };
+
+/** A touch on the app's `bg` while it comes out of its tile: it goes on growing. */
+const noTouch = () => undefined;
+
+/** The corner discs are drawn at this diameter and scaled uniformly to the corner's radius. */
+const CORNER_DISC = 64;
+
+interface BgShapeProps {
+  grown: SharedValue<number>;
+  veil: SharedValue<number>;
+  tileAt: SharedValue<TileAt | null>;
+  reduceMotion: boolean;
+  color: string;
+}
+
+/**
+ * The app's `bg` growing out of its tile (M2) and back into it (M3), which is also what covers the page
+ * until it is revealed. Moved by transforms only (§4.3 rule 4's default): animating a view's size goes
+ * through a layout commit on every frame, which on Android delayed the page's first paint by two
+ * frames (`tapToPaintMs`, emulator, 71 → 102 ms). The rounded rect is drawn as two plain bars,
+ * stretched (no rounded shape is ever scaled unevenly), and four discs at its corners, scaled
+ * evenly to the radius. Its opacity only ever moves while it is the whole stage, drawn by one bar.
+ */
+const BgShape = React.memo(function BgShapeView({ grown, veil, tileAt, reduceMotion, color }: Readonly<BgShapeProps>) {
+  const across = useAnimatedStyle(() => {
+    const s = shapeOf(clamp01(grown.value), tileAt.value, reduceMotion);
+    const opacity = s.full ? veil.value * clamp01(grown.value) : veil.value;
+    return { opacity, transform: [{ translateX: s.x }, { translateY: s.full ? 0 : s.y + s.r }, { scaleX: s.full ? 1 : s.w / s.fw }, { scaleY: s.full ? 1 : (s.h - 2 * s.r) / s.fh }] };
+  });
+  const down = useAnimatedStyle(() => {
+    const s = shapeOf(clamp01(grown.value), tileAt.value, reduceMotion);
+    if (s.full) return { opacity: 0, transform: [{ translateX: 0 }, { translateY: 0 }, { scaleX: 1 }, { scaleY: 1 }] };
+    return { opacity: veil.value, transform: [{ translateX: s.x + s.r }, { translateY: s.y }, { scaleX: (s.w - 2 * s.r) / s.fw }, { scaleY: s.h / s.fh }] };
+  });
+  return (
+    <>
+      <Animated.View style={[styles.shapeBar, { backgroundColor: color }, across]} pointerEvents="none" />
+      <Animated.View style={[styles.shapeBar, { backgroundColor: color }, down]} pointerEvents="none" />
+      {CORNERS.map((corner) => (
+        <Corner key={corner.join()} corner={corner} grown={grown} veil={veil} tileAt={tileAt} reduceMotion={reduceMotion} color={color} />
+      ))}
+    </>
+  );
+});
+
+/** Which corner a disc rounds: 0 the leading or top side, 1 the trailing or bottom side. */
+const CORNERS = [[0, 0], [1, 0], [0, 1], [1, 1]] as const;
+
+function Corner({ corner: [right, bottom], grown, veil, tileAt, reduceMotion, color }: Readonly<BgShapeProps & { corner: readonly [number, number] }>) {
+  const style = useAnimatedStyle(() => {
+    const s = shapeOf(clamp01(grown.value), tileAt.value, reduceMotion);
+    if (s.full) return { opacity: 0, transform: [{ translateX: 0 }, { translateY: 0 }, { scale: 0 }] };
+    return {
+      opacity: veil.value,
+      transform: [{ translateX: s.x + right * (s.w - 2 * s.r) }, { translateY: s.y + bottom * (s.h - 2 * s.r) }, { scale: (2 * s.r) / CORNER_DISC }],
+    };
+  });
+  return <Animated.View style={[styles.shapeCorner, { backgroundColor: color }, style]} pointerEvents="none" />;
+}
+
+/** What takes the touches inside the app's `bg` while Home is drawn under it (`AppMorph`): one view,
+ *  untinted, moved and scaled over the stage as the `bg` is, so a touch lands on it wherever the `bg` is
+ *  drawn on that frame and on Home everywhere else. Its corners are square: the `bg`'s rounded ones
+ *  are at most a tile's. */
+function BgTouches({ grown, tileAt, reduceMotion, morph }: Readonly<Omit<BgShapeProps, 'veil' | 'color'> & { morph: AppMorph | undefined }>) {
+  const place = useAnimatedStyle(() => {
+    const s = shapeOf(clamp01(grown.value), tileAt.value, reduceMotion);
+    return { transform: [{ translateX: s.x }, { translateY: s.y }, { scaleX: s.w / s.fw }, { scaleY: s.h / s.fh }] };
+  });
+  if (morph?.homeUnder !== true) return null;
+  return (
+    <Animated.View
+      style={[styles.shapeBar, place]}
+      onStartShouldSetResponder={() => true}
+      onResponderRelease={morph.leaving ? morph.onReopen : noTouch}
+      accessible={false}
+      importantForAccessibility="no"
+    />
+  );
+}
+
+/** System back while the app moves between its tile and the screen (`useAppMorph`): mounted only then,
+ *  after the app's own listener, so it is asked first. */
+function BackWhileMoving({ onBack }: Readonly<{ onBack: () => void }>) {
+  useSystemBack(onBack);
+  return null;
+}
+
 export default function MiniAppView({
   record, bundleSource, engineAppId, tappedAt, onExit, onOpenSheet, sheetOpen, onCloseSheet, installedApp, orb,
-  onReload, onAskFix, behind, slot, outlet, natives, onFailed, onOpened, onPinned,
+  onReload, onAskFix, behind, morph, frame, slot, outlet, natives, onFailed, onOpened, onPinned,
 }: Readonly<MiniAppViewProps>) {
   const slotKey = slot?.key ?? null;
   // The WebView this launch's host controls is looked up when used: the one bound to the launch
@@ -287,7 +676,7 @@ export default function MiniAppView({
   // The launcher's sheet over the running realm (the Whim sheet, design D14): while it is open,
   // back-policy's `overlayOpen` input closes it instead of forwarding the press into the app or
   // exiting (mini-app-back-navigation delta "A host sheet takes back first").
-  const host = useMiniAppHost({ onExit, overlayOpen: sheetOpen, onCloseOverlay: onCloseSheet, webRef });
+  const host = useMiniAppHost({ onExit, overlayOpen: sheetOpen, onCloseOverlay: onCloseSheet, webRef, leaving: morph?.leaving === true });
 
   // Deliver once the bound WebView's page has loaded, so injectJavaScript is not silently dropped
   // (#5 B1): at once for a WebView handed over already loaded, else at its `onLoadEnd` -- exactly
@@ -396,17 +785,14 @@ export default function MiniAppView({
     return () => clearTimeout(cap);
   }, [slotKey, deliveredFor]);
   const look = openingLook(surface, { cap: slotKey !== null && capFor === slotKey, label: slotKey !== null && labelFor === slotKey });
-  const reduceMotion = frameTokens.reduceMotion;
-  const cover = useSharedValue(1);
-  const plate = useSharedValue(1);
-  useEffect(() => {
-    cover.value = look.revealed ? withTiming(0, timing('fadeIn', reduceMotion)) : 1;
-  }, [cover, look.revealed, reduceMotion]);
-  useEffect(() => {
-    plate.value = look.plate ? 1 : withTiming(0, timing('fadeIn', reduceMotion));
-  }, [plate, look.plate, reduceMotion]);
-  const coverStyle = useAnimatedStyle(() => ({ opacity: cover.value }));
-  const plateStyle = useAnimatedStyle(() => ({ opacity: plate.value }));
+  const { shape, plateStyle, plateMove, labelMove, orbStyle, orbOn, moving } = useAppMorph({
+    morph,
+    appId: installedApp.id,
+    frame,
+    reduceMotion: frameTokens.reduceMotion,
+    look,
+    failed,
+  });
 
   // Tap to first paint (task 18.4): logged once per launch, at the first accepted paint of its realm
   // (a launch has one: Reload is a launch of its own), beside that realm's own mount-to-paint time and
@@ -458,7 +844,7 @@ export default function MiniAppView({
           onAskFix={() => onAskFix(crash === null ? '' : crashAttachment(crash))}
           onExit={onExit}
         />
-        <Orb appId={installedApp.id} state={orb.state} activity={orb.activity} onOpen={onOpenSheet} />
+        <Orb appId={installedApp.id} {...orb} onOpen={onOpenSheet} />
       </>
     );
   }
@@ -470,7 +856,7 @@ export default function MiniAppView({
           layers define all four insets, so they span the root's full border-box (the root already
           sits below the status bar). `pointerEvents="none"` keeps the orb's guaranteed exit
           reachable throughout the wait. */}
-      <Animated.View style={[styles.layer, { backgroundColor: bg }, coverStyle]} pointerEvents="none" />
+      <BgShape {...shape} color={bg} />
       <Animated.View
         style={[styles.layer, styles.opening, plateStyle]}
         pointerEvents="none"
@@ -479,23 +865,26 @@ export default function MiniAppView({
         accessibilityElementsHidden={!look.plate}
         importantForAccessibility={look.plate ? 'auto' : 'no-hide-descendants'}
       >
-        <TilePlate size="grid" state="ready" tint={tint} glyph={icon} tokens={frameTokens} />
+        <Animated.View style={plateMove}>
+          <TilePlate size="grid" state="ready" tint={tint} glyph={icon} tokens={frameTokens} />
+        </Animated.View>
         {look.label ? (
-          <View style={styles.openingLabel}>
+          <Animated.View style={[styles.openingLabel, labelMove]}>
             <Text tokens={frameTokens} type="callout" color="text-2" style={styles.centred}>{COPY.appBootLabel}</Text>
-          </View>
+          </Animated.View>
         ) : null}
       </Animated.View>
-      <Orb appId={installedApp.id} state={orb.state} activity={orb.activity} onOpen={onOpenSheet} />
+      <BgTouches grown={shape.grown} tileAt={shape.tileAt} reduceMotion={shape.reduceMotion} morph={morph} />
+      <Animated.View style={[styles.layer, orbStyle]} {...reachOf(orbOn)}>
+        <Orb appId={installedApp.id} {...orb} onOpen={onOpenSheet} />
+      </Animated.View>
+      {moving ? <BackWhileMoving onBack={onExit} /> : null}
     </>
   );
 }
 
 const styles = StyleSheet.create({
   root: { flex: 1 },
-  // No app open: the container and its waiting WebView are out of layout, invisible, untouchable and
-  // out of the accessibility tree, under whatever screen the launcher shows.
-  waiting: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, opacity: 0 },
   slot: { flex: 1 },
   waitingSlot: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, opacity: 0 },
   errorRoot: { alignItems: 'center', justifyContent: 'center', paddingHorizontal: LAYOUT.gutter },
@@ -504,6 +893,10 @@ const styles = StyleSheet.create({
   // The one action, the full width.
   errorAction: { alignSelf: 'stretch' },
   layer: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0 },
+  // The app's `bg` (`BgShape`): two bars laid out over the whole stage and four corner discs, each
+  // moved and scaled from its top-left.
+  shapeBar: { position: 'absolute', top: 0, right: 0, bottom: 0, left: 0, transformOrigin: 'left top' },
+  shapeCorner: { position: 'absolute', top: 0, left: 0, width: CORNER_DISC, height: CORNER_DISC, borderRadius: CORNER_DISC / 2, transformOrigin: 'left top' },
   opening: { alignItems: 'center', justifyContent: 'center' },
   // Under the centred plate without moving it: the words appear late, and the plate must not jump.
   openingLabel: { position: 'absolute', top: '50%', left: SPACE[6], right: SPACE[6], marginTop: TILE_SIDE.grid / 2 + SPACE[3] },
