@@ -275,8 +275,9 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
 
   await h.test('tile: a failed or interrupted ghost is outlined in the broken hue and keeps its own fill; a building ghost is not', async () => {
     for (const ghost of ['failed', 'interrupted', 'building'] as const) {
-      const fill = ghostTileColorFor('ghost-1');
-      const tree = await renderScreen(<AppTile name="A dice roller" manifest={{ tileColor: fill }} ghost={ghost} />);
+      const manifest = { tileColor: ghostTileColorFor('ghost-1') };
+      const fill = tileColor('A dice roller', manifest);
+      const tree = await renderScreen(<AppTile name="A dice roller" manifest={manifest} ghost={ghost} />);
       try {
         const tile = tree.root.findAll((n) => hostType(n) === 'View' && flat(n).backgroundColor === fill);
         h.eq(tile.length, 1, `the ${ghost} ghost keeps its own fill`);

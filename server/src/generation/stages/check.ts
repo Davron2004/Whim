@@ -15,53 +15,28 @@
  * prompt is built.
  */
 import { runStaticChecks } from '../../../../checks/index';
-import type { ExtractedManifest } from '../../../../checks/contract';
+import { TILE_DIAGNOSTIC_KINDS, type ExtractedManifest } from '../../../../checks/contract';
 import type { AppliedSchema } from '../../../../src/host/storage-engine/schema';
-import { SHELL_COLORS, STATUS_COLORS, STATUS_COLORS_ON_INK } from '../../../../src/sdk/theme';
+import { log } from '../../logger';
 import type { CheckContext, CheckedManifest, CheckReport, CheckStage } from '../machine';
 import type { Diagnostic } from '@whim/contract';
 
-const HEX_COLOR_RE = /^#[0-9a-f]{6}$/i;
-
-/** The hues a generated app may never claim as its own — the three status meanings (on both
- *  backgrounds), the shell accent, and the `yours` brown. Read from the SDK's token module, never
- *  re-typed here, so a token edit can never leave this gate asserting a stale palette. */
-const RESERVED_HUES: ReadonlySet<string> = new Set(
-  [
-    ...Object.values(STATUS_COLORS),
-    ...Object.values(STATUS_COLORS_ON_INK),
-    SHELL_COLORS.accent,
-    SHELL_COLORS.yours,
-    SHELL_COLORS.yoursOnDark,
-  ].map((hex) => hex.toLowerCase()),
-);
-
-/**
- * The declared tile colour, or `undefined` when there is effectively no declaration. Dropped —
- * never repaired, never reported — when it is not a `#rrggbb` literal or when it collides with a
- * reserved shell hue (spec "A reserved or malformed colour is dropped": the host must not be handed
- * a colour it would only reject). A surviving value is passed through VERBATIM, casing included.
- */
-function validTileColor(declared: string | undefined): string | undefined {
-  if (declared === undefined) return undefined;
-  if (!HEX_COLOR_RE.test(declared)) return undefined;
-  return RESERVED_HUES.has(declared.toLowerCase()) ? undefined : declared;
-}
+const checkLog = log.child({ scope: 'check' });
 
 /** `ExtractedManifest` (checker) → `CheckedManifest` (machine/wire): `name`/`schema` are pulled
  *  out to their own `WireAppRecord` top-level fields (design D12), so `manifest` here carries the
- *  rest (`initial`/`screens`/`capabilities`/`tileColor`) — a strict superset of the bridge gate's
- *  own `AppManifest.capabilities` read, so the cast on the device side stays sound.
+ *  rest (`initial`/`screens`/`capabilities`, and the tile identity) — a strict superset of the
+ *  bridge gate's own `AppManifest.capabilities` read, so the cast on the device side stays sound.
  *
- *  `tileColor` rides INSIDE `manifest` (design D4, decision #41 D4's "no second source of truth"):
- *  it comes only from the one `defineApp` extraction above, and `assembleRecord` passes `manifest`
- *  through untouched — there is no top-level `WireAppRecord.tileColor` to keep in sync. */
+ *  `tint`/`icon` (already resolved to the closed sets by the checker) and a legacy `tileColor`
+ *  (unvalidated: the host maps it) ride INSIDE `manifest` (decision #41's "no second source of
+ *  truth"): they come only from the one `defineApp` extraction, and `assembleRecord` passes
+ *  `manifest` through untouched — there is no top-level `WireAppRecord` field to keep in sync. */
 function toCheckedManifest(m: ExtractedManifest): CheckedManifest {
-  const { name, schema, tileColor, ...rest } = m;
-  const validated = validTileColor(tileColor);
+  const { name, schema, ...rest } = m;
   return {
     name,
-    manifest: { ...rest, ...(validated !== undefined ? { tileColor: validated } : {}) } as Record<string, unknown>,
+    manifest: rest as Record<string, unknown>,
     schema: (schema as Record<string, unknown> | undefined) ?? {},
   };
 }
@@ -77,6 +52,8 @@ function toWireDiagnostic(d: {
   return { kind: d.kind, severity: d.severity, line: d.line, symbol: d.symbol, message: d.message, hint: d.hint };
 }
 
+const TILE_KINDS: ReadonlySet<string> = new Set(TILE_DIAGNOSTIC_KINDS);
+
 /** The production `CheckStage`: one call into `runStaticChecks`, no state, no I/O beyond the
  *  synchronous parse/AST walk — `signal` is accepted for interface conformance (the machine
  *  checks it around every stage call) but never consulted, since there is nothing to cancel. */
@@ -87,8 +64,13 @@ export function createCheckStage(): CheckStage {
       // Both edit-turn inputs are opt-in by input: `undefined` means "unconstrained" (a new app),
       // never a bug — passing them through untouched is this stage's whole job here.
       const report = runStaticChecks(source, { appliedSchema, previousSurface: ctx.previousSurface });
+      // A tint or icon name is never an error and never costs a repair turn (generation-pipeline
+      // "The delivered app record is harness-validated"): its warnings are recorded here, by kind,
+      // and kept out of the diagnostics the machine's repair policy reads.
+      const tile = report.diagnostics.filter((d) => TILE_KINDS.has(d.kind));
+      if (tile.length > 0) checkLog.info({ kinds: tile.map((d) => d.kind) }, 'tile names resolved');
       return {
-        diagnostics: report.diagnostics.map(toWireDiagnostic),
+        diagnostics: report.diagnostics.filter((d) => !TILE_KINDS.has(d.kind)).map(toWireDiagnostic),
         manifest: report.manifest ? toCheckedManifest(report.manifest) : undefined,
       };
     },

@@ -223,7 +223,7 @@ export interface RegistryRow {
 // shape). Closed-set substitution is allowed for on-device feel; OPENING a type is not.
 //
 // Keep these RN-free: `rows.ts` (imported by the Node bridge suites) binds onto a `CueBackend`
-// the host injects; the RN `Vibration`/ToneGenerator implementation lives host-side
+// the host injects; the native-module implementation (`WhimHaptics`, `WhimTone`) lives host-side
 // (`src/host/cue-backend.ts`), never here (D5 — the dumb-rows discipline).
 
 export const HAPTIC_KINDS = ['tap', 'double', 'heavy'] as const;
@@ -237,10 +237,11 @@ export type SoundName = (typeof SOUND_NAMES)[number];
  * so `bridge/` stays importable under Node. Fire-and-forget (D7): each method returns void and
  * the row resolves `{}` as soon as the cue is triggered; completion/duration/device-state are
  * deliberately unobservable (cues add zero sensing surface). The host implementation maps each
- * token to a vibration pattern / tone; a Node test injects a recording fake.
+ * token to a haptic effect / tone; a Node test injects a recording fake.
  */
 export interface CueBackend {
-  haptic(kind: HapticKind): void;
+  /** `realm` is the calling realm, the key of the host's per-realm haptic rate cap. */
+  haptic(kind: HapticKind, realm: RealmRecord): void;
   sound(name: SoundName): void;
 }
 

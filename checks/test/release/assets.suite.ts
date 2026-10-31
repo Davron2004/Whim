@@ -1,9 +1,10 @@
 /**
- * Acceptance for `scripts/release/lib/{assets,png}.ts` (chain-6, platform-release-readiness).
- * specs/app-icon-and-launch/spec.md "One command derives every icon and launch asset from one
- * source", "The checks detect stale, missing or mis-sized assets", "Store-facing icons meet
- * each store's format rules", "The Android icon is adaptive with a legacy fallback", "Launch
- * shows the mark on the shell paper color with no flash"; task 7.5. Never imports Playwright
+ * Acceptance for `scripts/release/lib/{assets,png}.ts` (chain-6, platform-release-readiness;
+ * design-system-v1 chain-9). specs/app-icon-and-launch/spec.md "One command derives every icon and
+ * launch asset from one source", "The checks detect stale, missing or mis-sized assets",
+ * "Store-facing icons meet each store's format rules", "The Android icon is adaptive with a legacy
+ * fallback", "Launch shows the ember on the scheme's canvas with no flash", "The app icon is the
+ * ember on warm dark"; task 7.5. Never imports Playwright
  * — generation injects a renderer here; scripts/release/test-assets.mjs tests real Chromium.
  */
 
@@ -15,7 +16,8 @@ import zlib from 'node:zlib';
 import { test, assert } from '../harness';
 import { checkAssets, generateAssets, ASSET_TABLE, GENERATED_JSON_PATH, BRAND_JSON_PATH, ICON_FOREGROUND_SVG_PATH, ICON_FOREGROUND_PNG_PATH } from '../../../scripts/release/lib/assets';
 import { readPngInfo, decodeRgba8, encodeRgb8, encodeRgba8 } from '../../../scripts/release/lib/png';
-import { SHELL_COLORS } from '../../../src/sdk/design-tokens';
+import { COLORS } from '../../../src/design/tokens';
+import { EMBER_PATH } from '../../../src/design/icons/ember';
 
 const REPO_ROOT = process.cwd();
 
@@ -199,20 +201,85 @@ export async function run(): Promise<void> {
     }
   });
 
-  await test('checkAssets: brand.json disagreeing with SHELL_COLORS.paper fails, showing both values', () => {
+  await test('checkAssets: a dark launch background drifting from the dark bg token fails, showing both values; the light one still matches', () => {
     const dir = makeTempRepo();
     try {
-      fs.writeFileSync(path.join(dir, BRAND_JSON_PATH), JSON.stringify({ iconBackground: '#3f3d8f', launchBackground: '#ffffff' }));
-      const hits = findingsFor(checkAssets(dir), BRAND_JSON_PATH);
-      const brandHit = hits.find((f) => /launchBackground/.test(f.message));
-      assert(!!brandHit, `expected a launchBackground finding, got ${JSON.stringify(hits)}`);
+      const brand = JSON.parse(fs.readFileSync(path.join(dir, BRAND_JSON_PATH), 'utf8'));
+      brand.launchBackground.dark = '#000000';
+      fs.writeFileSync(path.join(dir, BRAND_JSON_PATH), JSON.stringify(brand));
+      const hits = findingsFor(checkAssets(dir), BRAND_JSON_PATH).filter((f) => /launchBackground/.test(f.message));
+      assert(hits.length === 1, `expected exactly one launchBackground finding, got ${JSON.stringify(hits)}`);
       assert(
-        brandHit!.message.includes('#ffffff') && brandHit!.message.includes(SHELL_COLORS.paper),
-        `expected both values in the message, got ${brandHit!.message}`,
+        hits[0].message.includes('launchBackground.dark') && hits[0].message.includes('#000000') && hits[0].message.includes(COLORS.dark.bg),
+        `expected the dark key and both values in the message, got ${hits[0].message}`,
       );
     } finally {
       fs.rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  await test('checkAssets: a brand.json still carrying the single v2 launch colour fails for both schemes', () => {
+    const dir = makeTempRepo();
+    try {
+      fs.writeFileSync(path.join(dir, BRAND_JSON_PATH), JSON.stringify({ iconBackground: '#3f3d8f', launchBackground: COLORS.light.bg }));
+      const hits = findingsFor(checkAssets(dir), BRAND_JSON_PATH).filter((f) => /launchBackground\.(light|dark)/.test(f.message));
+      assert(hits.length === 2, `expected a finding per scheme, got ${JSON.stringify(hits)}`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test('checkAssets: an SVG mark that is not the ember fails, naming the source (discriminating: hashes are kept in sync)', () => {
+    const dir = makeTempRepo();
+    try {
+      const svgPath = path.join(dir, ICON_FOREGROUND_SVG_PATH);
+      const svg = fs.readFileSync(svgPath, 'utf8');
+      assert(svg.includes(EMBER_PATH), 'the repo source draws the ember');
+      fs.writeFileSync(svgPath, svg.replace(EMBER_PATH, 'M24 4L44 44H4Z'));
+      const generated = readGenerated(dir);
+      generated.source.sha256 = sha256(dir, ICON_FOREGROUND_SVG_PATH);
+      writeGenerated(dir, generated);
+      const hits = findingsFor(checkAssets(dir), ICON_FOREGROUND_SVG_PATH);
+      assert(hits.some((f) => /not the ember/.test(f.message)), `expected a not-the-ember finding, got ${JSON.stringify(hits)}`);
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  await test('generated launch backgrounds: each platform reads each scheme’s bg token', () => {
+    const launchColor = (rel: string) => /<color name="launch_background">([^<]+)<\/color>/.exec(fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8'))?.[1];
+    assert(launchColor('android/app/src/main/res/values/brand_colors.xml') === COLORS.light.bg, 'Android draws the light bg behind the launch mark by day');
+    assert(launchColor('android/app/src/main/res/values-night/brand_colors.xml') === COLORS.dark.bg, 'Android draws the dark bg behind it at night');
+    const set = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, 'ios/Whim/Images.xcassets/LaunchBackground.colorset/Contents.json'), 'utf8'));
+    const hexOf = (entry: { color: { components: Record<'red' | 'green' | 'blue', string> } }) =>
+      `#${(['red', 'green', 'blue'] as const).map((c) => entry.color.components[c].slice(2)).join('')}`;
+    const byAppearance = new Map<string, string>(
+      set.colors.map((entry: { appearances?: { value: string }[]; color: { components: Record<'red' | 'green' | 'blue', string> } }) => [entry.appearances?.[0]?.value ?? 'any', hexOf(entry)]),
+    );
+    assert(byAppearance.get('any') === COLORS.light.bg && byAppearance.get('dark') === COLORS.dark.bg, `iOS's launch colour set must be light bg / dark bg, got ${JSON.stringify([...byAppearance])}`);
+  });
+
+  await test('generated icons: the themed icon is the bare white silhouette, the tinted one grey on black, the icon on the warm-dark gradient', () => {
+    const pixel = (rel: string, fx: number, fy: number): number[] => {
+      const { width, height, pixels } = decodeRgba8(fs.readFileSync(path.join(REPO_ROOT, rel)));
+      const i = (Math.floor(fy * (height - 1)) * width + Math.floor(fx * (width - 1))) * 4;
+      return [pixels[i], pixels[i + 1], pixels[i + 2], pixels[i + 3]];
+    };
+    const FLAME = [0.5, 0.58] as const; // inside the flame
+    const HALO = [0.32, 0.6] as const; // lit by the halo, outside the flame
+    const res = 'android/app/src/main/res/mipmap-xxxhdpi';
+    assert(pixel(`${res}/ic_launcher_foreground.png`, ...HALO)[3] > 0, 'the full-colour mark lights the halo probe (else the next check is vacuous)');
+    assert(pixel(`${res}/ic_launcher_monochrome.png`, ...HALO)[3] === 0, 'the monochrome layer drops the light around the flame');
+    assert(pixel(`${res}/ic_launcher_monochrome.png`, ...FLAME).every((c) => c === 255), 'the monochrome flame is opaque white');
+    const tinted = 'ios/Whim/Images.xcassets/AppIcon.appiconset/AppIcon-1024-tinted.png';
+    const [r, g, b] = pixel(tinted, ...FLAME);
+    assert(r === g && g === b && r > 0, `the tinted flame is a grey, got ${[r, g, b].join(',')}`);
+    assert(pixel(tinted, 0, 0).slice(0, 3).every((c) => c === 0), 'the tinted icon sits on black');
+    assert(pixel('ios/Whim/Images.xcassets/AppIcon.appiconset/AppIcon-1024-dark.png', 0, 0)[3] === 0, 'the dark icon leaves its backdrop to the system');
+    const brand = JSON.parse(fs.readFileSync(path.join(REPO_ROOT, BRAND_JSON_PATH), 'utf8'));
+    const hex = (px: number[]) => `#${px.slice(0, 3).map((c) => c.toString(16).padStart(2, '0')).join('')}`.toUpperCase();
+    const icon = 'ios/Whim/Images.xcassets/AppIcon.appiconset/AppIcon-1024.png';
+    assert(hex(pixel(icon, 0, 0)) === brand.iconBackground.top && hex(pixel(icon, 0, 1)) === brand.iconBackground.bottom, 'the icon runs the warm-dark gradient top to bottom');
   });
 
   await test('native image references resolve to unique generated outputs', () => {

@@ -17,7 +17,7 @@ import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import { DiagnosticsBatch } from '@whim/contract';
 import { log } from '../../logging';
-import { finishAnimations, injectedScripts, StyleSheet } from './native-host';
+import { finishAnimations, injectedScripts, Keyboard, Platform, StyleSheet } from './native-host';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 import { closedDatabases, resetNativeStorage } from './native-storage';
 import { button, captureTimeouts, press, renderScreen, textOf, unmountScreen, hostType } from './react-screen';
@@ -36,6 +36,26 @@ interface Mounted {
   loadEnd: () => Promise<void>;
   frame: (frame: unknown) => Promise<void>;
   shown: () => string;
+}
+
+/** The container's place on its root's page, which fills an 844-high window: below the status
+ *  bar, down to the window's bottom edge. */
+const MINI_APP_FRAME = { pageY: 47, height: 797 };
+
+/** Hands every view that is measured (`collapsable={false}`) the container's place. */
+const measuredAsContainer = (node: React.ReactElement<{ collapsable?: boolean }>) =>
+  node.props.collapsable === false
+    ? { measure: (cb: (x: number, y: number, w: number, h: number, pageX: number, pageY: number) => void) => cb(0, 0, 390, MINI_APP_FRAME.height, 0, MINI_APP_FRAME.pageY) }
+    : null;
+
+const isWebView = (n: TestRenderer.ReactTestInstance) => hostType(n) === 'WebView';
+
+/** How far above the container's bottom edge the page (the WebView) ends. */
+function pageInset(tree: Tree): number {
+  const container = tree.root.findAll((n) => hostType(n) === 'View' && n.findAll(isWebView).length > 0).at(-1)!;
+  const web = container.findAll(isWebView)[0];
+  const pad = (StyleSheet.flatten(container.props.style) as { paddingBottom?: number }).paddingBottom ?? 0;
+  return pad + ((StyleSheet.flatten(web.props.style) as { marginBottom?: number }).marginBottom ?? 0);
 }
 
 /** Mount the container for `record`, run `body`, and unmount. */
@@ -60,6 +80,7 @@ async function withMiniApp(record: AppRecord, body: (m: Mounted) => Promise<void
       onUpdateRequired={() => {}}
       legalLanguage="en"
     />,
+    { createNodeMock: measuredAsContainer },
   );
   const webView = () => tree.root.findAll((n) => hostType(n) === 'WebView')[0];
   try {
@@ -110,6 +131,34 @@ function miniAppErrorRecords(): { message: string; fields: ErrorRecordFields }[]
 }
 
 export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
+  await h.test('mini-app: on Android the app’s page ends above the keyboard, so the field it keeps in view is not under it; iOS’s WebView avoids the keyboard itself', async () => {
+    const before = { OS: Platform.OS, Version: Platform.Version };
+    const keyboardTop = 500;
+    try {
+      for (const [os, version] of [['android', 29], ['android', 34], ['android', 37]] as const) {
+        Platform.OS = os;
+        Platform.Version = version;
+        await withMiniApp(TIP, async ({ tree }) => {
+          await TestRenderer.act(async () => { Keyboard.emit('keyboardDidShow', keyboardTop); });
+          h.eq(pageInset(tree), MINI_APP_FRAME.pageY + MINI_APP_FRAME.height - keyboardTop, `Android ${version}: the page ends at the keyboard’s top edge`);
+          await TestRenderer.act(async () => { Keyboard.emit('keyboardDidShow', keyboardTop - 60); });
+          h.eq(pageInset(tree), MINI_APP_FRAME.pageY + MINI_APP_FRAME.height - keyboardTop + 60, `Android ${version}: and follows a keyboard that grows while up`);
+          await TestRenderer.act(async () => { Keyboard.emit('keyboardDidHide', 844); });
+          h.eq(pageInset(tree), 0, `Android ${version}: and reaches the bottom again once the keyboard goes`);
+        });
+      }
+      Platform.OS = 'ios';
+      Platform.Version = '26.0';
+      await withMiniApp(TIP, async ({ tree }) => {
+        await TestRenderer.act(async () => { Keyboard.emit('keyboardWillChangeFrame', keyboardTop); });
+        h.eq(pageInset(tree), 0, 'iOS: the page keeps its size; WKWebView scrolls the field into view itself');
+      });
+    } finally {
+      Object.assign(Platform, before);
+      Keyboard.visible = false;
+    }
+  });
+
   await h.test('mini-app: the boot surface covers a WebView that is already mounted, until a trusted first paint', async () => {
     await withMiniApp(TIP, async ({ webView, loadEnd, frame, shown, clock }) => {
       h.ok(webView() != null, 'the WebView is mounted from the start, so the page keeps loading');

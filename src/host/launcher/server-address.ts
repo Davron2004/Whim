@@ -158,10 +158,40 @@ export function serverAddressAllowed(raw: string): boolean {
   return host != null && isLocalHost(host);
 }
 
-/** A server address as the user reads it: its host and port, without the scheme or any path. An
- *  address that isn't an http(s) URL is returned as it is. */
+/** The default port of each scheme an address may use: an origin written with it is the same
+ *  origin written without it. */
+const DEFAULT_PORT: Readonly<Record<string, string>> = { http: '80', https: '443' };
+
+/** An http(s) address's scheme, host and port as a URL parser reads them: scheme and host
+ *  lower-cased, any user info dropped, a default port left out. `undefined` for anything else.
+ *  Parsed here rather than with `URL`, which React Native implements only in part. */
+function originParts(url: string): { scheme: string; host: string; port: string } | undefined {
+  const match = ADDRESS_RE.exec(url.trim());
+  if (match == null) return undefined;
+  const scheme = match[1].toLowerCase();
+  const hostPort = match[2].slice(match[2].lastIndexOf('@') + 1);
+  const parts = /^(\[[^\]]*\]|[^:]*)(?::(\d*))?$/.exec(hostPort);
+  if (parts == null) return undefined;
+  const port = parts[2] === undefined || parts[2] === '' || parts[2] === DEFAULT_PORT[scheme] ? '' : parts[2].replace(/^0+(?=\d)/, '');
+  return { scheme, host: parts[1].toLowerCase(), port };
+}
+
+/** A server address as the user reads it: its host and port, without the scheme, any path, or any
+ *  user name and password written into it. An address that isn't an http(s) URL is returned as it
+ *  is, less anything up to an `@`. */
 export function serverLabel(url: string): string {
-  return ADDRESS_RE.exec(url)?.[2] ?? url;
+  const parts = originParts(url);
+  if (parts === undefined) return url.slice(url.lastIndexOf('@') + 1);
+  return parts.port === '' ? parts.host : `${parts.host}:${parts.port}`;
+}
+
+/** Whether two addresses name the same server: the same origin once parsed (`originParts`), so
+ *  case, a default port, user info and a path make no difference. */
+export function sameServer(a: string, b: string): boolean {
+  const x = originParts(a);
+  const y = originParts(b);
+  if (x === undefined || y === undefined) return a === b;
+  return x.scheme === y.scheme && x.host === y.host && x.port === y.port;
 }
 
 /** Whether the user has confirmed, on this install, that their own server isn't Whim's

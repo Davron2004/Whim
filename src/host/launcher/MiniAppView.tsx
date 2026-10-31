@@ -8,7 +8,7 @@
 // keys this component by
 // the launcher id, so switching apps remounts it (a fresh realm every launch).
 import React, { useCallback, useRef, useState } from 'react';
-import { Pressable, StyleSheet, Text, View } from 'react-native';
+import { Platform, Pressable, StyleSheet, Text, View } from 'react-native';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import { WebView } from 'react-native-webview';
 import type { AppRecord } from '../bridge';
@@ -19,6 +19,8 @@ import { CHANNELS } from '../logging/channels';
 import { loadEndAction } from './realm-delivery';
 import { logWebViewError } from './webview-error';
 import { useMiniAppHost } from './useMiniAppHost';
+import { useKeyboardInset } from './KeyboardShell';
+import { padsWebViewForKeyboard } from './keyboard-shell';
 import { primaryButtonColors, SHELL_PALETTE } from './theme';
 import { COPY } from './copy';
 import { miniAppSurface } from './boot-state';
@@ -82,6 +84,11 @@ export default function MiniAppView({
   // Bumped on Retry to force a fresh <WebView> mount -- a realm reset is a RECREATE, never a
   // re-inject (spike2 §5, #35/#37), so this is the only supported way to recover a live app.
   const [webKey, setWebKey] = useState(0);
+  // The keyboard (beta-1 D3): the page ends at its top edge on Android, where no window resizes for
+  // it, so the page's viewport shrinks and the runtime scrolls the focused field into view
+  // (`loader.js`). iOS's WebView avoids the keyboard itself (`padsWebViewForKeyboard`).
+  const frame = useRef<View>(null);
+  const keyboard = useKeyboardInset(frame, padsWebViewForKeyboard(Platform.OS));
 
   // Deliver after the host page has loaded so injectJavaScript is not silently dropped (#5 B1) --
   // exactly ONCE per <WebView> instance. Android's WebView does NOT promise one onPageFinished
@@ -167,7 +174,7 @@ export default function MiniAppView({
   }
 
   return (
-    <View style={[styles.root, { backgroundColor: bg }]}>
+    <View ref={frame} collapsable={false} style={[styles.root, { backgroundColor: bg, paddingBottom: keyboard }]}>
       <WebView
         key={webKey}
         ref={host.webRef}

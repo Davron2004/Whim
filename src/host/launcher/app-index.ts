@@ -14,6 +14,8 @@
 
 import type { KVBackend } from '../version-store/fs/kv-fs';
 import type { AppRecord } from '../bridge/contract';
+import type { TintName } from '../../design/tokens';
+import { isTileIdentity, type TileGlyph, type TileIdentity } from './tile-identity';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 
@@ -46,6 +48,14 @@ export interface InstalledApp {
    * creation time only — immutable thereafter (no join/leave/unlink in v1).
    */
   storageGroupId?: string;
+  /** The tint the host assigned at install or copy (design-system-v1 D5). Absent only on records
+   *  from before tints, which `tile-identity.ts#tileOf` resolves on read. Never re-assigned by a
+   *  rebuild (`StoreAccess.update` carries it forward). */
+  tint?: TintName;
+  /** The glyph resolved at install or copy; same lifetime as `tint`. */
+  icon?: TileGlyph;
+  /** The person's "Customize tile" choice; wins over `tint`/`icon` and survives rebuilds. */
+  tileOverride?: TileIdentity;
 }
 
 const APP_KEY = (id: string) => `app:${id}`;
@@ -122,6 +132,27 @@ export class AppIndex {
   remove(id: string): void {
     this.kv.delete(APP_KEY(id));
     this.writeOrder(this.readOrder().filter(x => x !== id));
+  }
+
+  /** Store a "Customize tile" choice for an installed app; returns the updated record, or null when
+   *  the app is not installed. Throws on a tint or glyph outside the sets (a caller bug). */
+  setTileOverride(id: string, tile: TileIdentity): InstalledApp | null {
+    if (!isTileIdentity(tile)) throw new Error(`not a tile: ${JSON.stringify(tile)}`);
+    const app = this.get(id);
+    if (!app) return null;
+    const updated: InstalledApp = { ...app, tileOverride: { tint: tile.tint, icon: tile.icon } };
+    this.put(updated);
+    return updated;
+  }
+
+  /** Drop a "Customize tile" choice; the app shows its assigned tile again. Null when not installed. */
+  clearTileOverride(id: string): InstalledApp | null {
+    const app = this.get(id);
+    if (!app) return null;
+    const updated: InstalledApp = { ...app };
+    delete updated.tileOverride;
+    this.put(updated);
+    return updated;
   }
 
   /** Count installed entries that reference a given version-store repo (the delete refcount). */

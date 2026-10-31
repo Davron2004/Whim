@@ -1,16 +1,19 @@
 // Node acceptance suite for the host chrome inset in `Screen` (beta-1 D5, sandbox-rendering
-// "Screen content clears the host's bottom chrome"). Auto-discovered by `src/sdk/test/run.mjs`.
+// "Screen content clears the host's bottom chrome"), and for `Screen` with no theme delivered
+// (sdk-design-system "No theme means defaults, never breakage"). Auto-discovered by
+// `src/sdk/test/run.mjs`; no theme global is ever installed here.
 // The inset reaches the SDK the way the trusted loader delivers it, as a prop of `NavRoot`; the
 // app's screens are ordinary components that render the public `Screen`.
 import assert from 'node:assert';
 import * as React from 'react';
 import { act, create, type ReactTestInstance } from 'react-test-renderer';
 import * as publicSdk from '../index';
-import { Screen, Text, type AppSpec } from '../index';
+import { Button, Screen, Text, type AppSpec } from '../index';
 import { NavRoot } from '../navigation';
 import { chromeInsetContext } from '../chrome-inset';
 import { DEFAULT_THEME, sanitizeTheme } from '../theme';
 import { space, type SpaceToken } from '../tokens';
+import { COLORS } from '../../design/tokens';
 
 /** Compile-time only: the @ts-expect-error below fails the typecheck if the public theme type
  *  ever grows the inset. */
@@ -115,6 +118,27 @@ for (const [label, element] of [
   );
   const theme = sanitizeTheme({ ...DEFAULT_THEME, chromeInsetBottom: 84 });
   assert.ok(!('chromeInsetBottom' in theme), 'the theme the SDK resolves its tokens from drops an inset planted in the theme global');
+}
+
+// ── No theme: the default light canvas, selectable text, unselectable controls ──
+{
+  let renderer: ReturnType<typeof create> | undefined;
+  await act(async () => {
+    renderer = create(
+      React.createElement(
+        NavRoot,
+        { spec: specOf(() => React.createElement(Screen, null, React.createElement(Text, null, 'copy me'), React.createElement(Button, { label: 'Save' }))) },
+      ),
+    );
+  });
+  const screen = renderer!.root.find(isScreen).props.style as Record<string, unknown>;
+  const text = renderer!.root.find((node) => node.type === 'span').props.style as Record<string, unknown>;
+  const button = renderer!.root.find((node) => node.type === 'button').props.style as Record<string, unknown>;
+  await act(async () => renderer!.unmount());
+  assert.deepStrictEqual([screen.background, screen.color], [COLORS.light.bg, COLORS.light.text], 'Screen paints the light bg and text with no theme');
+  assert.deepStrictEqual(text.fontSize, '17px', 'body text is 17px at the default text scale');
+  assert.ok(screen.userSelect === undefined && text.userSelect === undefined, 'Screen and Text leave text selectable');
+  assert.deepStrictEqual([button.userSelect, button.WebkitUserSelect], ['none', 'none'], 'a control opts out of long-press selection');
 }
 
 console.log('SDK screen inset acceptance: PASS');

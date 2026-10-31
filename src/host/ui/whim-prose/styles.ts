@@ -1,5 +1,5 @@
 /**
- * whim-prose styles — class -> ONE channel (docs/design/README.md "Whim Syntax", the six-class
+ * whim-prose styles — class -> ONE channel (the v2 handoff README (removed by decision #75; in git history) "Whim Syntax", the six-class
  * table). Kept platform-neutral (no `react-native` import, same discipline as the SDK's design
  * tokens) so the mapping is checkable under Node; `WhimProse.tsx` spreads these onto `Text`.
  *

@@ -1,35 +1,58 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// navigation-demo — sdk-navigation's list → detail acceptance mini-app.
-// ─────────────────────────────────────────────────────────────────────────────
-// This is also synthetic-run-harness material: the labels make the initial, pushed, and
-// returned states observable without exposing any runtime internals to the mini-app.
-import { Button, Card, defineApp, Heading, nav, Screen, Stack, Text } from 'vc-sdk';
+// Trail Notes: a list of trails, and a screen for the one tapped. `nav` takes only a screen name,
+// so the tapped trail is kept at module level before navigating, and the detail screen's header
+// brings its own back control.
+import { defineApp, nav, Screen, Stack, Row, List, ListItem, Badge, Text } from 'vc-sdk';
 
-function List() {
+interface Trail {
+  id: string;
+  name: string;
+  length: string;
+  level: 'easy' | 'moderate' | 'hard';
+  note: string;
+}
+
+const TRAILS: Trail[] = [
+  { id: 'cedar', name: 'Cedar Loop', length: '4.2 km', level: 'easy', note: 'Shaded forest path with a creek overlook.' },
+  { id: 'ridge', name: 'Ridge Walk', length: '7.8 km', level: 'moderate', note: 'Open ridge line; windy after noon.' },
+  { id: 'falls', name: 'Falls Climb', length: '5.1 km', level: 'hard', note: 'Steep steps beside the falls. Wet in spring.' },
+];
+
+const LEVEL_TONE = { easy: 'positive', moderate: 'warning', hard: 'danger' } as const;
+
+let opened: Trail = TRAILS[0];
+
+function TrailList() {
   return (
-    <Screen padding="lg">
-      <Stack gap="lg">
-        <Heading size="title">Trail Notes</Heading>
-        <Text color="text-muted">Choose a saved trail.</Text>
-        <Card>
-          <Stack gap="sm">
-            <Heading size="subtitle">Cedar Loop</Heading>
-            <Text>4.2 km · easy</Text>
-            <Button label="Open Cedar Loop" onPress={() => nav.navigate('Detail')} />
-          </Stack>
-        </Card>
-      </Stack>
+    <Screen title="Trail Notes">
+      <List
+        items={TRAILS}
+        keyBy="id"
+        renderItem={(trail) => (
+          <ListItem
+            title={trail.name}
+            subtitle={trail.level}
+            trailing={trail.length}
+            icon="footprints"
+            onPress={() => {
+              opened = trail;
+              nav.navigate('Detail');
+            }}
+          />
+        )}
+      />
     </Screen>
   );
 }
 
-function Detail() {
+function TrailDetail() {
   return (
-    <Screen padding="lg">
-      <Stack gap="lg">
-        <Heading size="title">Cedar Loop details</Heading>
-        <Text>Shaded forest path with a creek overlook.</Text>
-        <Button label="Back to trails" variant="secondary" onPress={() => nav.back()} />
+    <Screen title={opened.name}>
+      <Stack>
+        <Row>
+          <Badge label={opened.level} tone={LEVEL_TONE[opened.level]} />
+          <Text color="text-muted">{opened.length}</Text>
+        </Row>
+        <Text>{opened.note}</Text>
       </Stack>
     </Screen>
   );
@@ -38,6 +61,8 @@ function Detail() {
 export default defineApp({
   name: 'Trail Notes',
   initial: 'List',
-  screens: { List, Detail },
+  screens: { List: TrailList, Detail: TrailDetail },
   capabilities: [],
+  tint: ['stone', 'slate'],
+  icon: 'mountain',
 });

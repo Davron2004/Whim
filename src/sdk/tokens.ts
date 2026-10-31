@@ -1,21 +1,18 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// vc-sdk — design tokens (spec §5.2 / §5.3: components accept TOKENS, not values)
+// vc-sdk — design tokens (components accept TOKENS, not values; docs/design/system.md §2.5, §7.2)
 // ─────────────────────────────────────────────────────────────────────────────
 // The load-bearing contract this file fixes is "tokens, not values": a mini-app says
 // `<Text color="primary">` / `<Stack gap="lg">`, never a hex code or a pixel count. That
-// indirection is what keeps the SDK render contract backend-agnostic (#11 / §4.6) — the
-// same `gap="lg"` could later be resolved by a native reconciler instead of these CSS
-// strings. v0.1 resolves them to CSS (React-to-DOM inside the WebView, hypothesis R1).
+// indirection is what keeps the SDK render contract backend-agnostic (#11) — the same `gap="lg"`
+// could later be resolved by a native reconciler instead of these CSS strings.
 //
-// v0.2 (sdk-design-system, decision D1/D2): `color()` resolves through the ACTIVE THEME
-// (theme.ts) instead of one hardcoded palette — see theme.ts for how `globalThis.__WHIM_THEME__`
-// becomes a trusted `WhimTheme`. `space()`/`radius()`/`weight()`/`textSize()` are
-// theme-independent and behave exactly as before.
-//
-// v2 (shell redesign): the theme's `shape` dimension is gone along with the presets it came from
-// (theme.ts) — `RADIUS_SCALE` is now one flat scale, not one per shape.
+// Every value comes from the one token module (`src/design/tokens.ts`). Colours and type resolve
+// through the ACTIVE THEME (theme.ts): its scheme, tint, text scale and Increase Contrast.
+// `space()` and `radius()` are theme-independent, so module-level code may call them before the
+// theme is installed; nothing else here may run before mount.
 
-import { sanitizeTheme, RADIUS_SCALE, type WhimTheme } from './theme';
+import { COLORS, SDK_RADII, SDK_SPACE, RADII, TYPE_SCALE, type ColorRole, type SdkTextSize, type StatusName } from '../design/tokens';
+import { sanitizeTheme, type WhimTheme } from './theme';
 
 export type SpaceToken = 'none' | 'xs' | 'sm' | 'md' | 'lg' | 'xl';
 export type RadiusToken = 'none' | 'sm' | 'md' | 'lg' | 'full';
@@ -30,31 +27,21 @@ export type ColorToken =
   | 'danger'
   | 'positive'
   | 'warning';
-export type TextSizeToken = 'caption' | 'body' | 'subtitle' | 'title' | 'display';
+/** The colours text and icons take: each resolves to its readable text form. */
+export type TextColorToken = 'text' | 'text-muted' | 'primary' | 'positive' | 'danger' | 'warning';
+export type TextSizeToken = SdkTextSize;
 export type WeightToken = 'regular' | 'medium' | 'semibold' | 'bold';
 
-/** The system font stack every SDK component renders with. CSP forbids remote fonts (design
- *  Non-Goals), so system-ui is the whole typeface story — one constant, no per-component
- *  drift. */
+/** Every role an SDK component may paint with: the public tokens plus the system roles that have no
+ *  public name (`fill`, `separator`, the status soft and text forms, …). */
+export type PaintRole = ColorToken | keyof WhimTheme['colors'] | ColorRole;
+
+/** The system font stack every SDK component renders with. The CSP keeps `font-src 'none'`, so
+ *  `system-ui` is the whole typeface story (system.md §2.7). */
 export const FONT = 'system-ui, -apple-system, sans-serif';
 
-export const SPACE: Record<SpaceToken, string> = {
-  none: '0',
-  xs: '4px',
-  sm: '8px',
-  md: '12px',
-  lg: '20px',
-  xl: '32px',
-};
-
-// font-size paired with a sensible default weight + line-height per size token.
-export const TEXT_SIZE: Record<TextSizeToken, { size: string; weight: WeightToken; line: string }> = {
-  caption: { size: '13px', weight: 'regular', line: '1.35' },
-  body: { size: '16px', weight: 'regular', line: '1.45' },
-  subtitle: { size: '20px', weight: 'semibold', line: '1.3' },
-  title: { size: '28px', weight: 'bold', line: '1.2' },
-  display: { size: '40px', weight: 'bold', line: '1.1' },
-};
+/** Tabular figures for counting and ticking numbers (timers, totals): spread into a style. */
+export const TABULAR_NUMS = { fontVariantNumeric: 'tabular-nums' } as const;
 
 export const WEIGHT: Record<WeightToken, number> = {
   regular: 400,
@@ -63,26 +50,103 @@ export const WEIGHT: Record<WeightToken, number> = {
   bold: 700,
 };
 
-// ── Active theme (design D1) ──────────────────────────────────────────────────
-// `globalThis.__WHIM_THEME__` is untrusted input the loader installs (best-effort frozen)
-// from the trusted `__whimHostInit` frame before the bundle mounts; it is absent in any
-// host that never sets it (e.g. a bare desktop preview). Sanitized ONCE, at the first
-// resolver call below, and cached in this module-level `let` — never re-read per render, so
-// an in-realm mutation of the global after mount has no effect. When the global is absent,
-// `sanitizeTheme(undefined)` yields `DEFAULT_THEME` semantics (every field falls back).
+// ── Active theme ──────────────────────────────────────────────────────────────
+// `globalThis.__WHIM_THEME__` is untrusted input the loader installs (frozen) from the trusted
+// `__whimHostInit` frame before the bundle mounts; it is absent in any host that never sets it (a
+// baked delivery, a desktop preview), and then every field takes its default. Sanitized ONCE, at
+// the first call, and cached: never re-read per render, so an in-realm mutation of the global after
+// mount has no effect, and a change of the phone's settings applies at the app's next open.
 let cachedTheme: WhimTheme | undefined;
 
-function activeTheme(): WhimTheme {
-  if (!cachedTheme) {
-    cachedTheme = sanitizeTheme((globalThis as { __WHIM_THEME__?: unknown }).__WHIM_THEME__);
-  }
+/** The sanitized theme this realm renders under. */
+export function activeTheme(): WhimTheme {
+  cachedTheme ??= sanitizeTheme((globalThis as { __WHIM_THEME__?: unknown }).__WHIM_THEME__);
   return cachedTheme;
 }
 
-// Resolvers — the single place a token becomes a value. A native-reconciler backend would
-// swap this module for one that maps the same token names to native style primitives.
-export const space = (t: SpaceToken = 'none'): string => SPACE[t] ?? SPACE.none;
-export const radius = (t: RadiusToken = 'none'): string => RADIUS_SCALE[t] ?? RADIUS_SCALE.none;
-export const color = (t: ColorToken = 'text'): string => activeTheme().colors[t] ?? activeTheme().colors.text;
-export const weight = (t: WeightToken = 'regular'): number => WEIGHT[t] ?? WEIGHT.regular;
-export const textSize = (t: TextSizeToken = 'body') => TEXT_SIZE[t] ?? TEXT_SIZE.body;
+/** The text-form role of each status hue. */
+const STATUS_TEXT: Record<StatusName, ColorRole> = {
+  positive: 'positive-text',
+  danger: 'danger-text',
+  warning: 'warning-text',
+};
+
+/** What an old bundle's `Text color` outside the narrowed set renders as. */
+const LEGACY_TEXT_COLOR: Readonly<Record<string, TextColorToken>> = {
+  'on-primary': 'text',
+  bg: 'text',
+  surface: 'text',
+  border: 'text-muted',
+};
+
+/** `key` is an own property of `table` (a bundle can pass any string; `'constructor' in {}` is true). */
+function own<K extends string>(table: Readonly<Record<K, unknown>>, key: string): key is K {
+  return Object.prototype.hasOwnProperty.call(table, key);
+}
+
+function px(n: number): string {
+  return `${Math.round(n * 100) / 100}px`;
+}
+
+const WEIGHT_NAME: Readonly<Record<number, WeightToken>> = { 400: 'regular', 500: 'medium', 600: 'semibold', 700: 'bold' };
+
+/** The type token behind each SDK `Text size`. */
+const SDK_TYPE = Object.fromEntries(
+  Object.values(TYPE_SCALE)
+    .filter((spec) => spec.sdk !== undefined)
+    .map((spec) => [spec.sdk, spec]),
+) as Record<SdkTextSize, (typeof TYPE_SCALE)[keyof typeof TYPE_SCALE]>;
+
+// ── Resolvers: the single place a token becomes a value ───────────────────────
+
+export const space = (t: SpaceToken = 'none'): string => (own(SDK_SPACE, t) ? `${SDK_SPACE[t]}px` : '0');
+
+export function radius(t: RadiusToken = 'none'): string {
+  if (t === 'full') return `${RADII.full.radius}px`;
+  return own(SDK_RADII, t) ? `${SDK_RADII[t]}px` : '0';
+}
+
+/** A role's fill form under `theme`: a delivered colour when the theme carries the role, else the
+ *  token module's value for the theme's scheme. `primary`/`on-primary` are the tint and the label
+ *  on it; the status names are their fills. With Increase Contrast, `text-muted` is `text`. */
+export function resolveColor(theme: WhimTheme, t: PaintRole): string {
+  const role: string = t === 'text-muted' && theme.increaseContrast ? 'text' : t;
+  if (own(theme.colors, role)) return theme.colors[role];
+  const system = COLORS[theme.scheme];
+  return own(system, role) ? system[role] : theme.colors.text;
+}
+
+/** A text colour's readable form under `theme`: the status names resolve to their text forms, the
+ *  tint to its own value (it is the text colour too), and an old bundle's value outside the
+ *  narrowed set to `LEGACY_TEXT_COLOR`'s choice; anything else is `text`. */
+export function resolveTextColor(theme: WhimTheme, t: TextColorToken): string {
+  const token: string = own(LEGACY_TEXT_COLOR, t) ? LEGACY_TEXT_COLOR[t] : t;
+  if (own(STATUS_TEXT, token)) return resolveColor(theme, STATUS_TEXT[token]);
+  if (token === 'text-muted' || token === 'primary') return resolveColor(theme, token);
+  return resolveColor(theme, 'text');
+}
+
+export interface ResolvedTextSize {
+  size: string;
+  line: string;
+  /** Letter spacing in em, so it scales with the size. */
+  tracking: string;
+  weight: WeightToken;
+}
+
+/** An SDK text size under `theme`: size and line height multiplied by `fontScale`, the size's
+ *  tracking and default weight. */
+export function resolveTextSize(theme: WhimTheme, t: TextSizeToken): ResolvedTextSize {
+  const spec = own(SDK_TYPE, t) ? SDK_TYPE[t] : SDK_TYPE.body;
+  return {
+    size: px(spec.size * theme.fontScale),
+    line: px(spec.lineHeight * theme.fontScale),
+    tracking: `${spec.tracking}em`,
+    weight: WEIGHT_NAME[spec.weight] ?? 'regular',
+  };
+}
+
+export const color = (t: PaintRole = 'text'): string => resolveColor(activeTheme(), t);
+export const textColor = (t: TextColorToken = 'text'): string => resolveTextColor(activeTheme(), t);
+export const textSize = (t: TextSizeToken = 'body'): ResolvedTextSize => resolveTextSize(activeTheme(), t);
+export const weight = (t: WeightToken = 'regular'): number => (own(WEIGHT, t) ? WEIGHT[t] : WEIGHT.regular);

@@ -190,15 +190,15 @@ function cueBackendOf(backend: CueBackend | null | undefined): CueBackend {
  * Register the cue rows (syscall #2/#3) bound to an injected backend (D5). Called UNCONDITIONALLY
  * by `createDefaultRegistry` (even with `backend == null`) so gate denials stay testable with no
  * device wired; an actually-declared cue with no backend surfaces the structured handler error
- * above. The RN `Vibration`/ToneGenerator implementation is `src/host/cue-backend.ts` — never
+ * above. The native-module implementation is `src/host/cue-backend.ts` — never
  * imported here, so this module stays loadable under Node (the bridge suites).
  */
 export function registerCueRows(registry: CapabilityRegistry, backend?: CueBackend | null): void {
   registry.register('cues.haptic', {
     capability: 'cues',
     paramsSchema: vToken('kind', HAPTIC_KINDS),
-    handler: (p) => {
-      cueBackendOf(backend).haptic(p.kind as HapticKind);
+    handler: (p, realm) => {
+      cueBackendOf(backend).haptic(p.kind as HapticKind, realm);
       return {};
     },
   });

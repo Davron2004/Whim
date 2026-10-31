@@ -4,7 +4,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { check, caught, eq, section } from './harness';
-import { formatMarkdownReport, type EvalSet } from '../src/flowbench/report';
+import { formatMarkdownReport, OPTION_MAX_CHARS, type EvalSet } from '../src/flowbench/report';
+import { createCheckStage } from '../src/generation/stages/check';
+import { buildClarifyMessages } from '../src/generation/prompts';
+import type { CheckReport } from '../src/generation/machine';
 import { parseArgs, runFlowBenchmark, writeJsonReport } from '../src/flowbench/drive';
 import { PROTOCOL_LEVEL } from '@whim/contract';
 import { parseProtocolLevel, parseRequestEnvelope } from '../src/request-edge';
@@ -371,7 +374,15 @@ async function testArgumentsAndJson(): Promise<void> {
   }
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-flowbench-json-'));
   try {
-    const report = { setId: 'set', url: 'http://127.0.0.1', startedAt: '', finishedAt: '', cases: [], summary: { phases: { clarify: { medianMs: 0, maxMs: 0 }, rewrite: { medianMs: 0, maxMs: 0 }, generate: { medianMs: 0, maxMs: 0 } }, results: 0, failures: 0, limits: 0, tallies: [] } };
+    const report = {
+      setId: 'set', url: 'http://127.0.0.1', startedAt: '', finishedAt: '', cases: [],
+      summary: {
+        phases: { clarify: { medianMs: 0, maxMs: 0 }, rewrite: { medianMs: 0, maxMs: 0 }, generate: { medianMs: 0, maxMs: 0 } },
+        results: 0, failures: 0, limits: 0, tallies: [],
+        options: { total: 0, long: 0 },
+        tiles: { delivered: 0, validTint: 0, validIcon: 0, invalidIconRate: 0, changes: 0, kept: 0 },
+      },
+    };
     const jsonPath = path.join(root, 'report.json');
     writeJsonReport(report, jsonPath);
     check('JSON report is written as valid JSON', JSON.parse(fs.readFileSync(jsonPath, 'utf8')).setId === 'set');
@@ -454,6 +465,81 @@ async function testFlowbenchEntry(): Promise<void> {
   }
 }
 
+/** A delivered app as the real server would send it: the manifest comes from the real check stage
+ *  over the source, never hand-written next to it. */
+function deliveredApp(name: string, tile: string): Record<string, unknown> {
+  const source = [
+    "import { defineApp } from 'vc-sdk';",
+    'function Home() { return null; }',
+    `export default defineApp({ name: ${JSON.stringify(name)}, initial: 'Home', screens: { Home }, capabilities: [], ${tile} });`,
+  ].join('\n');
+  const checked = createCheckStage().check(source, {}) as CheckReport;
+  return { name, source, bundle: '', manifest: checked.manifest?.manifest ?? {}, schema: {} };
+}
+
+async function testOptionLengthAndTiles(): Promise<void> {
+  section('flow benchmark tracks clarify option length, tile validity, the invalid-icon rate and the tile across a change');
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-flowbench-tiles-'));
+  const longOption = 'Separate counters for water, tea and coffee';
+  const evalSet = manifestFile(root, [
+    { caseId: 'kept', appSlug: 'kept', prompt: 'a water counter', assertions: [], change: 'add a reset button' },
+    { caseId: 'lost', appSlug: 'lost', prompt: 'a habit tracker', assertions: [], change: 'add a weekly view' },
+  ]);
+  const fake = await listenFake((request, res) => {
+    const prompt = String(request.body.prompt ?? '');
+    const changing = request.body.app !== undefined;
+    if (request.path === '/v1/clarify') {
+      response(res, 200, { questions: [{ id: 'what', question: 'What do you count?', options: ['Glasses', longOption] }] });
+    } else if (request.path === '/v1/rewrite') {
+      response(res, 200, { rewrittenPrompt: prompt, plan: [] });
+    } else if (request.path === '/v1/generate' && prompt === 'a water counter') {
+      sse(res, [{ type: 'result', app: deliveredApp('Water', "tint: ['ocean', 'blue'], icon: 'glass-water'") }]);
+    } else if (request.path === '/v1/generate' && prompt === 'add a reset button' && changing) {
+      sse(res, [{ type: 'result', app: deliveredApp('Water', "tint: ['ocean', 'blue'], icon: 'glass-water'") }]);
+    } else if (request.path === '/v1/generate' && prompt === 'a habit tracker') {
+      sse(res, [{ type: 'result', app: deliveredApp('Habits', "tint: 'teal', icon: 'check-square'") }]);
+    } else if (request.path === '/v1/generate' && prompt === 'add a weekly view' && changing) {
+      sse(res, [{ type: 'result', app: deliveredApp('Habits', "tint: 'ocean', icon: 'calendar-days'") }]);
+    } else {
+      response(res, 404, { error: 'not_found', hint: 'unknown test route' });
+    }
+  });
+  try {
+    const report = await bounded('the tile run', runFlowBenchmark({ url: fake.url, evalSet, parallel: 1, retries: 0, repeat: 1 }, RUN_TIMEOUT_MS));
+    const kept = report.cases.find((item) => item.caseId === 'kept')!;
+    const lost = report.cases.find((item) => item.caseId === 'lost')!;
+    eq('a clarify option over the cap is reported as an option-length violation', kept.options, { count: 2, long: [longOption] });
+    check('the violating option really is over the cap', longOption.length > OPTION_MAX_CHARS, String(longOption.length));
+    eq('exact set names are a valid tint and icon', kept.tile, { tint: ['ocean', 'blue'], icon: 'glass-water', tintValid: true, iconValid: true });
+    eq('aliased names are delivered resolved but counted as invalid', lost.tile, { tint: ['ocean'], icon: 'square-check', tintValid: false, iconValid: false });
+    const changeRequest = fake.requests.find((request) => request.body.prompt === 'add a reset button');
+    eq(
+      'the change sends the delivered app back to generate, from the same device',
+      [changeRequest?.body.app, changeRequest?.device],
+      [(({ source, manifest, schema }) => ({ source, manifest, schema }))(deliveredApp('Water', "tint: ['ocean', 'blue'], icon: 'glass-water'")), fake.requests[0]?.device],
+    );
+    eq('a change that keeps the tint and icon is counted as kept', kept.change?.kept, true);
+    eq('a change that swaps the icon is not', lost.change?.kept, false);
+    eq('both cases delivered', report.cases.map((item) => item.outcome.type), ['result', 'result']);
+    eq('the summary counts options over the cap', report.summary.options, { total: 4, long: 2 });
+    eq('the summary counts every delivered app, the invalid-icon rate and the kept changes', report.summary.tiles, {
+      delivered: 4, validTint: 3, validIcon: 3, invalidIconRate: 0.25, changes: 2, kept: 1,
+    });
+    const markdown = formatMarkdownReport(report);
+    check('the Markdown carries the tile and option summary', markdown.includes('| 2 / 4 | 4 | 3 | 3 | 25% | 1 / 2 |'), markdown);
+    check('the Markdown quotes each over-long option with its length', markdown.includes(`- kept: "${longOption}" (${longOption.length} chars)`), markdown);
+  } finally {
+    await fake.close();
+    fs.rmSync(root, { recursive: true, force: true });
+  }
+}
+
+function testOptionCapMatchesTheClarifyPrompt(): void {
+  section('flow benchmark measures options against the same cap the clarify prompt asks for');
+  const system = buildClarifyMessages({ request: { prompt: 'a water counter' } }).find((m) => m.role === 'system')?.content ?? '';
+  check('the clarify prompt asks for the cap the benchmark measures', system.includes(`at most ${OPTION_MAX_CHARS} characters`));
+}
+
 export async function runFlowbenchTests(): Promise<void> {
   await testFlowAndReport();
   await testFailureRetryAndMissingSource();
@@ -462,4 +548,6 @@ export async function runFlowbenchTests(): Promise<void> {
   await testRepeatRunsTheWholeFlow();
   await testArgumentsAndJson();
   await testFlowbenchEntry();
+  await testOptionLengthAndTiles();
+  testOptionCapMatchesTheClarifyPrompt();
 }

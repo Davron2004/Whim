@@ -14,6 +14,7 @@
 // deliberately NOT in `copy.ts`, which is the product surface's table.
 import React, { useEffect, useState } from 'react';
 import { FlatList, Modal, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
 // `@whim/contract` is a TYPE-ONLY import (design D6) — importing the zod schema VALUES would pull
 // zod into the Metro graph. `import type` erases the statement entirely, so nothing crosses.
@@ -57,37 +58,62 @@ export default function DevLogOverlay({ visible, onClose, buffer = log.buffer }:
 
   const rows = visibleRecords(snapshot, { channel, minLevel });
 
+  // Like `SheetModal`: the Modal's window draws under both system bars on every Android version
+  // (Whim draws edge to edge), so the overlay keeps clear of them with that window's own insets.
   return (
-    <Modal visible={visible} animationType="fade" onRequestClose={onClose}>
-      <View style={[styles.root, { backgroundColor: p.bg }]}>
-        <View style={styles.header}>
-          <Text style={[TYPE_SCALE.screenTitle, { color: p.text }]}>{LABELS.title}</Text>
-          <TouchableOpacity onPress={onClose} accessibilityRole="button">
-            <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.accent }]}>{LABELS.close}</Text>
-          </TouchableOpacity>
-        </View>
+    <Modal visible={visible} animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
+      <SafeAreaProvider>
+        <InsetFrame>
+            <View style={styles.header}>
+              <Text style={[TYPE_SCALE.screenTitle, { color: p.text }]}>{LABELS.title}</Text>
+              <TouchableOpacity onPress={onClose} accessibilityRole="button">
+                <Text style={[TYPE_SCALE.bodyEmphatic, { color: p.accent }]}>{LABELS.close}</Text>
+              </TouchableOpacity>
+            </View>
 
-        <View style={styles.filters}>
-          <Pill label={LABELS.all} on={channel === ALL_CHANNELS_FILTER} palette={p} onPress={() => setChannel(ALL_CHANNELS_FILTER)} />
-          {ALL_CHANNELS.map(name => (
-            <Pill key={name} label={name} on={channel === name} palette={p} onPress={() => setChannel(name)} />
-          ))}
-        </View>
-        <View style={styles.filters}>
-          {LEVELS.map(level => (
-            <Pill key={level} label={level} on={minLevel === level} palette={p} onPress={() => setMinLevel(level)} />
-          ))}
-        </View>
+            <View style={styles.filters}>
+              <Pill label={LABELS.all} on={channel === ALL_CHANNELS_FILTER} palette={p} onPress={() => setChannel(ALL_CHANNELS_FILTER)} />
+              {ALL_CHANNELS.map(name => (
+                <Pill key={name} label={name} on={channel === name} palette={p} onPress={() => setChannel(name)} />
+              ))}
+            </View>
+            <View style={styles.filters}>
+              {LEVELS.map(level => (
+                <Pill key={level} label={level} on={minLevel === level} palette={p} onPress={() => setMinLevel(level)} />
+              ))}
+            </View>
 
-        <FlatList
-          data={rows}
-          keyExtractor={(item, index) => `${item.at}:${index}`}
-          ListEmptyComponent={<Text style={[TYPE_SCALE.body, { color: p.textMuted }]}>{LABELS.empty}</Text>}
-          contentContainerStyle={styles.list}
-          renderItem={({ item }) => <Row record={item} textColor={p.text} metaColor={p.textMuted} />}
-        />
-      </View>
+            <FlatList
+              data={rows}
+              keyExtractor={(item, index) => `${item.at}:${index}`}
+              ListEmptyComponent={<Text style={[TYPE_SCALE.body, { color: p.textMuted }]}>{LABELS.empty}</Text>}
+              contentContainerStyle={styles.list}
+              renderItem={({ item }) => <Row record={item} textColor={p.text} metaColor={p.textMuted} />}
+            />
+        </InsetFrame>
+      </SafeAreaProvider>
     </Modal>
+  );
+}
+
+/** The overlay's page, inset from the Modal window's system bars and display cutout. */
+function InsetFrame({ children }: Readonly<{ children: React.ReactNode }>) {
+  const insets = useSafeAreaInsets();
+  return (
+    <View
+      style={[
+        styles.root,
+        {
+          backgroundColor: SHELL_PALETTE.bg,
+          paddingTop: insets.top + SPACING.md,
+          paddingBottom: insets.bottom,
+          paddingLeft: insets.left + SPACING.md,
+          paddingRight: insets.right + SPACING.md,
+        },
+      ]}
+    >
+      {children}
+    </View>
   );
 }
 
@@ -117,7 +143,7 @@ function Pill({ label, on, palette, onPress }: Readonly<{ label: string; on: boo
 }
 
 const styles = StyleSheet.create({
-  root: { flex: 1, paddingHorizontal: SPACING.md, paddingTop: SPACING.md },
+  root: { flex: 1 },
   header: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
   filters: { flexDirection: 'row', flexWrap: 'wrap', gap: SPACING.xs, marginTop: SPACING.xs },
   pill: { borderWidth: 1, borderRadius: RADIUS.chip, paddingHorizontal: SPACING.sm, paddingVertical: SPACING.xs },

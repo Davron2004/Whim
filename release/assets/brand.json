@@ -1,4 +1,10 @@
 {
-  "iconBackground": "#3f3d8f",
-  "launchBackground": "#fbfaf8"
+  "iconBackground": {
+    "top": "#2A2420",
+    "bottom": "#1A1614"
+  },
+  "launchBackground": {
+    "light": "#F6F4F1",
+    "dark": "#100E0D"
+  }
 }

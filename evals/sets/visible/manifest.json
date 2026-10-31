@@ -6,6 +6,7 @@
       "caseId": "tip-splitter-p1",
       "appSlug": "tip-splitter",
       "prompt": "make a tip calculator that splits the bill between friends",
+      "change": "round each person's share up to the nearest dollar",
       "assertions": [
         { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
         { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" }
@@ -54,6 +55,7 @@
       "caseId": "habit-tracker-p2",
       "appSlug": "habit-tracker",
       "prompt": "track a few daily habits and show my current streak for each",
+      "change": "let me choose which days of the week each habit is due",
       "assertions": [
         { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
         { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
@@ -64,6 +66,7 @@
       "caseId": "water-counter-p1",
       "appSlug": "water-counter",
       "prompt": "a water counter — one big button to log a glass, today's total vs my goal",
+      "change": "add a button that takes back the last glass I logged",
       "assertions": [
         { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
         { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
@@ -217,6 +220,15 @@
         { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
         { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" },
         { "english": "the current rotation state persists across a write and a read", "kind": "storage-roundtrip" }
+      ]
+    },
+    {
+      "caseId": "workout-log-p3",
+      "appSlug": "workout-log",
+      "prompt": "help me plan my workouts",
+      "assertions": [
+        { "english": "the app renders without throwing an error", "kind": "renders-without-error" },
+        { "english": "the Home screen is reachable", "kind": "screen-reachable", "target": "Home" }
       ]
     }
   ]

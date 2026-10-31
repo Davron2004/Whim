@@ -16,11 +16,12 @@
 // (keyed by launcher id, so each launch is a fresh realm).
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Linking, StatusBar, StyleSheet, Text, TouchableOpacity, View, Alert } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
+import { SafeAreaView, useSafeAreaInsets } from 'react-native-safe-area-context';
 import type { Diagnostic, GenerationEvent } from '@whim/contract';
 import { APP_RECORDS } from '../../runtime/generated/app-records';
 import { APP_BUNDLES } from '../../runtime/generated/app-bundles';
 import { DEFAULT_THEME, RADIUS, SPACING, TYPE_SCALE } from '../../sdk/theme';
+import { hideLaunchScreen as nativeHideLaunchScreen } from '../launch-screen';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 import type { DiagnosticReason } from '../logging/diagnostic';
@@ -385,18 +386,21 @@ function countEvent(counts: EventCounts, event: GenerationEvent): void {
  *  locale, which picks the legal language until the user chooses one (legal-surface-v2 D6);
  *  `ageSignal` asks the store for its age signal before the terms step (legal-surface-v2 D11), and
  *  `significantUpdate` asks a supervised minor's guardian to acknowledge a terms change (beta-1
- *  D2; none on Android). All default to the native seam. Only a suite passes another (the
+ *  D2; none on Android); `hideLaunchScreen` ends the native launch screen's cold-start hold once
+ *  the first screen has painted. All default to the native seam. Only a suite passes another (the
  *  launcher runner has no native module), to give the shell a build or a phone of its choosing. */
 export default function LauncherRoot({
   appInfo = installedAppInfo,
   deviceLocale = installedDeviceLocale,
   ageSignal = installedAgeSignal,
   significantUpdate = installedSignificantUpdate,
+  hideLaunchScreen = nativeHideLaunchScreen,
 }: Readonly<{
   appInfo?: () => AppInfo;
   deviceLocale?: () => string | undefined;
   ageSignal?: () => Promise<unknown>;
   significantUpdate?: SignificantUpdateSheet;
+  hideLaunchScreen?: () => void;
 }>) {
   // Construct the persistent host services once (device native modules — lazy under the hood).
   // The device id, server address and highlighting flag all read from the SAME `whim.launcher`
@@ -428,6 +432,7 @@ export default function LauncherRoot({
       deviceLocale={deviceLocale}
       ageSignal={ageSignal}
       significantUpdate={significantUpdate}
+      hideLaunchScreen={hideLaunchScreen}
     />
   );
 }
@@ -440,6 +445,8 @@ export default function LauncherRoot({
  */
 function DevLogTools() {
   const [open, setOpen] = useState(false);
+  // Above the navigation bar the app draws under (edge to edge on every Android version).
+  const bottomInset = useSafeAreaInsets().bottom;
   if (!devLogOverlayEnabled(__DEV__)) {
     return null;
   }
@@ -448,7 +455,7 @@ function DevLogTools() {
       <TouchableOpacity
         onPress={() => setOpen(true)}
         accessibilityLabel={DEV_LOG_LABEL}
-        style={[styles.devLogBtn, { backgroundColor: SHELL_PALETTE.card, borderColor: SHELL_PALETTE.cardBorder }]}
+        style={[styles.devLogBtn, { bottom: bottomInset + SPACING.md, backgroundColor: SHELL_PALETTE.card, borderColor: SHELL_PALETTE.cardBorder }]}
       >
         <Text style={[TYPE_SCALE.eyebrow, { color: SHELL_PALETTE.textMuted }]}>{DEV_LOG_LABEL}</Text>
       </TouchableOpacity>
@@ -564,6 +571,7 @@ function LauncherShell({
   deviceLocale,
   ageSignal,
   significantUpdate,
+  hideLaunchScreen,
 }: Readonly<{
   index: AppIndex;
   access: StoreAccess;
@@ -574,6 +582,7 @@ function LauncherShell({
   deviceLocale: () => string | undefined;
   ageSignal: () => Promise<unknown>;
   significantUpdate: SignificantUpdateSheet | undefined;
+  hideLaunchScreen: () => void;
 }>) {
   const palette = SHELL_PALETTE;
   // The language every legal screen and link uses (legal-surface-v2 D6): resolved once at launch
@@ -2761,6 +2770,20 @@ function LauncherShell({
     content = renderScreenContent();
   }
 
+  // Task 15.2 (design-system-v1 D12): the shell root, not HomeScreen's layout, ends the launch-screen
+  // hold, on the frame after the first real screen (Home, or a link's landing) commits; the skeleton
+  // before `ready` stays under the ember. Once per shell; `hideLaunchScreen` is idempotent anyway.
+  const hideLaunchScreenRef = useRef<(() => void) | null>(hideLaunchScreen);
+  useEffect(() => {
+    const hide = hideLaunchScreenRef.current;
+    if (!ready || hide === null) return undefined;
+    const frame = requestAnimationFrame(() => {
+      hideLaunchScreenRef.current = null;
+      hide();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [ready]);
+
   // The boundary wraps the screen switch's `content` and NOTHING above it (design D1): a screen
   // that throws loses its own subtree, while the safe-area frame and the status-bar inset — the
   // blank-screen failure mode this exists to remove — still render. `screen.kind` is both the
@@ -2792,7 +2815,6 @@ const styles = StyleSheet.create({
   devLogBtn: {
     position: 'absolute',
     right: SPACING.md,
-    bottom: SPACING.md,
     paddingVertical: SPACING.xs,
     paddingHorizontal: SPACING.sm,
     borderWidth: 1,
