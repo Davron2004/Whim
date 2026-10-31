@@ -518,13 +518,18 @@ function drinksWithout(extra: Record<string, 'text' | 'int'>): SchemaArtifact {
   return { ...schema, collections: { Drinks: { ...drinks, fields } } };
 }
 
-/** Counts the store's whole-version reads from here on. */
+/** Counts the store's reads of one version (the whole version, or only its declaration) from here on. */
 function countSnapshotReads(state: DeviceState): { count: number } {
   const counter = { count: 0 };
   const read = state.store.getSnapshot.bind(state.store);
   state.store.getSnapshot = (appId, snapshotId) => {
     counter.count += 1;
     return read(appId, snapshotId);
+  };
+  const readDeclaration = state.store.declarationOf.bind(state.store);
+  state.store.declarationOf = (appId, snapshotId) => {
+    counter.count += 1;
+    return readDeclaration(appId, snapshotId);
   };
   return counter;
 }

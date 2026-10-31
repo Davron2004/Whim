@@ -8,8 +8,8 @@
  * What the grid holds and in what order is `grid-composition.ts`; the rows a long-press offers are
  * `tile-menus.ts`; this file draws them and routes what the person chooses. Delete and Discard hide
  * at once and offer Undo (`soft-delete.ts` owns the windows, `LauncherRoot` the stores). "Make a copy"
- * asks `CopyQuestionSheet` only when the copy can copy data. Share link opens the platform share sheet
- * with the app's link. No native alert anywhere. The grid's motion (system.md §4.4): its first
+ * asks `CopyQuestionSheet` only when the copy can copy data and the app has saved some. Share link
+ * opens the platform share sheet with the app's link. No native alert anywhere. The grid's motion (system.md §4.4): its first
  * appearance after launch rises in, staggered (M17); a deleted tile leaves and its neighbours reflow,
  * and Undo plays it back (M18); a delivered ghost turning into its tile (M4) is the tile's own.
  */
@@ -39,6 +39,7 @@ import { appAnchor, tileAnchor } from '../ui/SheetAnchor';
 import { COPY, deletedToast, discardedManyToast, tileOlderLine } from './copy';
 import { CopyQuestionSheet } from './CopyQuestionSheet';
 import { CustomizeTileSheet } from './CustomizeTileSheet';
+import { copyFailure } from './fork-op';
 import { cellKey, cellName, composeGrid, searchCells, SEARCH_FROM_APPS, type GridCell } from './grid-composition';
 import { PROTOCOL_LEVEL } from './wire-headers';
 import { HomeHeader } from './HomeHeader';
@@ -74,6 +75,11 @@ export interface HomeScreenProps {
   /** Whether "Make a copy" can copy the data (`StoreAccess.canCopyData`). When false the copy is made
    *  fresh at once and no question is asked. */
   canCopyData?: boolean;
+  /** Whether the app has saved any data (`StoreAccess.hasSavedData`), asked before the copy question
+   *  when the copy can copy data: an app with nothing saved is copied fresh at once, unasked
+   *  (copy-app-data ruling 3). Resolves `null` when the app is busy and nothing should happen.
+   *  Omitted = it has, so the question is asked. */
+  hasSavedData?: (app: InstalledApp) => Promise<boolean | null>;
   /** The description typed so far in the describe sheet, shown in the composer bar. */
   draft?: string;
   /** Opens the app; `fromTile` when its tile was tapped (or its menu's Open chosen), which it grows
@@ -162,6 +168,9 @@ interface OpenMenu {
   anchor: MenuAnchor;
   open: boolean;
 }
+
+/** `hasSavedData` when none is given: not knowing means asking. */
+const savedUnknown = (): Promise<boolean> => Promise.resolve(true);
 
 /** The name a cell's tile draws: the older cell has none of its own. */
 const tileName = (cell: GridCell) => (cell.kind === 'older' ? '' : cellName(cell));
@@ -325,6 +334,7 @@ export default function HomeScreen({
   stalled,
   flicker,
   canCopyData = false,
+  hasSavedData = savedUnknown,
   draft,
   onOpen,
   onFork,
@@ -422,19 +432,25 @@ export default function HomeScreen({
     } catch (e) {
       log.warn(CHANNELS.app, 'copy did not complete', { appId: app.id, detail: e instanceof Error ? e.message : String(e) });
       haptics.play('failure');
-      toast.show({ message: COPY.copyFailedToast });
+      const failure = copyFailure(e, data);
+      toast.show({
+        message: failure.message,
+        ...(failure.startFresh ? { action: { label: COPY.copyQuestionFresh, onPress: () => makeCopy(app, 'fresh') } } : {}),
+      });
     }
   };
 
-  const askCopy = (app: InstalledApp) => {
-    if (canCopyData) setCopying({ app, open: true });
-    else makeCopy(app, 'fresh');
+  const askCopy = async (app: InstalledApp) => {
+    const saved = canCopyData ? await hasSavedData(app) : false;
+    if (saved === null) return;
+    if (saved) setCopying({ app, open: true });
+    else await makeCopy(app, 'fresh');
   };
 
   const answerCopy = (data: ForkOptions['data']) => {
     const app = copying?.app;
     setCopying((c) => (c ? { ...c, open: false } : c));
-    if (app) makeCopy(app, data);
+    if (app) makeCopy(app, data).catch((e) => log.warn(CHANNELS.app, 'copy did not complete', { appId: app.id, detail: e instanceof Error ? e.message : String(e) }));
   };
 
   const share = (app: InstalledApp) => {
@@ -567,7 +583,7 @@ export default function HomeScreen({
               </>
             ) : (
               <View style={[layout.kind === 'grid' ? s.grid : s.list, s.gridEnd, gridFrame, labels.shown ? null : s.unmeasured]}>
-                {cells.map(renderCell)}
+                {cells.map((cell, index) => renderCell(cell, index))}
                 {cells.length === 0 ? (
                   <Text type="callout" color="text-2">
                     {COPY.homeSearchEmpty}

@@ -28,7 +28,7 @@ import { PurgeWindows } from '../soft-delete';
 import { PendingPurgeStore, type PurgeMarker } from '../pending-purge';
 import { MapKVBackend } from '../../version-store';
 import type { AppBusyMap } from '../app-busy';
-import { resetNativeStorage } from './native-storage';
+import { resetNativeStorage, saveUserData } from './native-storage';
 import { press, unmountScreen } from './react-screen';
 import { chooseRow, longPress, menuCard, renderRoot, sheetRows, tile } from './home-rig';
 
@@ -157,11 +157,12 @@ export async function runAppBusyTests(h: Harness): Promise<void> {
   });
 
   await h.test('launcher: while a fork runs, the tile reads busy and opens no menu, so a second copy cannot start', async () => {
-    const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: [] } } };
+    const app: InstalledApp = { id: 'timer', name: 'Timer', createdAt: 1, lineageId: 'main', record: { appId: 'timer', name: 'Timer', manifest: { capabilities: ['storage'] } } };
     resetNativeStorage();
     const index = new AppIndex(createMmkvBackend('whim.launcher'));
     index.markSeeded(SEED_VERSION);
     index.put(app);
+    saveUserData(app.id);
     const originalFork = StoreAccess.prototype.fork;
     const gate = deferred();
     let forks = 0;

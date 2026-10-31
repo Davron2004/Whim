@@ -6,10 +6,12 @@
  */
 
 import { spawn } from 'node:child_process';
+import nodeAssert from 'node:assert';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
+import { inspect } from 'node:util';
 
 import { createEngine } from '../engine';
 import { createNodeSqlExecutor, readAppliedSchemaFromFile } from '../bindings/node-sqlite';
@@ -25,6 +27,45 @@ export interface CopySuiteHelpers {
   ok(cond: boolean, msg: string): void;
   eq(a: unknown, b: unknown, msg: string): void;
   fail(msg: string): void;
+}
+
+/** The caller's collector; `runCopyTests` sets it. Until then every check throws. */
+let sink: CopySuiteHelpers = {
+  ok: (_cond, msg) => {
+    throw new Error(msg);
+  },
+  eq: (_a, _b, msg) => {
+    throw new Error(msg);
+  },
+  fail: msg => {
+    throw new Error(msg);
+  },
+};
+
+/** The checks delegate to node:assert (CLAUDE.md "Test assertions"). A failure is recorded, not
+ *  thrown: a check inside the copy's own verify step must not be mistaken for a verify failure, and
+ *  one run reports every failure. A passing check is forwarded to the caller's `ok`/`eq` so it
+ *  still counts toward "N checks passed". */
+function ok(cond: boolean, msg: string): void {
+  try {
+    nodeAssert.ok(cond, msg);
+  } catch (err) {
+    if (!(err instanceof nodeAssert.AssertionError)) throw err;
+    sink.fail(msg);
+    return;
+  }
+  sink.ok(cond, msg);
+}
+/** Deep, strict equality: key order doesn't matter, an extra key holding `undefined` does. */
+function eq(a: unknown, b: unknown, msg: string): void {
+  try {
+    nodeAssert.deepStrictEqual(a, b, msg);
+  } catch (err) {
+    if (!(err instanceof nodeAssert.AssertionError)) throw err;
+    sink.fail(`${msg} (got ${inspect(a, { depth: 6 })}, want ${inspect(b, { depth: 6 })})`);
+    return;
+  }
+  sink.eq(a, b, msg);
 }
 
 // v1 → v2: `tag` (f5) is tombstoned with data in it; `mood` (f6) and `rating` (f7) are added. The
@@ -145,7 +186,8 @@ async function withTimeout<T>(p: Promise<T>, ms: number): Promise<T> {
 }
 
 export async function runCopyTests(root: string, h: CopySuiteHelpers): Promise<void> {
-  const { ok, eq, fail } = h;
+  const { fail } = h;
+  sink = h;
   let n = 0;
   /** A fresh storage directory per test, so no test sees another's files. */
   const freshDir = (): string => {

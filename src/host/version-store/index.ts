@@ -21,6 +21,7 @@ export type {
   Artifacts,
   Snapshot,
   SnapshotContent,
+  Declaration,
   FileChange,
   ChangeStatus,
   Pin,

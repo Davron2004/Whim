@@ -17,10 +17,10 @@ import { grantConsent } from '../ai-consent';
 import { acceptTerms } from '../terms-acceptance';
 import { acknowledgeOwnServer, saveServerUrl } from '../server-address';
 import { resetNativeStorage } from './native-storage';
-import { androidBack, renderScreen, unmountScreen, captureTimeouts, textOf, hostType, press } from './react-screen';
+import { androidBack, renderScreen, unmountScreen, captureTimeouts, textOf, hostType } from './react-screen';
 import { testAppInfo } from './client-fixtures';
 import { json, settle, waitFor, withLauncher } from './rendered-launcher';
-import { chooseRow, dismissToast, longPress, pressToastAction, renderRoot, sheetRows, sheetTitled, tile, tileLabels, toastOf } from './home-rig';
+import { chooseRow, dismissToast, longPress, pressToastAction, renderRoot, sheetTitled, tile, tileLabels, toastOf } from './home-rig';
 import { accessibilitySettings } from './native-host';
 import { open as openNativeDb } from './native-storage';
 import MiniAppView from '../MiniAppView';
@@ -364,9 +364,8 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
       await ready(tree);
       const index = new AppIndex(kv);
       await longPress(tree, 'Water Counter, example');
+      // The example has saved nothing yet, so the copy is made fresh at once, with no question.
       await chooseRow(tree, COPY.actionMakeCopy);
-      const startFresh = sheetRows(tree, COPY.copyQuestionTitle).find((r) => String(r.props.accessibilityLabel).startsWith(COPY.copyQuestionFresh))!;
-      await press(startFresh);
       await waitFor(() => copyOf(index, 'water-counter') !== undefined, 'the copy');
       const copy = copyOf(index, 'water-counter')!;
       const access = new StoreAccess({ store: createPersistentStore(createMmkvBackend('whim-version-store')), index });

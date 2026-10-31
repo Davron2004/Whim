@@ -630,6 +630,73 @@ await test('§6.2 an extra (schema) artifact is diffed with no special-casing, a
   eq(active!.artifacts['manifest.json'], MANIFEST(1), 'manifest rolled back together too');
 });
 
+// --- declarationOf: a version's manifest and schema without its code (ruling 41) ---
+
+/** Records every path the backend is asked to read from here on. */
+function recordReads(backend: MemoryFs): string[] {
+  const paths: string[] = [];
+  const readFile = backend.readFile.bind(backend);
+  backend.readFile = (path, options) => {
+    paths.push(path);
+    return readFile(path, options);
+  };
+  return paths;
+}
+
+/** Where a file holding `content` is kept in `appId`'s repo while the repo is not compacted. */
+async function storedAt(appId: string, content: string): Promise<string> {
+  const { oid } = await git.hashBlob({ object: content });
+  return `/whim/apps/${appId}/.git/objects/${oid.slice(0, 2)}/${oid.slice(2)}`;
+}
+
+await test('§declarationOf returns a version\'s manifest and schema and never reads its code, sources or prompt', async () => {
+  const backend = new MemoryFs();
+  const s = new VersionStore({ backend, config: { now: clock(), autoCompact: false } });
+  const SOURCE = 'export default function App() { return null; }\n';
+  const SCHEMA = JSON.stringify({ schemaVersion: 1, collections: {} });
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1), 'source.ts': SOURCE, 'manifest.json': MANIFEST(1), 'schema.json': SCHEMA }, 'p1');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(2), 'manifest.json': MANIFEST(2) }, 'p2');
+  await s.snapshot('app', { 'bundle.js': BUNDLE(3) }, 'p3');
+
+  const reads = recordReads(backend);
+  const first = await s.declarationOf('app', 'g1');
+  eq(first, { manifest: MANIFEST(1), schema: SCHEMA }, 'a version with both files returns both, as saved');
+  assertNoGitLeak(first, 'declarationOf');
+  const timesRead = async (content: string) => {
+    const at = await storedAt('app', content);
+    return reads.filter((p) => p === at).length;
+  };
+  eq(
+    [await timesRead(MANIFEST(1)), await timesRead(SCHEMA)],
+    [1, 1],
+    'the manifest and the schema are each read once',
+  );
+  eq(
+    [await timesRead(BUNDLE(1)), await timesRead(SOURCE), await timesRead('p1')],
+    [0, 0, 0],
+    'the code, the source and the prompt are never read',
+  );
+
+  eq(await s.declarationOf('app', 'g2'), { manifest: MANIFEST(2), schema: null }, 'a version with no schema reports the schema as missing');
+  eq(await s.declarationOf('app', 'g3'), { manifest: null, schema: null }, 'a version saved without a manifest reports it as missing');
+  eq(await timesRead(BUNDLE(2)) + (await timesRead(BUNDLE(3))), 0, 'and neither reads its code');
+});
+
+await test('§declarationOf rejects an unknown version, and any version of an app with no repo, as getSnapshot does', async () => {
+  const s = freshStore();
+  await s.snapshot('app', { 'bundle.js': BUNDLE(1), 'manifest.json': MANIFEST(1) }, 'p1');
+  const refusal = async (appId: string, id: string) => {
+    try {
+      await s.declarationOf(appId, id);
+      return 'resolved';
+    } catch (err) {
+      return (err as Error).message;
+    }
+  };
+  eq(await refusal('app', 'g9'), 'unknown snapshot: g9', 'an unknown version is refused by name');
+  eq(await refusal('ghost', 'g1'), 'unknown snapshot: g1', 'an app with no repo has no versions to read');
+});
+
 // --- remove(appId): the additive launcher-shell (#5 D2) verb -----------------
 
 await test('§remove drops the app history; history empty + active null afterward', async () => {
@@ -672,6 +739,26 @@ await test('§remove is idempotent — removing an unknown app is a clean no-op'
   const s = freshStore();
   const res = await s.remove('never-installed');
   eq(res, { removed: false }, 'removing an absent app reports removed:false, does not throw');
+});
+
+await test('§remove reports an invalid app id as a rejected promise, never a synchronous throw', async () => {
+  const s = freshStore();
+  let pending: Promise<unknown> | undefined;
+  let threwSync = false;
+  try {
+    pending = s.remove('../escape');
+  } catch {
+    threwSync = true;
+  }
+  ok(!threwSync, 'remove() returns a promise even for an invalid app id');
+  let reason: unknown;
+  await Promise.resolve(pending).catch((e: unknown) => {
+    reason = e;
+  });
+  ok(
+    reason instanceof Error && /invalid app id/i.test(reason.message),
+    'the invalid app id surfaces as a promise rejection carrying the original invalid-app-id Error',
+  );
 });
 
 // --- §4 C1: auto-compaction failure must not reject a durable snapshot -------

@@ -745,6 +745,33 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     } finally { await unmountScreen(tree); }
   });
 
+  await h.test('Make a copy: an app that has saved nothing is copied fresh at once, unasked; while the app is busy nothing happens; the read is asked of the long-pressed app', async () => {
+    await resetPhone();
+    const forks: string[] = [];
+    const asked: string[] = [];
+    let saved: boolean | null = false;
+    const tree = await renderHome({
+      apps: [TIMER],
+      canCopyData: true,
+      hasSavedData: async (a) => { asked.push(a.id); return saved; },
+      onFork: async (a, opts) => { forks.push(`${a.id}:${opts.data}`); return { ...a, id: 'copy' }; },
+    });
+    try {
+      await longPress(tree, 'Timer');
+      await chooseRow(tree, COPY.actionMakeCopy);
+      h.eq([forks, sheetTitled(tree, COPY.copyQuestionTitle)], [['Timer:fresh'], undefined], 'nothing saved: a fresh copy, no question');
+      saved = null;
+      await longPress(tree, 'Timer');
+      await chooseRow(tree, COPY.actionMakeCopy);
+      h.eq([forks.length, sheetTitled(tree, COPY.copyQuestionTitle)], [1, undefined], 'busy: no question and no copy');
+      saved = true;
+      await longPress(tree, 'Timer');
+      await chooseRow(tree, COPY.actionMakeCopy);
+      h.ok(sheetTitled(tree, COPY.copyQuestionTitle) !== undefined && forks.length === 1, 'saved data: asked, nothing made yet');
+      h.eq(asked, ['Timer', 'Timer', 'Timer'], 'each time, of the app whose menu it was');
+    } finally { await unmountScreen(tree); }
+  });
+
   await h.test('Make a copy: success says “Copy made” with an Open action that opens the copy; a failure says so once, makes nothing and never falls back to a fresh copy', async () => {
     await resetPhone();
     const opened: string[] = [];

@@ -55,6 +55,18 @@ export function resetNativeStorage(): void {
   closedDatabases.clear();
 }
 
+/** Whether a database file named `name` exists, as a directory listing would say. */
+export function hasDatabase(name: string): boolean {
+  return databases.has(name);
+}
+
+/** Gives `appId`'s user-data store one kv row, as a mini-app's first save would. */
+export function saveUserData(appId: string): void {
+  const db = open({ name: `${appId}.db` });
+  db.executeSync('CREATE TABLE IF NOT EXISTS kv (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+  db.executeSync("INSERT OR REPLACE INTO kv (key, value) VALUES ('count', '1')");
+}
+
 const READS = /^\s*(SELECT|PRAGMA|WITH)\b/i;
 
 export function open({ name }: { name: string; location?: string }) {

@@ -19,6 +19,9 @@ export interface CopyQuestionSheetProps {
   visible: boolean;
   /** The app being copied, named in the first row. */
   appName: string;
+  /** History, from a version that would hide some of the current version's saved data: the
+   *  hidden-data line, in a copy's terms, under the answers. */
+  hidesData?: boolean;
   /** "Copy the data": the copy starts with a one-time copy of the original's saved data. */
   onCopyData: () => void;
   /** "Start fresh": the copy starts empty. */
@@ -31,11 +34,11 @@ const styles = StyleSheet.create({
   content: { paddingHorizontal: LAYOUT.gutter, paddingBottom: LAYOUT.actionAreaBottom },
 });
 
-export function CopyQuestionSheet({ visible, appName, onCopyData, onStartFresh, onClose }: Readonly<CopyQuestionSheetProps>) {
+export function CopyQuestionSheet({ visible, appName, hidesData = false, onCopyData, onStartFresh, onClose }: Readonly<CopyQuestionSheetProps>) {
   return (
     <Sheet visible={visible} onClose={onClose} title={COPY.copyQuestionTitle} detent="fit">
       <View style={styles.content}>
-        <GroupedSection on="sheet">
+        <GroupedSection on="sheet" footer={hidesData ? COPY.copyQuestionHiddenData : undefined}>
           <GroupedRow title={COPY.copyQuestionData} subtitle={copyQuestionDataSubtitle(appName)} icon="copy" onPress={onCopyData} />
           <GroupedRow title={COPY.copyQuestionFresh} subtitle={COPY.copyQuestionFreshSubtitle} icon="sprout" onPress={onStartFresh} />
         </GroupedSection>

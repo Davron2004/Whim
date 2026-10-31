@@ -24,6 +24,8 @@ import { RecordingExecutor } from '../sql-executor';
 import { JsonValue, SchemaArtifact, StorageEngine, StorageEngineError, StorageErrorKind } from '../contract';
 import { AppliedSchema, burnedIdFloor, emptyApplied } from '../schema';
 import { runCopyTests } from './copy.suite';
+import { runCopyErrorTests } from './copy-errors.suite';
+import { runSavedDataTests } from './saved-data.suite';
 import { onlyRanNothing } from '../../../../scripts/lib/only-ran.mjs';
 
 // ── tiny harness ─────────────────────────────────────────────────────────────
@@ -816,6 +818,13 @@ test('§G readAppliedSchema: a freshly-connected-but-never-opened db (no _meta t
 // ═══════════════════════════════════════════════════════════════════════════
 
 await runCopyTests(TMP, { ok, eq, fail: msg => failures.push(msg) });
+await runCopyErrorTests(TMP, { ok, eq, fail: msg => failures.push(msg) });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// §I  copy-app-data: does a store hold any user data (saved-data.suite.ts)
+// ═══════════════════════════════════════════════════════════════════════════
+
+runSavedDataTests(TMP, { ok, eq, fail: msg => failures.push(msg) });
 
 // ── verdict ──────────────────────────────────────────────────────────────────
 

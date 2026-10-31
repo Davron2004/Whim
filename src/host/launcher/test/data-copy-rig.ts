@@ -13,12 +13,13 @@ import path from 'node:path';
 
 import { createMemoryStore, MapKVBackend, type KVBackend, type VersionStore } from '../../version-store';
 import { AppIndex, type InstalledApp } from '../app-index';
-import { StoreAccess, type DeleteStorage } from '../store-access';
+import { StoreAccess, type DeleteStorage, type HasSavedData } from '../store-access';
 import { DataCopyJournal } from '../data-copy-journal';
 import { createEngine } from '../../storage-engine/engine';
 import { createNodeSqlExecutor, readAppliedSchemaFromFile } from '../../storage-engine/bindings/node-sqlite';
 import { createNodeCopyOpener, createNodeCopyStorage } from '../../storage-engine/copy-node';
 import { storeFileName } from '../../storage-engine/copy';
+import { createNodeHasSavedData } from '../../storage-engine/saved-data-node';
 import type { CopyStorage } from '../../storage-engine/copy-contract';
 import type { SchemaArtifact, StorageEngine } from '../../storage-engine/contract';
 import type { AppliedSchema } from '../../storage-engine/schema';
@@ -56,10 +57,11 @@ export interface Rig {
 }
 
 /** A launcher over `state`, with the real file-backed seams unless a test swaps one. Pass
- *  `copyStorage: null` for an instance built without the data-copy seam. */
+ *  `copyStorage: null` for an instance built without the data-copy seam, `hasSavedData: null`
+ *  for one built without the saved-data read. */
 export function accessOver(
   state: DeviceState,
-  over: { kv?: KVBackend; deleteStorage?: DeleteStorage; copyStorage?: CopyStorage | null } = {},
+  over: { kv?: KVBackend; deleteStorage?: DeleteStorage; copyStorage?: CopyStorage | null; hasSavedData?: HasSavedData | null } = {},
 ): Rig {
   const kv = over.kv ?? state.kv;
   const index = new AppIndex(kv);
@@ -67,10 +69,11 @@ export function accessOver(
   const deleteStorage = over.deleteStorage ?? fileDelete(state);
   let t = 5000;
   const now = () => (t += 1000);
+  const hasSavedData = over.hasSavedData === null ? undefined : (over.hasSavedData ?? createNodeHasSavedData(state.dir));
   const access =
     over.copyStorage === null
-      ? new StoreAccess({ store: state.store, index, deleteStorage, now })
-      : new StoreAccess({ store: state.store, index, deleteStorage, now, copyStorage: over.copyStorage ?? createNodeCopyStorage(state.dir), copyJournal: journal });
+      ? new StoreAccess({ store: state.store, index, deleteStorage, hasSavedData, now })
+      : new StoreAccess({ store: state.store, index, deleteStorage, hasSavedData, now, copyStorage: over.copyStorage ?? createNodeCopyStorage(state.dir), copyJournal: journal });
   return { access, index, journal };
 }
 
