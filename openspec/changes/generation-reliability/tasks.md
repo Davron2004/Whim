@@ -102,22 +102,22 @@
 
 ## 3. Upstream failures: classify, resend plan, name the outage (#57, #66)
 
-- [ ] 3.1 Shared classifier (design D5; specs/generation-server "A failed model call is classified and logged with its status and error kind", "An upstream failure is exactly a server, rate-limit, network or timeout failure"):
+- [x] 3.1 Shared classifier (design D5; specs/generation-server "A failed model call is classified and logged with its status and error kind", "An upstream failure is exactly a server, rate-limit, network or timeout failure"):
   - New leaf module `server/src/model-failure.ts` with `modelFailureOf(err, signal?)` returning `{errorKind, status?, upstream}` and `ModelErrorKind`.
   - The signal is checked first: `TimeoutError` is `timeout`, any other abort is `cancelled`.
   - `isUpstreamModelFailure` in `generation/model.ts` delegates to it.
   - Regression: `server/test/openrouter.suite.ts` covers a table of real `OpenRouter*Error` instances and signals: 503 frame, 502 HTTP, 429, fetch throw, 401, 402, 400, `AbortSignal.timeout`, plain abort.
   - Red before: a timeout abort and a client abort are indistinguishable (both upstream).
-- [ ] 3.2 `model call` line fields: in `server/src/openrouter.ts`, `logSettle` adds `errorKind` and `status` on failed and aborted outcomes.
+- [x] 3.2 `model call` line fields: in `server/src/openrouter.ts`, `logSettle` adds `errorKind` and `status` on failed and aborted outcomes.
   - Regression: `openrouter.suite.ts`:
     - a mid-stream `{"error":{"code":503}}` frame logs `errorKind:'server', status:503`
     - a caller abort logs `cancelled` with no status
     - no message text
   - Red before: the fields are absent.
-- [ ] 3.3 Plan resend (design D4; specs/generation-pipeline "A model turn that loses its provider is retried once"): in `machine.ts` `runModelTurn`, `plan` joins generate and repair for `MODEL_TURN_RETRIES`.
+- [x] 3.3 Plan resend (design D4; specs/generation-pipeline "A model turn that loses its provider is retried once"): in `machine.ts` `runModelTurn`, `plan` joins generate and repair for `MODEL_TURN_RETRIES`.
   - Regression: `server/test/routes-generate.suite.ts` (beside the existing D10 retry case) — a plan turn failing with `OpenRouterNetworkError(…, 503)` once then succeeding gives a `result`, no `restart` event, and a `model turn retried {role:'plan'}` line.
   - Red before: the run ends `internal_error`.
-- [ ] 3.4 Terminal `provider_unavailable` (design D6; specs/generation-pipeline "A run whose provider stays down ends with its own reason"):
+- [x] 3.4 Terminal `provider_unavailable` (design D6; specs/generation-pipeline "A run whose provider stays down ends with its own reason"):
   - Add `provider_unavailable` to `TERMINAL_FAILURE_CODES` in `server/src/generation/failure-codes.ts`.
   - `PROVIDER_UNAVAILABLE_REASON` in `machine.ts` imports `REFUSAL_HINTS.provider_unavailable`.
   - In `endOnThrow`, a 402 stays first. Then an upstream engineer-turn error gives `provider_unavailable` (log `run failed` stays at error).
@@ -126,7 +126,7 @@
     - plan failing network then 429 ends the same way
     - discriminating red-check: 503 then 401 gives `internal_error`, and 503 then 402 gives `credit_exhausted`
   - Red before: `internal_error` with the generic sentence.
-- [ ] 3.5 Clarify and rewrite 503 (specs/generation-server "Clarify endpoint", "Rewrite endpoint over the real rewrite model"; specs/server-admission-control "Unary model calls have a bounded lifetime"):
+- [x] 3.5 Clarify and rewrite 503 (specs/generation-server "Clarify endpoint", "Rewrite endpoint over the real rewrite model"; specs/server-admission-control "Unary model calls have a bounded lifetime"):
   - In `server/src/routes/clarify.ts` and `server/src/routes/rewrite.ts`, after the 402 branch (and the rewrite's existing retries), an error that `modelFailureOf(err, combinedSignal)` calls upstream answers `providerUnavailableRefusal()` (no `Retry-After`) and ledgers `provider_unavailable`. A non-upstream failure keeps `502 model_failure`.
   - Regression: `server/test/routes-unary.suite.ts`:
     - a clarify 503 stream error gives `503 provider_unavailable`
@@ -134,7 +134,7 @@
     - a rewrite 401 gives `502`
     - the stalled-rewrite timeout case now expects `503 provider_unavailable` with the unary slot released (rewrite this assertion, don't drop it)
   - Red before: `502` everywhere.
-- [ ] 3.6 Set the cause on the provider terminal (design D11; specs/generation-pipeline "A run whose provider stays down ends with its own reason"): in `machine.ts` `endOnThrow`, the terminal for the `provider_unavailable` code carries `cause: 'provider_unavailable'`, and no other terminal sets `cause`. Needs 2.6's contract field and `eventForLevel` gating.
+- [x] 3.6 Set the cause on the provider terminal (design D11; specs/generation-pipeline "A run whose provider stays down ends with its own reason"): in `machine.ts` `endOnThrow`, the terminal for the `provider_unavailable` code carries `cause: 'provider_unavailable'`, and no other terminal sets `cause`. Needs 2.6's contract field and `eventForLevel` gating.
   - Regression: `server/test/routes-generate.suite.ts` — a generate failing upstream twice, requested with `x-whim-protocol: 2`, ends in a `failure` that carries `cause: 'provider_unavailable'`. The same run requested at level 1 ends in the same `reason` with no `cause` key. `internal_error` and `credit_exhausted` endings carry no `cause` at either level.
   - Red before: the field is never set.
 

@@ -26,3 +26,5 @@
 - runner chain-upstream #1: PASS (gate 0, e2e 68/0, integrity 0, ratchet 0, redcheck coarse RED + builder mutation reds); new tests-tsconfig diagnostic model-failure.ts(44,34) AbortSignal.reason. Fixer dispatched (review 1-3 + diagnostic).
 - fix round 1 chain-upstream: tip 4df6c107 (clarify answers via c.json; level-1/level-2 tests; typed 401/429 carry status; AbortSignal.reason accessor). Opus re-review + runner #2 dispatched.
 - re-review chain-upstream #2 (Opus): ACCEPT (1-3 + diagnostic resolved; compat at level 2 is correct per live spec). LOW carried to chain-breaker: full level-2 body deepEqual. handoff/upstream-review-2.md
+- runner chain-upstream #2: PASS (gate 0, integrity 0, ratchet 0, redcheck assertion RED, typecheck-tests 2). handoff/upstream-runner-2.md
+- merged: chain-upstream at a3bd8756fa89e0f78bed7d9ffd08840f29b1fd8b (tasks 3.1–3.6 ticked). Regate deferred: chain-breaker follows; gate-full on the final tip is the last regate.
