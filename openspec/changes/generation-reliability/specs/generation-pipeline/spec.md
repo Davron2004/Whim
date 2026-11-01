@@ -127,11 +127,17 @@ The pipeline SHALL retry a plan, generate or repair turn once with the same mess
 ### Requirement: An unverified or failed containment verdict is logged without content
 The pipeline SHALL log, at info with the request id, the verdict kind, the id of the check that tripped, the unobserved phase and whether the candidate was re-run whenever a run ends as `containment_failed` or `run_unverified`, and SHALL NOT log source, DOM or console text.
 
+When a run's unobserved verdict is traced to a harness fault, the pipeline SHALL re-run that candidate once and log one info line `run re-run` carrying the request id and the `phase` that caused it, no content.
+
 Every `terminal failure` line SHALL carry `phase`, one of `module-eval | bundle | mount | deliver | probes | mount-timeout | none` — the harness's unobserved phase for the run that ended the attempt, `none` when that run's verdict was observed or no run took place — and `rerun: true | false`. When the pipeline sends a never-mounted candidate to repair it SHALL log one info line `run never mounted` carrying the request id and the phase. Neither line SHALL carry a message, source, symbol or hint.
 
 #### Scenario: Unverified run
 - **WHEN** a run ends `run_unverified`
 - **THEN** one log line carries the request id, the verdict kind, the check id, the phase and `rerun: true`, and no content
+
+#### Scenario: A re-run leaves a trace
+- **WHEN** a run whose first verdict was unobserved in phase `probes` is re-run and then delivers
+- **THEN** one `run re-run` info line names phase `probes` and carries no message, source or symbol
 
 #### Scenario: A repaired never-mounted candidate leaves a trace
 - **WHEN** a candidate with phase `module-eval` is sent to repair and the run later delivers
@@ -140,7 +146,7 @@ Every `terminal failure` line SHALL carry `phase`, one of `module-eval | bundle 
 ## ADDED Requirements
 
 ### Requirement: A run whose provider stays down ends with its own reason
-When a plan, generate or repair turn still fails upstream after its one resend, the pipeline SHALL end the run, with no further repair, in exactly one `failure` terminal event whose `reason` is the `provider_unavailable` refusal hint, and SHALL record the terminal failure code `provider_unavailable`. That `failure` SHALL carry `cause: 'provider_unavailable'` for a client at protocol level 2 or above. A resend that fails for a reason that is not upstream SHALL end as that reason ends today.
+When a plan, generate or repair turn still fails upstream after its one resend, the pipeline SHALL end the run, with no further repair, in one `failure` terminal event whose `reason` is the `provider_unavailable` refusal hint, record the code `provider_unavailable`, and set `cause: 'provider_unavailable'` for a client at protocol level 2 or above. Only that resend's failure ends this way: a non-upstream one ends as today, and an upstream-shaped error from anywhere else is an `internal_error`.
 
 #### Scenario: A generate turn that fails twice upstream
 - **WHEN** the scripted model client fails the generate turn with a `502` stream error twice
@@ -153,6 +159,10 @@ When a plan, generate or repair turn still fails upstream after its one resend, 
 #### Scenario: A plan turn that fails twice upstream
 - **WHEN** the plan turn fails with a network error and its resend fails with a `429`
 - **THEN** the run ends with the provider sentence and the code `provider_unavailable`
+
+#### Scenario: An upstream-shaped error from outside a model turn is an internal error
+- **WHEN** the check stage throws an error carrying status `503`
+- **THEN** the run ends with the generic internal-error reason and the code `internal_error`, with no `cause`
 
 #### Scenario: A non-upstream second failure keeps its own ending
 - **WHEN** the generate turn fails with a `503` and its resend fails with a `401`

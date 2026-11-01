@@ -899,24 +899,39 @@ async function runBreakerAdmission(): Promise<void> {
   }
 
   {
-    let probes = 0;
-    const rig = breakerRig(true, () => {
-      probes++;
-      return Promise.reject(new OpenRouterCreditError('out of credit'));
-    });
-    rig.advance(40_000);
+    const rig = breakerRig(false);
     const res = await postBreaker(rig, '/v1/generate', BREAKER_BODY);
     if (res === TIMED_OUT) {
-      check('a request after a 402 probe is answered', false, 'no response');
+      check('a closed breaker lets generate through', false, 'no response');
     } else {
       await res.body?.cancel();
-      eq('a probe the provider answered 402 closes the breaker: the request goes on to the credit check and is admitted', [res.status, probes, rig.creditLookups(), rig.usage.admitted.length], [200, 1, 1, 1]);
-      const next = await postBreaker(rig, '/v1/generate', BREAKER_BODY);
-      if (next !== TIMED_OUT) await next.body?.cancel();
-      eq('... and the next request needs no probe', [next === TIMED_OUT ? next : next.status, probes], [200, 1]);
+      eq('a closed breaker admits: a ledger row, and the credit check still made', [res.status, rig.usage.admitted.length, rig.creditLookups()], [200, 1, 1]);
     }
   }
+  await runBreakerNonUpstreamProbe();
+  await runBreakerRequestLine();
+}
 
+async function runBreakerNonUpstreamProbe(): Promise<void> {
+  let probes = 0;
+  const rig = breakerRig(true, () => {
+    probes++;
+    return Promise.reject(new OpenRouterCreditError('out of credit'));
+  });
+  rig.advance(40_000);
+  const res = await postBreaker(rig, '/v1/generate', BREAKER_BODY);
+  if (res === TIMED_OUT) {
+    check('a request after a 402 probe is answered', false, 'no response');
+  } else {
+    await res.body?.cancel();
+    eq('a probe the provider answered 402 closes the breaker: the request goes on to the credit check and is admitted', [res.status, probes, rig.creditLookups(), rig.usage.admitted.length], [200, 1, 1, 1]);
+    const next = await postBreaker(rig, '/v1/generate', BREAKER_BODY);
+    if (next !== TIMED_OUT) await next.body?.cancel();
+    eq('... and the next request needs no probe', [next === TIMED_OUT ? next : next.status, probes], [200, 1]);
+  }
+}
+
+async function runBreakerRequestLine(): Promise<void> {
   section('  the request line tells a breaker refusal from a mid-call provider_unavailable');
 
   for (const route of ['/v1/generate', '/v1/clarify', '/v1/rewrite']) {
@@ -943,16 +958,5 @@ async function runBreakerAdmission(): Promise<void> {
       withMessage(capture, 'request').map((l) => [l.status, l.error, 'refusedBy' in l]),
       [[503, 'provider_unavailable', false]],
     );
-  }
-
-  {
-    const rig = breakerRig(false);
-    const res = await postBreaker(rig, '/v1/generate', BREAKER_BODY);
-    if (res === TIMED_OUT) {
-      check('a closed breaker lets generate through', false, 'no response');
-    } else {
-      await res.body?.cancel();
-      eq('a closed breaker admits: a ledger row, and the credit check still made', [res.status, rig.usage.admitted.length, rig.creditLookups()], [200, 1, 1]);
-    }
   }
 }

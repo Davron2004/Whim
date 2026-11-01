@@ -44,6 +44,10 @@ For `/v1/report` the order SHALL be: device identity, raw body cap, body validat
 - **WHEN** the operator's credit is exhausted while the global concurrency cap and every device's daily allowance still have room
 - **THEN** the refusal is `budget_exhausted`, not `server_busy` or `daily_limit`, and no slot is acquired
 
+#### Scenario: A policy check that fails upstream answers policy_unavailable
+- **WHEN** the breaker is closed and the content-policy model call fails with a `503` that is not cached away
+- **THEN** the response is `503 policy_unavailable`, not `provider_unavailable`; the check stays fail-closed, and the failure reaches the breaker only if the policy check runs on the engineer model
+
 #### Scenario: An open breaker is checked before the credit lookup
 - **WHEN** the provider breaker is open and the cached operator credit has expired
 - **THEN** the refusal is `provider_unavailable`, the credit endpoint is not queried, no daily unit is consumed and no slot is acquired
@@ -120,7 +124,7 @@ The time source used for UTC-day arithmetic SHALL be injectable, so tests can cr
 ## ADDED Requirements
 
 ### Requirement: The provider breaker counts consecutive upstream failures
-The server SHALL keep one in-memory provider breaker per process, fed with the outcome of every model call made through the one model client all roles share (policy, clarify, rewrite, plan, generate, repair, summary). A completed call SHALL reset the consecutive-failure count and close an open breaker; an upstream failure (specs/generation-server "An upstream failure is exactly a server, rate-limit, network or timeout failure") SHALL add one; any other outcome SHALL change nothing.
+The server SHALL keep one in-memory provider breaker per process, fed with the outcome of every call to the roster's engineer model, the model its probe checks. A completed call SHALL reset the consecutive-failure count and close an open breaker; an upstream failure (specs/generation-server "An upstream failure is exactly a server, rate-limit, network or timeout failure") SHALL add one; any other outcome, and every call to another model, SHALL change nothing.
 
 #### Scenario: A success in between resets the count
 - **WHEN** three calls fail upstream, one completes, and three more fail upstream
@@ -129,6 +133,14 @@ The server SHALL keep one in-memory provider breaker per process, fed with the o
 #### Scenario: Failures that are not upstream do not count
 - **WHEN** four calls fail with `401`, `402`, a client cancel and a `400`
 - **THEN** the breaker stays closed
+
+#### Scenario: An engineer-model outage opens it between completed calls to other models
+- **WHEN** four engineer-model calls fail upstream, each one after a completed policy or clarify call on another model
+- **THEN** the breaker opens on the fourth failure
+
+#### Scenario: Another model's failures do not count
+- **WHEN** six calls to the clarify model fail with `503`, and separately a call to it completes while the breaker is open
+- **THEN** the first leaves the breaker closed and the second leaves it open, because only engineer-model calls count and reset it
 
 ### Requirement: The provider breaker opens for a cooldown and says so in the log
 The breaker SHALL open when `WHIM_PROVIDER_BREAKER_FAILURES` consecutive upstream failures fall within `WHIM_PROVIDER_BREAKER_WINDOW_MS` of the first, and stay open for `WHIM_PROVIDER_BREAKER_COOLDOWN_MS`, on an injectable clock. Opening SHALL log one `provider breaker open` warning with the count, window, cooldown and last `errorKind` and `status`; closing SHALL log one `provider breaker closed` info line with how long it was open; neither SHALL carry content.
@@ -153,7 +165,7 @@ While the provider breaker is open, `/v1/generate`, `/v1/clarify` and `/v1/rewri
 - **THEN** the response is an immediate `503 provider_unavailable` with `Retry-After`, the device's daily count is unchanged, no slot is held and the scripted model client records no call
 
 ### Requirement: A lazy probe decides when the provider breaker closes
-Once the cooldown has passed, the next admission SHALL start one probe: a call to the engineer model with one output token, reasoning off and a 10-second timeout, logged as its own `model call` line and credited to no device. Admissions arriving meanwhile SHALL await the same probe. A completed probe SHALL close the breaker and let them continue through admission; a failed one SHALL re-open it for another cooldown, log `provider probe failed` with its `errorKind` and `status`, and refuse them.
+Once the cooldown has passed, the next admission SHALL start one probe, a one-token engineer-model call with reasoning off and a 10-second timeout, credited to no device. Concurrent admissions SHALL await it. A probe that completes, or fails with a `401`, `402` or `400`, SHALL close the breaker and let them reach the credit check; one that fails upstream SHALL re-open it, log `provider breaker open` again and refuse them. A failed probe SHALL log `provider probe failed` (`errorKind`, `status`).
 
 #### Scenario: A successful probe closes the breaker
 - **WHEN** the cooldown has passed, a clarify request arrives, and the probe completes
@@ -161,7 +173,11 @@ Once the cooldown has passed, the next admission SHALL start one probe: a call t
 
 #### Scenario: A failed probe re-opens the breaker
 - **WHEN** the cooldown has passed and the probe fails with a `502`
-- **THEN** the request is refused with `provider_unavailable` and a `Retry-After` equal to the full cooldown, and `provider probe failed` is logged
+- **THEN** the request is refused with `provider_unavailable` and a `Retry-After` equal to the full cooldown, and `provider probe failed` and a second `provider breaker open` (marked `reopened: true`, with `errorKind` and `status`) are logged
+
+#### Scenario: A probe the provider answers with a 402 closes the breaker
+- **WHEN** the cooldown has passed and the probe fails with a `402`
+- **THEN** the breaker closes, `provider breaker closed` is logged with `errorKind: credit` and `status: 402`, and the request continues to the credit check, where it can be refused `budget_exhausted`
 
 #### Scenario: Concurrent admissions share one probe
 - **WHEN** three admissions arrive after the cooldown while the probe is still in flight

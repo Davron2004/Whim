@@ -48,3 +48,12 @@ the report id and reason.
 #### Scenario: A provider outage sends one email an hour
 - **WHEN** the provider breaker opens, closes and opens again within the same hour
 - **THEN** the committed `deploy/monitoring/policy-provider-breaker-open.json` matches `jsonPayload.msg="provider breaker open"` on the `whim-server` Cloud Run revision's logs, and its notification rate limit is 3600 seconds
+
+## ADDED Requirements
+
+### Requirement: A breaker refusal is marked on the request log line
+The request log line of a `provider_unavailable` refusal made by an open provider breaker SHALL carry `refusedBy: 'breaker'`, and no other request line SHALL carry that field, so the refusal can be told from a `provider_unavailable` that clarify or rewrite came to mid-call.
+
+#### Scenario: A breaker refusal is distinguishable
+- **WHEN** an open breaker refuses a generate request, and separately a clarify call fails upstream mid-call
+- **THEN** both request lines show status `503` and `error: provider_unavailable`, and only the first carries `refusedBy: 'breaker'`

@@ -1,0 +1,29 @@
+# fix1 report (whole-change review 1, REJECT)
+
+Branch `chain/generation-reliability-fix1`, BASE `cae360d2`. Findings 1-7 done in code or spec; finding 8 accepted (no change).
+The live probe call (finding 1) was NOT run: see `probe-live.md`.
+
+| # | Finding | Change | Test | Red evidence (mutation, failing test names) |
+|---|---|---|---|---|
+| 1 | Breaker can stay open forever on a non-upstream probe failure | `provider-breaker.ts` `onProbeSettled`: re-open only when `failure.upstream`; any other failure closes (close line carries the probe's `errorKind`/`status`); an upstream re-open logs `provider breaker open` again (`reopened: true`). Specs: probe requirement + 2 scenarios; D8; deploy.md alert row | `provider-breaker.suite`: 402/401/400 probe admits waiter, stays closed, close line fields, no second open, count restarts from 0; 502 probe re-opens and logs a second `open` with `reopened`. `admission.suite`: 402 probe then `/v1/generate` reaches the credit check (1 lookup) and is admitted, next request needs no probe | `if (failure === undefined)` (re-open on any failure): "a probe the provider answered 402 closes the breaker: the request goes on to the credit check and is admitted — got [503,1,0,0]", "a probe answered 402/401/400 admits its waiter", "... close line carries the probe's errorKind and status", "after a non-upstream probe the count starts again from zero" |
+| 2 | One model's outage never opens the breaker (any role resets) | `withProviderBreaker(inner, breaker, engineerModel)` records only calls whose `req.model` is the roster's engineer model; `guardModel` passes `roster.engineer.model`. Specs: counts requirement + 2 scenarios; D8 + Risks | `provider-breaker.suite` `testFeedIsEngineerOnly`: 4 engineer failures each after a completed clarify call open it; 6 clarify-model 503s never open it; a completed clarify call does not close an open breaker. `e2e.ts` composed-server case rewritten to drive 2 real generations (policy allow, plan 503 twice) | feed unconditionally (`req.model === ""` skip): "the fourth engineer failure opens it — got { ok: true }", "six upstream failures of a model that is not the engineer's never open it", "a completed call to another model does not close an open breaker" |
+| 3 | Policy-check upstream failure answers `policy_unavailable`, undocumented | Behaviour kept. Scenario added under "Admission checks run in a fixed order" (server-admission-control delta); Risks line in D8 | `routes-unary.suite` `testUpstreamClassifierFailureIsPolicyUnavailable`: clarify and rewrite with a classifier failing `503` answer `503 policy_unavailable`, no `Retry-After` (the e2e case that used to pin it was rewritten) | n/a (kept behaviour, no code change) |
+| 4 | `endOnThrow` broader than D6 | `machine.ts`: `runModelTurn` marks (WeakSet) the error of a failed resend; `endOnThrow` maps only marked errors to `provider_unavailable`. D6 + generation-pipeline delta (requirement text + scenario) | `machine.suite` `testUpstreamShapedThrowOutsideATurnIsInternal`: check stage throws a 503-shaped error -> generic reason, no `cause`, trace `internal_error`; existing second-drop / plan-drop cases still end `provider_unavailable` | `endOnThrow` back to `isUpstreamModelFailure(err)`: "stage throws 503: the generic sentence, not the provider one", "no cause on the terminal", "the trace records internal_error" |
+| 5 | Breaker refusals indistinguishable in logs | `ServiceRefusal.refusedBy`, new `breakerRefusal(retryAfter)` (and `providerUnavailableRefusal()` loses its parameter); generate/clarify/rewrite set `c.set('refusedBy', ...)`; `app.ts` request line carries `refusedBy: 'breaker'`. Spec: server-observability ADDED requirement; deploy.md; launcher fixtures use `breakerRefusal` | `admission.suite`: each of 3 routes' request line has `[503, 'provider_unavailable', 'breaker']`; a mid-call clarify upstream failure has the same status/code and no `refusedBy` | request-line spread disabled: "/v1/generate | /v1/clarify | /v1/rewrite: an open-breaker refusal's request line carries refusedBy breaker — got [503,'provider_unavailable',undefined]" |
+| 6 | `run re-run {phase}` in no delta | generation-pipeline delta: paragraph + scenario in "An unverified or failed containment verdict is logged without content" | existing `machine.suite` `testRerunThatDeliversIsLogged` | n/a (spec only) |
+| 7 | Alert row | docs/deploy.md: terminal-failures row says provider outages can fire it too | `deploy-config.suite` | n/a (docs) |
+
+## Commands (all through capped-run.sh, in the worktree)
+
+- `npm run -s server:test -- --only runProviderBreakerTests --only runAdmissionTests --only runMachineTests`: exit 0 (853 passed, 0 failed) before the red runs; after the final edits with `--only runRoutesUnaryTests --only runRoutesGenerateTests --only runRequestEdgeTests --only runWireLevelTests --only runLoggingTests` added: exit 0 (2148 passed).
+- Four mutation runs (table above), each exit 1 with the named failures; sources restored with `git checkout`.
+- `npm run -s server:e2e`: exit 0 (75 passed, 0 failed). `--only runRoutesUnaryTests`: exit 0 (338 passed).
+- `npm run -s launcher:test -- --only service-refusal --only prompt-flow-ui`: exit 0 (419 checks).
+- `npm run -s server:test -- --only runDeployConfigTests`: exit 0.
+- `npx eslint --max-warnings 0` on every touched file: exit 0. `npm run -s typecheck`: exit 0.
+- `openspec@1.4.1 validate generation-reliability --strict`: exit 0. `openspec@1.14.1 validate generation-reliability`: exit 0, no warnings.
+
+## Notes
+
+- Plan and repair turns use the engineer model unless `WHIM_PLAN_MODEL` / `WHIM_REPAIR_MODEL` override it; an override is a different model and is not counted (same rule as the policy and clarify models).
+- The existing composed-server e2e case could not stay: it opened the breaker with policy-check failures on the rewrite model, which finding 2 deliberately stops counting.

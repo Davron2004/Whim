@@ -36,7 +36,7 @@ import type { RunCandidate, RunReport } from '../../synthrun/contract';
 import type { GenerationEvent, WireAppRecord } from '@whim/contract';
 import { createStubPipeline } from '../src/pipeline';
 import { createGenerationPipeline } from '../src/generation';
-import { UNVERIFIED_RUN_REASON } from '../src/generation/machine';
+import { PROVIDER_UNAVAILABLE_REASON, UNVERIFIED_RUN_REASON } from '../src/generation/machine';
 import { containedDetail } from './run-stage-fixtures';
 import { PROTOCOL_HEADER_LINE, PROTOCOL_HEADERS } from './route-doubles';
 import { runLoadtestServer, LOADTEST_HEALTHZ_SERVICE } from '../src/loadtest/server';
@@ -467,21 +467,24 @@ function postClarify(url: string, prompt: string): Promise<Response> {
 }
 
 async function testProviderBreakerOnComposedServer(): Promise<void> {
-  section('spec: the composed server opens the provider breaker on real policy-check upstream failures, then refuses clarify before any model call');
+  section('spec: the composed server opens the provider breaker on real engineer-model upstream failures, between completed policy calls, then refuses clarify before any model call');
 
   const savedRequest = Object.getOwnPropertyDescriptor(globalThis, 'Request');
   const savedResponse = Object.getOwnPropertyDescriptor(globalThis, 'Response');
   const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-e2e-breaker-'));
-  // Four 503s, the default threshold. The content-policy check asks twice per request when its
-  // first call ends without a verdict, so two requests supply them. A fifth turn would let a
-  // request that reaches the model through an unwired breaker be recorded instead of failing the
-  // script, so "no further model request" can fail.
+  // Two generations, each: the policy check completes on the rewrite model, then the plan turn
+  // fails with a 503 and its resend fails too. Four engineer-model failures, the default
+  // threshold, with a completed call to another model between every pair of them. A fifth turn
+  // would let a request that reaches the model through an unwired breaker be recorded instead of
+  // failing the script, so "no further model request" can fail.
+  const outage = (): ScriptedTurn => ({ role: 'plan', deltas: [], error: new OpenRouterNetworkError('provider unavailable', undefined, 503) });
   const turns: ScriptedTurn[] = [
-    ...Array.from({ length: 4 }, (): ScriptedTurn => ({
-      role: 'rewrite',
-      deltas: [],
-      error: new OpenRouterNetworkError('provider unavailable', undefined, 503),
-    })),
+    { role: 'rewrite', deltas: ['{"verdict":"allow"}'] },
+    outage(),
+    outage(),
+    { role: 'rewrite', deltas: ['{"verdict":"allow"}'] },
+    outage(),
+    outage(),
     { role: 'rewrite', deltas: ['{"verdict":"allow"}'] },
   ];
   const model = new ScriptedModelClient(E2E_ROSTER, turns);
@@ -501,23 +504,21 @@ async function testProviderBreakerOnComposedServer(): Promise<void> {
     }
     handle = started;
 
-    const answers: unknown[] = [];
-    for (let i = 0; i < 2; i++) {
-      const response = await postClarify(handle.url, 'a recipe app with a shopping list');
-      answers.push([response.status, ((await response.json()) as { error?: string }).error]);
+    const port = Number(new URL(handle.url).port);
+    for (const [i, prompt] of ['a recipe app with a shopping list', 'a tip splitter for dinners'].entries()) {
+      const client = rawGenerate(port, randomUUID(), prompt);
+      const ended = await waitUntil(() => hasTerminalEvent(client.text()), 30_000);
+      check(`generation ${i + 1}: the run ends in one failure naming the provider`, ended && client.text().includes('event: failure') && client.text().includes(PROVIDER_UNAVAILABLE_REASON), client.text().slice(-400));
+      client.socket.destroy();
     }
-    eq('two clarify requests whose policy check the provider fails with 503 answer policy_unavailable', answers, [
-      [503, 'policy_unavailable'],
-      [503, 'policy_unavailable'],
-    ]);
-    eq('setup: the four upstream failures were four model requests', model.requests.length, 4);
+    eq('setup: each generation made a policy call and two failed plan turns', model.requests.map((r) => r.role), ['rewrite', 'plan', 'plan', 'rewrite', 'plan', 'plan']);
 
     const refused = await postClarify(handle.url, 'a recipe app with a shopping list');
     const body = (await refused.json()) as { error?: string };
     eq('the next clarify is refused 503 provider_unavailable by the open breaker', [refused.status, body.error], [503, 'provider_unavailable']);
     const retryAfter = refused.headers.get('retry-after') ?? '';
     check('... carrying an integer Retry-After within the 60 s cooldown', /^\d+$/.test(retryAfter) && Number(retryAfter) >= 1 && Number(retryAfter) <= 60, retryAfter);
-    eq('... and made no model request', model.requests.length, 4);
+    eq('... and made no model request', model.requests.length, 6);
 
     const closing = await within(handle.close(), 30_000);
     check('the server drains closed', closing !== TIMED_OUT);
