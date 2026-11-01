@@ -22,4 +22,4 @@ export const REQUEST_ID_HEADER = 'x-whim-request-id';
 export const PROTOCOL_HEADER = 'x-whim-protocol';
 /** The protocol level this build understands: what it sends in `PROTOCOL_HEADER`, and the level its
  *  decoder (`wire-compat.ts`) reads every message against. */
-export const PROTOCOL_LEVEL = 1;
+export const PROTOCOL_LEVEL = 2;

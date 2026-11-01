@@ -35,6 +35,7 @@ import {
   APP_VERSION_HEADER,
   BUILD_HEADER,
   CONSENT_HEADER,
+  FailureCause,
   GenerationEvent as GenerationEventSchema,
   PLATFORM_HEADER,
   REQUEST_ID_HEADER,
@@ -403,6 +404,20 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       const got = await collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'p' }));
       h.eq(got, [event], `the "${event.type}" arm parses without throwing`);
     }
+  });
+
+  await h.test('generateApp: a failure’s cause is kept for every cause the contract names, and dropped for one it does not or a null', async () => {
+    const failure = { type: 'failure', reason: 'nope', attempts: 1, diagnostics: [] } as const;
+    const read = async (frame: Record<string, unknown>): Promise<unknown> => {
+      const fetchImpl = (async () => sseResponse([`event: failure\ndata: ${JSON.stringify(frame)}\nid: 1\n\n`])) as typeof fetch;
+      return collect(generateApp({ ...BASE, fetchImpl }, { prompt: 'p' }));
+    };
+    for (const cause of FailureCause.options) {
+      h.eq(await read({ ...failure, cause }), [{ ...failure, cause }], `"${cause}" reaches the caller: the build’s set holds every cause the contract names`);
+    }
+    h.eq(await read({ ...failure, cause: 'some_future_cause' }), [failure], 'a cause this build does not know reads as no cause, and the failure itself is kept');
+    h.eq(await read({ ...failure, cause: null }), [failure], 'a null cause reads as none');
+    h.eq(await read({ ...failure, cause: 7 }), [failure], 'and so does one of the wrong type');
   });
 
   await h.test('generateApp: a frame split across chunks and a keepalive comment still parse', async () => {

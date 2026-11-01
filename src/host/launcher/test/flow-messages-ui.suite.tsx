@@ -14,6 +14,7 @@ import ReadyPage from '../ReadyPage';
 import FailurePage from '../FailurePage';
 import UpdateRequiredScreen from '../UpdateRequiredScreen';
 import HistoryScreen from '../HistoryScreen';
+import ReportScreen from '../ReportScreen';
 import { COPY } from '../copy';
 import { AppIndex } from '../app-index';
 import { PendingBuildStore, type PendingBuildRecord } from '../pending-builds';
@@ -22,7 +23,7 @@ import type { InstalledApp } from '../app-index';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { PROTOCOL_LEVEL } from '../wire-headers';
 import { STUB_LIMIT, stubFutureFrame } from '../../../../server/src/stub-markers';
-import { contentPolicyRefusal, serverBusyRefusal, type ServiceRefusal } from '../../../../server/src/admission/refusals';
+import { REFUSAL_HINTS, contentPolicyRefusal, serverBusyRefusal, type ServiceRefusal } from '../../../../server/src/admission/refusals';
 import { STORE_LISTINGS } from '../release-config';
 import { Linking } from './native-host';
 import { button, press, textOf } from './react-screen';
@@ -275,6 +276,52 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
       h.eq(occurrences(textOf(tree.root), 'The app did not build.'), 1, 'and the reason reads once');
     });
   });
+
+  // A provider outage ends a run with its own failure: the sentence is the server's, `cause` is the
+  // structured fact (design D11), and the page never advises rewording nor offers a report.
+  const PROVIDER_SENTENCE = 'The AI service Whim uses is having trouble right now. It’s not something you did. Please try again in a little while.';
+  await h.test('failure: a provider-caused failure leads with Try again, never advises rewording or offers a report, also from its tile', async () => {
+    h.eq(REFUSAL_HINTS.provider_unavailable, PROVIDER_SENTENCE, 'setup: the sentence is the one the server says');
+    const streams: Stream[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+      await startBuild(tree, 'A tip splitter');
+      streams[0].push(STAGE);
+      streams[0].push({ type: 'failure', reason: PROVIDER_SENTENCE, attempts: 2, diagnostics: [], cause: 'provider_unavailable' });
+      streams[0].end();
+      await waitFor(() => on(tree, FailurePage), 'the failure screen');
+      const noReport = () => h.eq([tree.root.findAllByType(ReportScreen).length, /report/i.test(textOf(tree.root))], [0, false], 'no report is offered');
+      h.eq(occurrences(textOf(tree.root), PROVIDER_SENTENCE), 1, 'the server’s sentence reads once');
+      h.eq(rephraseAdvice(tree), [], 'nothing suggests rewording');
+      h.ok(failureTryAgain(tree) != null, 'Try again is there');
+      noReport();
+      h.eq(new PendingBuildStore(kv).list()[0]?.failure?.cause, 'provider_unavailable', 'the record stores the cause');
+      await press(button(tree, COPY.sheetClose));
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).list()[0]));
+      h.ok(on(tree, FailurePage), 'its tile reopens the failure');
+      h.eq(occurrences(textOf(tree.root), PROVIDER_SENTENCE), 1, 'with the sentence once');
+      h.eq(rephraseAdvice(tree), [], 'still no rewording advice');
+      h.ok(failureTryAgain(tree) != null, 'and Try again');
+      noReport();
+    });
+  });
+
+  for (const [name, cause] of [['no cause', undefined], ['a cause this build does not know', 'some_future_cause']] as const) {
+    await h.test(`failure: a failure with ${name} still leads with Change the description and Try again as it is`, async () => {
+      const streams: Stream[] = [];
+      await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+        await startBuild(tree, 'A tip splitter');
+        streams[0].push(STAGE);
+        streams[0].push({ type: 'failure', reason: 'The app did not build.', attempts: 0, diagnostics: [], ...(cause ? { cause } : {}) });
+        streams[0].end();
+        await waitFor(() => on(tree, FailurePage), 'the failure screen');
+        h.eq(rephraseAdvice(tree), [COPY.failureChangeDescription, COPY.failureTryAgainAsIs], 'describing it differently is advised first');
+        h.eq(new PendingBuildStore(kv).list()[0]?.failure?.cause, undefined, 'and no cause is stored');
+        await press(button(tree, COPY.sheetClose));
+        await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).list()[0]));
+        h.eq(rephraseAdvice(tree), [COPY.failureChangeDescription, COPY.failureTryAgainAsIs], 'the same from its tile');
+      });
+    });
+  }
 
   for (const [name, refusal, advised] of [['capacity', serverBusyRefusal(), false], ['content policy', contentPolicyRefusal(), true]] as const) {
     await h.test(`refusal: a ${name} refusal on a Retry ${advised ? 'keeps' : 'drops'} the rephrase advice, and its reopened ghost agrees`, async () => {

@@ -4,9 +4,9 @@
  * forward-compatibility envelope with a closed fallback vocabulary").
  *
  * Where a conforming server can produce the frame, it comes from the server's own code: a
- * synthetic level-2 message adapted for this build's level by `server/src/wire-level.ts`, framed by
+ * synthetic later-level message adapted for this build's level by `server/src/wire-level.ts`, framed by
  * `server/src/sse.ts`. The inputs no conforming server sends — an unknown message without `compat`,
- * a fallback outside the frozen set, a `compat` the reader cannot read, a level-2 payload sent
+ * a fallback outside the frozen set, a `compat` the reader cannot read, a later-level payload sent
  * unadapted — are written by hand. Every stream read is bounded, so a regression fails by name.
  *
  * Also holds the device's mirrors to their sources: the protocol level it declares (read back with
@@ -54,17 +54,20 @@ const RESULT: GenerationEvent = {
   app: { name: 'Tip Splitter', source: 'src', bundle: 'window.__WHIM_APP_MODULE__ = {};', manifest: {}, schema: {} },
 };
 
-/** A level-2 event and a level-2 error code this build has never heard of. */
+/** The first level above this build's own: what a later server's messages are introduced at. */
+const FUTURE = PROTOCOL_LEVEL + 1;
+
+/** An event and an error code of a later level, which this build has never heard of. */
 const ETA = { type: 'eta', seconds: 40 };
 const QUOTA = { error: 'quota_changed', hint: 'Your daily allowance changed.' };
 const NOTICE = 'Update Whim to see how long the wait is.';
 
-/** The server's registry plus `eta` and `quota_changed` at level 2 with `compat`, and `token`
- *  re-meant at level 2 when `tokenToo` is set. */
-function levelTwo(compat: Compat, tokenToo = false): WireRegistry {
+/** The server's registry plus `eta` and `quota_changed` at the later level with `compat`, and `token`
+ *  re-meant at it when `tokenToo` is set. */
+function levelAbove(compat: Compat, tokenToo = false): WireRegistry {
   return {
-    events: { ...WIRE_REGISTRY.events, eta: { level: 2, compat }, ...(tokenToo ? { token: { level: 2, compat } } : {}) },
-    errors: { ...WIRE_REGISTRY.errors, quota_changed: { level: 2, compat } },
+    events: { ...WIRE_REGISTRY.events, eta: { level: FUTURE, compat }, ...(tokenToo ? { token: { level: FUTURE, compat } } : {}) },
+    errors: { ...WIRE_REGISTRY.errors, quota_changed: { level: FUTURE, compat } },
   };
 }
 
@@ -214,15 +217,15 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
   // ── Events a later server sends, as it sends them to this build ──────────────────────────────
 
   await h.test('future frames: an unknown event marked skip is ignored and the stream runs on to its terminal event', async () => {
-    const skip = adapted(ETA, levelTwo({ min: 2, fallback: 'skip' }));
-    h.eq(skip, { type: 'eta', compat: { min: 2, fallback: 'skip' } }, 'setup: the server sends this build only the envelope');
+    const skip = adapted(ETA, levelAbove({ min: FUTURE, fallback: 'skip' }));
+    h.eq(skip, { type: 'eta', compat: { min: FUTURE, fallback: 'skip' } }, 'setup: the server sends this build only the envelope');
     const { events, error } = await drain(sseFromServer([STAGE, skip, TOKEN, RESULT]));
     h.eq(outcomeOf(error), 'none', 'nothing is thrown');
     h.eq(events, [STAGE, TOKEN, RESULT], 'every other event arrives, the result last');
   });
 
   await h.test('future frames: an unknown event marked fail ends the flow on the failure screen, with its notice', async () => {
-    const fail = adapted(ETA, levelTwo({ min: 2, fallback: 'fail', notice: NOTICE }));
+    const fail = adapted(ETA, levelAbove({ min: FUTURE, fallback: 'fail', notice: NOTICE }));
     const { events, error } = await drain(sseFromServer([STAGE, fail, TOKEN, RESULT]));
     h.eq(outcomeOf(error), 'fail', 'the stream ends with the fail outcome');
     h.eq(events, [STAGE], 'nothing after it is used');
@@ -231,7 +234,7 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
   });
 
   await h.test('future frames: an unknown event marked update ends the flow on the update path, and nothing is delivered', async () => {
-    const update = adapted(ETA, levelTwo({ min: 2, fallback: 'update', notice: NOTICE }));
+    const update = adapted(ETA, levelAbove({ min: FUTURE, fallback: 'update', notice: NOTICE }));
     const { events, error } = await drain(sseFromServer([STAGE, update, RESULT]));
     h.eq(outcomeOf(error), 'update', 'the stream ends with the update outcome');
     h.ok(!events.some((event) => event.type === 'result'), 'the result after it is never yielded');
@@ -241,11 +244,11 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
   });
 
   await h.test('future frames: a known event whose compat.min is above this build takes its fallback', async () => {
-    const remeant = adapted(TOKEN, levelTwo({ min: 2, fallback: 'skip' }, true));
-    h.eq(remeant, { type: 'token', compat: { min: 2, fallback: 'skip' } }, 'setup: the server sends this build only the envelope');
+    const remeant = adapted(TOKEN, levelAbove({ min: FUTURE, fallback: 'skip' }, true));
+    h.eq(remeant, { type: 'token', compat: { min: FUTURE, fallback: 'skip' } }, 'setup: the server sends this build only the envelope');
     const skipped = await drain(sseFromServer([STAGE, remeant, RESULT]));
     h.eq([outcomeOf(skipped.error), skipped.events], ['none', [STAGE, RESULT]], 'a skip drops the known event, even though its type is known');
-    // A server that sends the level-2 payload unadapted: layer 3 still applies the fallback.
+    // A server that sends the later-level payload unadapted: layer 3 still applies the fallback.
     const unadapted = { ...TOKEN, compat: { min: PROTOCOL_LEVEL + 1, fallback: 'fail' } };
     const failed = await drain(sseFromServer([STAGE, unadapted, RESULT]));
     h.eq([outcomeOf(failed.error), failed.events], ['fail', [STAGE]], 'a known event with its full payload and min above the level is not decoded');
@@ -261,7 +264,7 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
   });
 
   await h.test('future frames: a fallback outside the frozen set is treated as fail', async () => {
-    const odd = { ...ETA, compat: { min: 2, fallback: 'retry', notice: 'Try again later.' } };
+    const odd = { ...ETA, compat: { min: FUTURE, fallback: 'retry', notice: 'Try again later.' } };
     const { error } = await drain(sseFromServer([STAGE, odd, RESULT]));
     h.eq(outcomeOf(error), 'fail', 'the stream ends with the fail outcome');
     h.eq(errorReason(error).reason, 'Try again later.', 'and the notice still reaches the failure screen');
@@ -280,7 +283,7 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
 
   await h.test('future frames: every fallback in the contract’s frozen vocabulary resolves to its own outcome', async () => {
     for (const fallback of CompatFallback.options) {
-      const { error } = await drain(sseFromServer([STAGE, { ...ETA, compat: { min: 2, fallback } }, RESULT]));
+      const { error } = await drain(sseFromServer([STAGE, { ...ETA, compat: { min: FUTURE, fallback } }, RESULT]));
       h.eq(outcomeOf(error), fallback === 'skip' ? 'none' : fallback, `"${fallback}" ends the way it names`);
     }
   });
@@ -288,26 +291,26 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
   await h.test('future frames: this build reads exactly the compat values the contract’s WireEnvelope reads, on known and unknown types', async () => {
     const notice = (length: number): string => 'n'.repeat(length);
     const corpus: readonly unknown[] = [
-      { min: 2, fallback: 'skip' },
+      { min: FUTURE, fallback: 'skip' },
       { min: 1, fallback: 'skip' },
       { min: 1, fallback: 'update' },
-      { min: 2, fallback: 'skip', notice: '' },
-      { min: 2, fallback: 'skip', notice: notice(COMPAT_NOTICE_MAX_CHARS) },
-      { min: 2, fallback: 'skip', notice: notice(COMPAT_NOTICE_MAX_CHARS + 1) },
-      { min: 2, fallback: 'skip', notice: 7 },
-      { min: 2, fallback: 'skip', notice: null },
+      { min: FUTURE, fallback: 'skip', notice: '' },
+      { min: FUTURE, fallback: 'skip', notice: notice(COMPAT_NOTICE_MAX_CHARS) },
+      { min: FUTURE, fallback: 'skip', notice: notice(COMPAT_NOTICE_MAX_CHARS + 1) },
+      { min: FUTURE, fallback: 'skip', notice: 7 },
+      { min: FUTURE, fallback: 'skip', notice: null },
       { min: null, fallback: 'skip' },
-      { min: 2, fallback: null },
-      { min: 2, fallback: 'skip', extra: true },
+      { min: FUTURE, fallback: null },
+      { min: FUTURE, fallback: 'skip', extra: true },
       { min: Number.MAX_SAFE_INTEGER, fallback: 'skip' },
-      { min: 2 ** 53, fallback: 'skip' },
+      { min: FUTURE ** 53, fallback: 'skip' },
       { min: 0, fallback: 'skip' },
       { min: -1, fallback: 'skip' },
       { min: 1.5, fallback: 'skip' },
-      { min: '2', fallback: 'skip' },
+      { min: String(FUTURE), fallback: 'skip' },
       { fallback: 'skip' },
-      { min: 2 },
-      { min: 2, fallback: 3 },
+      { min: FUTURE },
+      { min: FUTURE, fallback: 3 },
       'skip',
       null,
       [],
@@ -323,8 +326,8 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
   // ── A stream the client ends releases the server's build ─────────────────────────────────────
 
   const clientEndings = [
-    { name: 'a fail fallback', frame: adapted(ETA, levelTwo({ min: 2, fallback: 'fail', notice: NOTICE })), outcome: 'fail' },
-    { name: 'an update fallback', frame: adapted(ETA, levelTwo({ min: 2, fallback: 'update', notice: NOTICE })), outcome: 'update' },
+    { name: 'a fail fallback', frame: adapted(ETA, levelAbove({ min: FUTURE, fallback: 'fail', notice: NOTICE })), outcome: 'fail' },
+    { name: 'an update fallback', frame: adapted(ETA, levelAbove({ min: FUTURE, fallback: 'update', notice: NOTICE })), outcome: 'update' },
     { name: 'a frame that fails to parse', frame: { type: 'token' }, outcome: 'stream_parse' },
   ];
   for (const transport of ['fetch', 'xhr'] as const) {
@@ -352,7 +355,7 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
   // ── Error bodies and unary success bodies ────────────────────────────────────────────────────
 
   await h.test('future frames: an unknown error code marked fail shows its notice on the failure screen', async () => {
-    const body = errorForLevel(QUOTA, PROTOCOL_LEVEL, levelTwo({ min: 2, fallback: 'fail', notice: NOTICE }));
+    const body = errorForLevel(QUOTA, PROTOCOL_LEVEL, levelAbove({ min: FUTURE, fallback: 'fail', notice: NOTICE }));
     const error = await unaryError('rewrite', json(body, 429));
     h.eq(outcomeOf(error), 'fail', 'the call ends with the fail outcome');
     h.eq((error as GenerationClientError).status, 429, 'carrying the status it arrived with');
@@ -361,13 +364,13 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
   });
 
   await h.test('future frames: an unknown error code marked update opens the update path', async () => {
-    const body = errorForLevel(QUOTA, PROTOCOL_LEVEL, levelTwo({ min: 2, fallback: 'update', notice: NOTICE }));
+    const body = errorForLevel(QUOTA, PROTOCOL_LEVEL, levelAbove({ min: FUTURE, fallback: 'update', notice: NOTICE }));
     const error = await unaryError('clarify', json(body, 403));
     h.eq(terminalFallbackOf(error), { kind: 'update', notice: NOTICE }, 'the shell reads it as an update fallback, with its notice');
   });
 
   await h.test('future frames: an unknown error code marked skip keeps the handling of a code this build doesn’t know', async () => {
-    const body = errorForLevel(QUOTA, PROTOCOL_LEVEL, levelTwo({ min: 2, fallback: 'skip' }));
+    const body = errorForLevel(QUOTA, PROTOCOL_LEVEL, levelAbove({ min: FUTURE, fallback: 'skip' }));
     const error = await unaryError('rewrite', json(body, 429));
     h.eq(outcomeOf(error), 'http', 'an ordinary HTTP error');
     h.eq(errorReason(error).reason, QUOTA.hint, 'whose hint the failure screen shows, as it always has');
@@ -521,22 +524,22 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
   });
 
   await h.test('oldest reader: a compat notice of null is no notice, so the fallback it names still applies', async () => {
-    const skipped = await drain(sseFromServer([STAGE, { ...ETA, compat: { min: 2, fallback: 'skip', notice: null } }, TOKEN, RESULT]));
+    const skipped = await drain(sseFromServer([STAGE, { ...ETA, compat: { min: FUTURE, fallback: 'skip', notice: null } }, TOKEN, RESULT]));
     h.eq([outcomeOf(skipped.error), skipped.events], ['none', [STAGE, TOKEN, RESULT]], 'an unknown event marked skip is ignored, and the stream runs on to its result');
     const remeant = await drain(sseFromServer([STAGE, { ...TOKEN, compat: { min: PROTOCOL_LEVEL + 1, fallback: 'skip', notice: null } }, RESULT]));
     h.eq([outcomeOf(remeant.error), remeant.events], ['none', [STAGE, RESULT]], 'a known event above this build’s level is dropped the same way');
-    const failed = await drain(sseFromServer([STAGE, { ...ETA, compat: { min: 2, fallback: 'fail', notice: null } }, RESULT]));
+    const failed = await drain(sseFromServer([STAGE, { ...ETA, compat: { min: FUTURE, fallback: 'fail', notice: null } }, RESULT]));
     h.eq([outcomeOf(failed.error), errorReason(failed.error).reason], ['fail', GENERIC_STREAM_ERROR], 'fail ends the flow with the generic reason, as a fail with no notice does');
-    const updated = await drain(sseFromServer([STAGE, { ...ETA, compat: { min: 2, fallback: 'update', notice: null } }, RESULT]));
+    const updated = await drain(sseFromServer([STAGE, { ...ETA, compat: { min: FUTURE, fallback: 'update', notice: null } }, RESULT]));
     h.eq(terminalFallbackOf(updated.error), { kind: 'update' }, 'update opens the update path, with no notice');
     const body = await unaryError('clarify', json({ questions: [], compat: { min: PROTOCOL_LEVEL + 1, fallback: 'skip', notice: null } }, 200));
     h.eq(outcomeOf(body), 'none', 'a success body marked skip is read the way this build reads it');
-    const code = await unaryError('rewrite', json({ ...QUOTA, compat: { min: 2, fallback: 'fail', notice: null } }, 429));
+    const code = await unaryError('rewrite', json({ ...QUOTA, compat: { min: FUTURE, fallback: 'fail', notice: null } }, 429));
     h.eq([outcomeOf(code), errorReason(code).reason], ['fail', GENERIC_STREAM_ERROR], 'an unknown error code marked fail shows the generic reason');
   });
 
   await h.test('oldest reader: only null is an absent compat; any other compat this build cannot read still fails a known event', async () => {
-    for (const compat of ['skip', [], 0, false, '', { fallback: 'skip' }, { min: null, fallback: 'skip' }, { min: 2, fallback: null }, { min: null, fallback: null, notice: null }]) {
+    for (const compat of ['skip', [], 0, false, '', { fallback: 'skip' }, { min: null, fallback: 'skip' }, { min: FUTURE, fallback: null }, { min: null, fallback: null, notice: null }]) {
       const { events, error } = await drain(sseFromServer([STAGE, { ...TOKEN, compat }, RESULT]));
       h.eq([outcomeOf(error), events], ['fail', [STAGE]], `compat ${JSON.stringify(compat)} on a known event is unreadable, so fail`);
     }

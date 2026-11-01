@@ -33,8 +33,9 @@ export type PendingBuildState = 'building' | 'failed' | 'interrupted';
 export type PendingFailureRemedy = { kind: 'retry' } | { kind: 'update'; protocolLevel: number };
 
 /** What ended the run, where the Failure page tells it apart by more than its sentence. `connection`:
- *  the stream was cut partway, or no server answered. */
-export type PendingFailureCause = 'connection';
+ *  the stream was cut partway, or no server answered. `provider_unavailable`: the server's `failure`
+ *  named its AI provider as the cause, so rewording can't help. */
+export type PendingFailureCause = 'connection' | 'provider_unavailable';
 
 export interface PendingBuildFailure {
   reason: string;

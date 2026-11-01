@@ -143,6 +143,19 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('page: a provider outage shows the server’s sentence verbatim with Try again, and offers no report from the page', async () => {
+    const sentence = 'The AI service Whim uses is having trouble right now. It’s not something you did. Please try again in a little while.';
+    const reportable = /report/i;
+    await withFailurePage({ kind: 'other', reason: sentence, rephraseHelps: false, diagnostics: [], onDismiss: () => {} }, async (shown, calls, tree) => {
+      h.ok(shown().includes(sentence), 'the sentence reads verbatim');
+      h.eq(buttonLabels(tree).filter((label) => reportable.test(label)), [], 'no control on the page names a report');
+      h.ok(!reportable.test(shown()), 'and no text invites one');
+      h.eq(Object.keys(tree.root.findByType(FailurePage).props).filter((prop) => /report/i.test(prop)), [], 'nor does the page take a report handler');
+      await press(button(tree, COPY.actionTryAgain));
+      h.eq([calls.retry, calls.change], [1, 0], 'Try again runs it again');
+    });
+  });
+
   await h.test('page: needing a newer Whim says so, keeps what is safe and Discard, and Update Whim opens Whim’s own store listing', async () => {
     let notNow = 0;
     const opened = Linking.opened.length;

@@ -2405,7 +2405,7 @@ function LauncherShell({
     lease: PendingAttemptLease;
     /** Set when rewording can't get past the ending: a stream cut partway. */
     remedy?: PendingFailureRemedy;
-    /** Set for a stream cut partway. */
+    /** Set for a stream cut partway, or a failure the server named a cause for. */
     cause?: PendingFailureCause;
   }) => {
     const selected = isSelectedLiveAttempt(input.lease);
@@ -2440,8 +2440,8 @@ function LauncherShell({
       // The app being edited already has a working version installed; a brand-new app has none.
       hasWorkingVersion: input.editing != null,
       // A terminal `failure` offers rephrasing; a stream cut partway never does (prompt-flow "A
-      // dropped connection SHALL never suggest rewording").
-      rephraseHelps: input.remedy == null,
+      // dropped connection SHALL never suggest rewording"), nor one the provider caused.
+      rephraseHelps: input.remedy == null && input.cause !== 'provider_unavailable',
       ...(terminalPersisted && input.cause ? { cause: input.cause } : {}),
       announce: announceFailure(),
     });
@@ -3080,6 +3080,7 @@ function LauncherShell({
           editing,
           prompt: building.text,
           reason: terminal.reason,
+          cause: terminal.cause,
           hints: terminal.diagnostics.map((d) => ({ hint: d.hint })),
           observed: counts.repair,
           counts: terminalCounts(),
@@ -3252,7 +3253,7 @@ function LauncherShell({
       // A record that names a remedy is one rewording can't get past (`PendingFailureRemedy`), and
       // neither is an interruption (no failure payload, as `reason` reads it): the app closed, the
       // request was never the problem.
-      rephraseHelps: current.failure != null && current.failure.remedy == null,
+      rephraseHelps: current.failure != null && current.failure.remedy == null && cause !== 'provider_unavailable',
       pendingId: current.id,
       ...interrupted,
       ...(cause ? { cause } : {}),
