@@ -36,6 +36,7 @@ export interface ProviderRouting {
 /** Authentication failure (HTTP 401). */
 export class OpenRouterAuthError extends Error {
   readonly kind = 'auth' as const;
+  readonly status = 401 as const;
   constructor(message: string) {
     super(message);
     this.name = 'OpenRouterAuthError';
@@ -45,6 +46,7 @@ export class OpenRouterAuthError extends Error {
 /** Rate-limit exceeded (HTTP 429). */
 export class OpenRouterRateLimitError extends Error {
   readonly kind = 'rate_limit' as const;
+  readonly status = 429 as const;
   constructor(message: string) {
     super(message);
     this.name = 'OpenRouterRateLimitError';

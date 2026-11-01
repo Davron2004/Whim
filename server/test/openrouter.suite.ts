@@ -608,6 +608,9 @@ async function testModelFailureClassification(): Promise<void> {
   }
   eq('a value that is not an error is other', modelFailureOf('boom'), { errorKind: 'other', upstream: false });
   eq('a plain Error is other', modelFailureOf(new Error('x')), { errorKind: 'other', upstream: false });
+  for (const [kind, errorKind, upstream] of [['rate_limit', 'rate_limit', true], ['auth', 'auth', false], ['credit', 'credit', false]] as const) {
+    eq(`a ${kind} error that carries no status is classified without inventing one`, modelFailureOf({ kind }), { errorKind, upstream });
+  }
 
   // The abort cases use the status-less network error a real aborted fetch produces.
   const abortedFetchError = await errorOf(makeThrowingFetch(new DOMException('This operation was aborted', 'AbortError')));

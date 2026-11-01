@@ -1262,6 +1262,43 @@ async function testUpstreamFailureIsProviderUnavailable(): Promise<void> {
   }
 }
 
+/** generation-contract "A level-1 client gets the compat envelope" / "A level-2 client gets the
+ *  refusal itself", end to end on the two unary routes: the wrapped `c.json` is what gates an
+ *  error body by the client's declared level, so a route that answers around it leaks a code a
+ *  level-1 build has never heard of. */
+async function testProviderUnavailableByProtocolLevel(): Promise<void> {
+  section('Clarify and rewrite: provider_unavailable is gated by the declared protocol level (#66)');
+  const routes: ReadonlyArray<{ route: 'clarify' | 'rewrite'; model: () => ModelClient }> = [
+    {
+      route: 'clarify',
+      model: () => new ScriptedModelClient(ROSTER, [{ role: 'clarify', deltas: [], error: new OpenRouterNetworkError('OpenRouter: stream error (503)', undefined, 503) }]),
+    },
+    { route: 'rewrite', model: () => new ScriptedModelClient(ROSTER, [{ role: 'rewrite', deltas: [], error: new OpenRouterNetworkError('fetch failed') }]) },
+  ];
+  for (const { route, model } of routes) {
+    invalidateCreditCache();
+    const { app } = testApp({ model: model() });
+    const level1 = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, { 'x-whim-device': DEVICE_ID, 'x-whim-protocol': '1' });
+    eq(`${route}: a level-1 request → 503`, level1.status, 503);
+    eq(
+      `${route}: a level-1 request gets the compat envelope with the hint as the notice`,
+      await level1.json(),
+      {
+        error: 'provider_unavailable',
+        hint: REFUSAL_HINTS.provider_unavailable,
+        compat: { min: 2, fallback: 'fail', notice: REFUSAL_HINTS.provider_unavailable },
+      },
+    );
+
+    invalidateCreditCache();
+    const { app: app2 } = testApp({ model: model() });
+    const level2 = await post(app2, `/v1/${route}`, { prompt: 'a habit tracker' }, { 'x-whim-device': DEVICE_ID, 'x-whim-protocol': '2' });
+    eq(`${route}: a level-2 request → 503`, level2.status, 503);
+    const body = (await level2.json()) as ApiError;
+    eq(`${route}: a level-2 request gets the refusal itself`, [body.error, body.hint], ['provider_unavailable', REFUSAL_HINTS.provider_unavailable]);
+  }
+}
+
 async function testBudgetExhaustedMidCall(): Promise<void> {
   section('design D6b "A 402 mid-flight ends the request and invalidates the cache"');
 
@@ -1534,6 +1571,7 @@ export async function runRoutesUnaryTests(): Promise<void> {
   await testBudgetExhaustedMidCall();
   await testUnaryFailuresNameTheirCode();
   await testUpstreamFailureIsProviderUnavailable();
+  await testProviderUnavailableByProtocolLevel();
   await testReportRoute();
   await testHealthzSse();
 }

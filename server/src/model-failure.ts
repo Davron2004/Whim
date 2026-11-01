@@ -41,7 +41,7 @@ function failure(errorKind: ModelErrorKind, status?: number): ModelFailure {
  *  `AbortSignal.timeout` and a combined signal built from one carry), else as a cancellation: a
  *  client disconnect, the run-wide deadline and the summary timeout abort with no such reason. */
 function abortKind(signal: AbortSignal): ModelErrorKind {
-  const reason: unknown = signal.reason;
+  const { reason } = signal as { reason?: unknown };
   const name = typeof reason === 'object' && reason !== null ? (reason as { name?: unknown }).name : undefined;
   return name === 'TimeoutError' ? 'timeout' : 'cancelled';
 }
@@ -55,10 +55,10 @@ export function modelFailureOf(err: unknown, signal?: AbortSignal): ModelFailure
   const { kind, status } = err as { kind?: unknown; status?: unknown };
   const code = typeof status === 'number' ? status : undefined;
   if (code !== undefined && code >= 500) return failure('server', code);
-  if (kind === 'rate_limit') return failure('rate_limit', code ?? 429);
+  if (kind === 'rate_limit') return failure('rate_limit', code);
   if (kind === 'network' && code === undefined) return failure('network');
-  if (kind === 'auth' || code === 401) return failure('auth', code ?? 401);
-  if (kind === 'credit' || code === 402) return failure('credit', code ?? 402);
+  if (kind === 'auth' || code === 401) return failure('auth', code);
+  if (kind === 'credit' || code === 402) return failure('credit', code);
   if (code !== undefined && code >= 400 && code < 500) return failure('client', code);
   return failure('other', code);
 }

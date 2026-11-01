@@ -16,7 +16,7 @@ export function modelFailureOf(err: unknown, signal?: AbortSignal): ModelFailure
 - `upstream` is true exactly for `server | rate_limit | network | timeout`.
 - Order of decision: (1) `signal?.aborted`: reason `.name === 'TimeoutError'` -> `timeout`, any other
   abort -> `cancelled` (no `status`); (2) `status >= 500` -> `server`; (3) `kind: 'rate_limit'` ->
-  `rate_limit` (status 429); (4) `kind: 'network'` with no status -> `network`; (5) `kind: 'auth'` or 401
+  `rate_limit` (status only if the error carries one); (4) `kind: 'network'` with no status -> `network`; (5) `kind: 'auth'` or 401
   -> `auth`; `kind: 'credit'` or 402 -> `credit`; other 4xx -> `client`; anything else (not an
   object, plain `Error`) -> `other`.
 - Pass the signal the call ran under (the combined one, for unary routes). Without it an abort reads
@@ -29,7 +29,7 @@ call sites: machine resend, `policy.ts`).
 ## `model call` log line (`openrouter.ts` `logSettle`, info)
 
 Existing fields unchanged. On `outcome` `failed` or `aborted` it adds `errorKind: ModelErrorKind` and,
-when the error carried one, `status: number`. A completed line has neither. No message text.
+when the error carried one, `status: number` (never implied by the class: `OpenRouterAuthError` and `OpenRouterRateLimitError` now carry `status` 401 and 429 themselves). A completed line has neither. No message text.
 (`status`/`errorKind` are not redacted names.)
 
 ## Machine (`generation/machine.ts`)
@@ -49,7 +49,7 @@ when the error carried one, `status: number`. A completed line has neither. No m
 
 ## Unary routes
 
-`clarify.ts` (`runClarifyWork`) and `rewrite.ts`, after the 402 branch: an error with
+`clarify.ts` (`runClarifyWork`, which returns `{body,status,headers?}` and the handler answers via `c.json`, so the level gate and the request log see every error) and `rewrite.ts`, after the 402 branch: an error with
 `modelFailureOf(err, <the call's combined signal>).upstream` answers `providerUnavailableRefusal()`
 (`503`, `{error:'provider_unavailable', hint}`, no `Retry-After`) and settles the row with
 `failureReason: 'provider_unavailable'`. Anything else stays `502 model_failure`. The per-call timeout

@@ -45,3 +45,18 @@ plan-drop-is-resent block). Assertion counts only grew; no `Check-removal:` trai
 ## Side notes
 
 - `typecheck:tests` prints "3 diagnostic(s) in server/ or contract/ files left to their own projects" on this branch; `server:test` runs the server tsc and passes. I did not look for their source.
+
+## Fix round 1 (after REJECT, review upstream-review-1.md)
+
+| Finding | Change | Test | Red evidence |
+|---|---|---|---|
+| 1 HIGH clarify bypassed the level gate | `clarify.ts`: `runClarifyWork` returns `{body,status,headers?}` (`ClarifyWork`); the handler answers `c.json(work.body, work.status, work.headers)`. No level handling in the route. | `routes-unary.suite.ts` `testProviderUnavailableByProtocolLevel` | Before the fix: `XX clarify: a level-1 request gets the compat envelope with the hint as the notice` (got `{error, hint}` without `compat`; the clarify request log line also lacked `error`). Rewrite already passed. |
+| 2 MED no level-1 test | same test: clarify and rewrite at `x-whim-protocol: 1` get `{error, hint, compat:{min:2, fallback:'fail', notice: hint}}`; at level 2 `{error, hint}` | as above | as above |
+| 3 LOW honest `status` | `OpenRouterAuthError` and `OpenRouterRateLimitError` now carry `status` 401 / 429 (they are only built from a real 401 / 429, `openrouter.ts` `errorForStatus`), like `OpenRouterCreditError`; `modelFailureOf` no longer implies a status. The spec scenario "Auth and credit failures carry their status" still holds on real HTTP answers. The earlier deviation about implied status is superseded. | `openrouter.suite.ts`: a status-less `rate_limit` / `auth` / `credit` error classifies without a `status` | HTTP 429/401/402 cases still expect their status (now from the error itself). |
+| 4 typecheck:tests diagnostic | `abortKind` reads `reason` through `signal as { reason?: unknown }` | `node scripts/typecheck-tests.mjs` | prints the BASE count: 2 diagnostics |
+
+Note: the review's "a level-2 request gets no `compat`" does not match handoff/wire.md (the registry entry carries `compat`, so `withCompat` attaches it at every level); the generation-contract scenario only asks that a level-2 body validates as `ApiError` with the code and hint, which is what the test asserts.
+
+Bypass audit (`Response.json` / `new Response` under `server/src`): only clarify's six sites (fixed). `app.ts:304` (healthz probe) and `generate.ts:257` are the SSE success streams (generate's terminal events go through the wire gate separately); no error body bypasses `c.json` elsewhere, rewrite and generate included.
+
+Commands (all via capped-run.sh): `npm run -s server:test -- --only routes-unary,openrouter,routes-generate,machine` exit 0 (1611 passed, 0 failed); `npx eslint --max-warnings 0` on touched files exit 0; `npm run -s typecheck` exit 0; `node scripts/typecheck-tests.mjs` exit 0, 2 diagnostics.
