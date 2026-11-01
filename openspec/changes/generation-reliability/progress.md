@@ -39,3 +39,6 @@
 - gate-full on cae360d2 (all four chains): FULL GATE PASSED, exit 0.
 - whole-change review #1 (Opus): REJECT — MED: breaker can stay open forever on a non-upstream probe failure; MED: any-model success resets the count (engineer-only outage never opens). LOW 3-8. Decisions: probe non-upstream failure closes; count/reset on engineer model only; policy upstream stays policy_unavailable (documented); provider_unavailable origin tagged at model-turn; breaker refusals marked on the request line; run re-run line in delta; alert doc note; 8 accepted. Fix chain fix1 dispatched (BASE cae360d2, .claude/worktrees/generation-reliability-fix1). handoff/whole-review-1.md
 - fix1 complete: tip 500567e3 (findings 1-7). Live probe-shaped call (orchestrator, key via env-scoped gcloud, 2 calls): deepseek/deepseek-v4.1-flash maxTokens 1 reasoning off → completed, 306 ms. Runner + Opus re-review dispatched.
+- re-review whole change #2 (Opus): ACCEPT (findings 1-7 resolved; L1-L3 applied by orchestrator: probe-closing wording, override Risks line + deploy.md note, probe-live.md record). handoff/whole-review-2.md
+- runner fix1: PASS (gate 0, e2e 0, integrity 0, ratchet 0, redcheck coarse RED (signature change; builder mutation reds in fix1-report), openspec both 0). handoff/fix1-runner.md
+- merged: fix1. Final gate-full on the tip next; PR opened in parallel.

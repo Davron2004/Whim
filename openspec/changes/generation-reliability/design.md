@@ -163,6 +163,7 @@ No fallback model and no first-token timeout for engineer turns (see Parked).
 
 ## Risks / Trade-offs
 
+- [Plan or repair runs on a model other than the engineer model (`WHIM_PLAN_MODEL` / `WHIM_REPAIR_MODEL` overrides)] → Those calls neither count toward nor reset the breaker, which counts only the engineer model its probe checks. Production sets no override today; an outage of an overridden model ends runs with `provider_unavailable` after the resend but does not open the breaker.
 - [A residual re-run doubles harness time on a slow harness fault: total budget 45 s, or the sweep] → It is bounded to once per candidate and still inside `WHIM_GENERATION_MAX_MS`. The `rerun` log field shows how often it happens.
 - [A deterministic candidate fault lands in a residual phase, for example a candidate that wedges the probes after paint] → It costs one re-run, then ends as `run_unverified` exactly as today. That is no regression.
 - [The breaker opens on a burst that one user's stream causes] → It needs 4 consecutive upstream failures with no success in between. One generation contributes at most 2 per turn (the turn and its resend), and any completed engineer-model call resets the count.

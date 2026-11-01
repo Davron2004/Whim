@@ -165,7 +165,7 @@ While the provider breaker is open, `/v1/generate`, `/v1/clarify` and `/v1/rewri
 - **THEN** the response is an immediate `503 provider_unavailable` with `Retry-After`, the device's daily count is unchanged, no slot is held and the scripted model client records no call
 
 ### Requirement: A lazy probe decides when the provider breaker closes
-Once the cooldown has passed, the next admission SHALL start one probe, a one-token engineer-model call with reasoning off and a 10-second timeout, credited to no device. Concurrent admissions SHALL await it. A probe that completes, or fails with a `401`, `402` or `400`, SHALL close the breaker and let them reach the credit check; one that fails upstream SHALL re-open it, log `provider breaker open` again and refuse them. A failed probe SHALL log `provider probe failed` (`errorKind`, `status`).
+After the cooldown, the next admission SHALL start one probe (a one-token engineer-model call, reasoning off, 10 s timeout, credited to no device) that concurrent admissions await. A probe that completes or fails for a non-upstream reason SHALL close the breaker and let them reach the credit check; one that fails upstream SHALL re-open it, log `provider breaker open` again and refuse them. A failed probe SHALL log `provider probe failed` (`errorKind`, `status`).
 
 #### Scenario: A successful probe closes the breaker
 - **WHEN** the cooldown has passed, a clarify request arrives, and the probe completes
