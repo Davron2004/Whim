@@ -19,7 +19,7 @@ The live probe call (finding 1) was NOT run: see `probe-live.md`.
 - Four mutation runs (table above), each exit 1 with the named failures; sources restored with `git checkout`.
 - `npm run -s server:e2e`: exit 0 (75 passed, 0 failed). `--only runRoutesUnaryTests`: exit 0 (338 passed).
 - `npm run -s launcher:test -- --only service-refusal --only prompt-flow-ui`: exit 0 (419 checks).
-- `npm run -s server:test -- --only runDeployConfigTests`: exit 0.
+- `npm run -s server:test -- --only runDeployConfigTests`: first run exit 1 (the alert-filter case saw the new second `provider breaker open` line of a re-open); `deploy-config.suite.ts` updated (two matches, scope-only red case 4 lines, same assertion count), rerun exit 0 (789 passed).
 - `npx eslint --max-warnings 0` on every touched file: exit 0. `npm run -s typecheck`: exit 0.
 - `openspec@1.4.1 validate generation-reliability --strict`: exit 0. `openspec@1.14.1 validate generation-reliability`: exit 0, no warnings.
 
