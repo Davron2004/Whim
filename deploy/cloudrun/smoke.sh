@@ -31,7 +31,7 @@ readonly SMOKE_PROMPT='smoke: a checklist with one item'
 # The live clarify's envelope: what server/src/bench-envelope.ts sends. The build number is the whole
 # minutes since BUILD_NUMBER_EPOCH_UTC (scripts/release/lib/build-number.ts), 2026-01-01T00:00Z.
 readonly BUILD_NUMBER_EPOCH_S=1767225600
-readonly SMOKE_APP_VERSION=1.0.0
+readonly SMOKE_APP_VERSION=1.1.0
 readonly SMOKE_CONSENT=2
 readonly SMOKE_PROTOCOL=1
 # Reads `gcloud beta run domain-mappings describe --format=json` from the file argv[1]; passes when the
