@@ -72,6 +72,13 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
     h.eq(failureSentence('other', FACTS), FACTS.reason, 'an unknown reason shows the server’s text');
   });
 
+  await h.test('kind: a provider outage keeps the server’s sentence even when every repair try was used, and a refused Try again still outranks it', () => {
+    const outage = { ...FACTS, cause: 'provider_unavailable' as const, rephraseHelps: false };
+    h.eq(failureKindOf({ ...outage, repairs: REPAIR_ATTEMPT_LIMIT }), 'other', 'the cause is not a repair count');
+    h.eq(failureSentence('other', outage), outage.reason, 'so the server’s sentence is the one shown');
+    h.eq(failureKindOf({ ...outage, refused: true, repairs: REPAIR_ATTEMPT_LIMIT }), 'refused', 'a refusal of the retry is still its own ending');
+  });
+
   await h.test('kind: a refusal, an interruption and a dropped connection are each their own kind', () => {
     h.eq(failureKindOf({ ...FACTS, refused: true, repairs: REPAIR_ATTEMPT_LIMIT }), 'refused', 'a refused Try again is a refusal, whatever came before');
     h.eq(failureSentence('refused', FACTS), null, 'whose notice carries the reason');

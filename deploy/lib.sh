@@ -24,6 +24,10 @@ readonly WHIM_RUNBOOK_KEY_SECTION='docs/deploy.md, section "OpenRouter key"'
 readonly WHIM_RUN_SERVER_MIN_INSTANCES=0
 readonly WHIM_RUN_SERVER_MAX_INSTANCES=1
 
+# The protocol level every smoke request declares (x-whim-protocol): the contract's PROTOCOL_LEVEL, which
+# server/test/deploy-config.suite.ts pins this to. A smoke below the server's level would not be the build it claims.
+readonly WHIM_SMOKE_PROTOCOL_LEVEL=2
+
 # Fixed VM paths (design D21, D24).
 readonly WHIM_VM_APP_DIR=/opt/whim
 readonly WHIM_VM_ETC_DIR=/etc/whim
@@ -509,7 +513,7 @@ whim_smoke_health() {
 # Sends the protocol level every /v1 request carries, so the one header missing is the device's.
 whim_smoke_device_header_required() {
   local url="https://$WHIM_API_HOST/v1/generate"
-  whim_smoke_probe "$url" -X POST -H 'content-type: application/json' -H 'x-whim-protocol: 1' --data '{}'
+  whim_smoke_probe "$url" -X POST -H 'content-type: application/json' -H "x-whim-protocol: $WHIM_SMOKE_PROTOCOL_LEVEL" --data '{}'
   if [[ "$PROBE_STATUS" = 400 ]]; then
     whim_smoke_pass "api $url without a device header -> 400"
   else

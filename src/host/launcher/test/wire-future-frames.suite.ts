@@ -303,7 +303,7 @@ export async function runWireFutureFramesTests(h: Harness): Promise<void> {
       { min: FUTURE, fallback: null },
       { min: FUTURE, fallback: 'skip', extra: true },
       { min: Number.MAX_SAFE_INTEGER, fallback: 'skip' },
-      { min: FUTURE ** 53, fallback: 'skip' },
+      { min: 2 ** 53, fallback: 'skip' },
       { min: 0, fallback: 'skip' },
       { min: -1, fallback: 'skip' },
       { min: 1.5, fallback: 'skip' },

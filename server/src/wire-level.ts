@@ -131,7 +131,7 @@ function forLevel<M extends { readonly compat?: Compat }>(
   const lower = entry.downgrade?.(message, clientLevel);
   if (lower !== undefined) {
     const lowerEntry = entryOf(entries, keyOf(lower));
-    if (lowerEntry.level <= clientLevel) return withCompat(lower, lowerEntry);
+    if (lowerEntry.level <= clientLevel) return withCompat(withoutNewerFields(lower, lowerEntry, clientLevel), lowerEntry);
   }
   if (entry.compat === undefined) throw new Error(`"${keyOf(message)}" is above level 1 but carries no compat`);
   return envelopeOf(entry.compat);

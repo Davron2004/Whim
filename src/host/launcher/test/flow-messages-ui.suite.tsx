@@ -305,6 +305,25 @@ export async function runFlowMessagesUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('failure: a provider-caused failure after three repair tries still shows the server’s sentence with Try again leading, also from its tile', async () => {
+    const streams: Stream[] = [];
+    const tried = 'I tried 3 times and couldn’t get it to run.';
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, kv }) => {
+      await startBuild(tree, 'A tip splitter');
+      streams[0].push({ type: 'stage', stage: 'check', status: 'start' });
+      for (const attempt of [1, 2, 3]) streams[0].push({ type: 'stage', stage: 'repair', status: 'start', attempt });
+      streams[0].push({ type: 'failure', reason: PROVIDER_SENTENCE, attempts: 3, diagnostics: [], cause: 'provider_unavailable' });
+      streams[0].end();
+      await waitFor(() => on(tree, FailurePage), 'the failure screen');
+      const reads = () => h.eq([occurrences(textOf(tree.root), PROVIDER_SENTENCE), textOf(tree.root).includes(tried), rephraseAdvice(tree), failureTryAgain(tree) != null], [1, false, [], true], 'the server’s sentence once, not a repair count, no rewording advice, Try again');
+      reads();
+      await press(button(tree, COPY.sheetClose));
+      await TestRenderer.act(async () => home(tree).props.onOpenPending(new PendingBuildStore(kv).list()[0]));
+      h.ok(on(tree, FailurePage), 'its tile reopens the failure');
+      reads();
+    });
+  });
+
   for (const [name, cause] of [['no cause', undefined], ['a cause this build does not know', 'some_future_cause']] as const) {
     await h.test(`failure: a failure with ${name} still leads with Change the description and Try again as it is`, async () => {
       const streams: Stream[] = [];

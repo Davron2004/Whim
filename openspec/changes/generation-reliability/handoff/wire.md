@@ -54,7 +54,7 @@ readonly fields?: Readonly<Record<string, number>>;   // field name -> level it 
 `forLevel` (used by `eventForLevel` and `errorForLevel`): when `entry.level <= clientLevel` the message is
 returned with every `entry.fields` key whose level is above `clientLevel` deleted (other fields untouched, a
 message without the key is returned as-is), then `withCompat`. A message above the client's level takes the
-unchanged `downgrade`/envelope path. `eventForLevel` stays the single exit of `routes/generate.ts`
+`downgrade`/envelope path; a downgrade is gated by its own entry's `fields` the same way. `eventForLevel` stays the single exit of `routes/generate.ts`
 (`forClient`), so a producer sets `cause` and the route strips it for a level-1 request: no route change.
 
 Resulting wire:
@@ -70,7 +70,7 @@ Resulting wire:
 - `service-refusal.ts`: `REFUSAL_RULES.provider_unavailable = { landing: 'sender', tone: 'neutral' }` (no `text`: the server hint shows verbatim). Retry-After handling is code-agnostic.
 - `generation-client.ts`: `EVENT_OPTIONAL.failure = { cause: true, compat: true }`; a private `FAILURE_CAUSES: Record<FailureCause, true>` set; `knownEventOf` for a `failure` drops a `cause` outside that set (via `withoutMalformedOptional`, a warn log naming route and field only) and keeps the rest of the event. `null` reads as absent.
 - `pending-builds.ts`: `export type PendingFailureCause = 'connection' | 'provider_unavailable'` (stored on `PendingBuildFailure.cause`).
-- `LauncherRoot.tsx`: the terminal `failure` handler passes `cause: terminal.cause` to `showStreamFailure` -> `settleFailed`; `rephraseHelps` is `remedy == null && cause !== 'provider_unavailable'` at both sites (live failure; `failureFromRecord` for a tile). `failureKindOf`/`failureActions` are unchanged: kind `other`, first action "Try again", no "Change the description". No report action is reachable from the Failure page.
+- `LauncherRoot.tsx`: the terminal `failure` handler passes `cause: terminal.cause` to `showStreamFailure` -> `settleFailed`; `rephraseHelps` is `remedy == null && cause !== 'provider_unavailable'` at both sites (live failure; `failureFromRecord` for a tile). `failureKindOf` returns `other` for `cause: 'provider_unavailable'` whatever the repair count (it outranks the `couldnt-run` count, below `refused`/`interrupted`/`needsUpdate`/`connection`); `failureActions` is unchanged: first action "Try again", no "Change the description". No report action is reachable from the Failure page.
 
 ## Invariants chain-upstream must keep
 
