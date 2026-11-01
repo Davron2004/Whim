@@ -42,3 +42,6 @@
 - re-review whole change #2 (Opus): ACCEPT (findings 1-7 resolved; L1-L3 applied by orchestrator: probe-closing wording, override Risks line + deploy.md note, probe-live.md record). handoff/whole-review-2.md
 - runner fix1: PASS (gate 0, e2e 0, integrity 0, ratchet 0, redcheck coarse RED (signature change; builder mutation reds in fix1-report), openspec both 0). handoff/fix1-runner.md
 - merged: fix1. Final gate-full on the tip next; PR opened in parallel.
+- closure: pushed integration/beta-2-fixes, draft PR #277 → main. Final gate-full running locally in parallel.
+- local final gate-full on dffaaf66: FULL GATE PASSED (exit 0). PR #277 checks: SETTLED PASS (SonarCloud, isolation-suite, quality-gate). STOP at PR green per brief: no merge, no deploy, no /git-cleanup.
+- closing: chains run 4 + fix1; every chain REJECTED once by Opus review and fixed (one fix round each); whole-change review REJECT → fix1 → ACCEPT. Class-A deviations only; integrity exit 4 once (design.md, accepted). Parked issues #273-#276.

@@ -202,3 +202,10 @@ Beta-1 reinforced T1, T4, T7 and T10, and added:
   - DRAWBACK: workers default to `capped-run` 180 s for typecheck/server/launcher suites and get killed (exit 137); briefs must say run_in_background + `--secs 600`. Bash tool moves any foreground call past 180 s to the background, so wait loops must return within ~150 s.
   - DRAWBACK: fix-worker.md is stale vs the disabled protected-file system ("scripts/** is Class 2", "run gate.sh"); every brief had to override it.
   - DRAWBACK: revisions appended "## Revision N" instead of rewriting status lines, so handoffs contradicted themselves; briefs now say rewrite in place.
+- **2026-10-31 — generation-reliability (#58, #57, #66): 4 chains + 1 whole-change fix chain on `integration/beta-2-fixes` (nested fix orchestrator; ~30 subagents)**
+  - KEEP: root-cause first. An Opus investigator reproduced #58 with real Chromium and a scripted model, and it found that the #57 resend and the #58 log were already on main. That shrank the scope before planning.
+  - KEEP: build → runner → Opus review → fixer → re-review per chain. All 4 chains and the whole-change review were REJECTED once, each for real defects: level-1 clarify bypassed the compat gate; the breaker could stick open on a 402 probe; an engineer-only outage never opened the breaker.
+  - DRAWBACK: brief-rules.md hardcodes `integration/beta-2`, so every runner brief had to override `FIXLOOP_INTEGRATION_BRANCH`.
+  - DRAWBACK: `fixloop.sh redcheck` splits the test command on `--`, so it needs a wrapper script. It also reports a tsc build failure as RED, so for server suites builders must show type-satisfying mutation reds.
+  - DRAWBACK: `--only config` also selects the 8-minute deploy-config suite (`--only runConfigTests` selects only the config suite). A protocol-level bump also needs `deploy/lib.sh` `WHIM_SMOKE_PROTOCOL_LEVEL`, and that file wasn't in the chain scope.
+  - DRAWBACK: subagents always run in the background, so the orchestrator waited by polling transcript tails with a <170 s loop script. Runners that end a turn "waiting on a monitor" look finished to that loop, so also poll their findings file.
