@@ -51,27 +51,44 @@ function Home() { return <Screen><Stack><Heading size="title">{price.format(1)}<
 export default defineApp({ name: 'Eval', initial: 'Home', screens: { Home }, capabilities: [] });
 `;
 
-/** Paints, then throws when the sweep presses its button, which only happens after the paint frame. */
-const THROW_AFTER_PAINT = `import { defineApp, Screen, Stack, Heading, Button } from 'vc-sdk';
+/** Paints, then throws from a timer its first-render effect armed. The delay clears the paint frame
+ *  (a double rAF, tens of ms), so the exception lands after `paintAtMs` is set. A throw from the
+ *  effect body itself is out of scope here: it runs before the double rAF, so its CDP exception can
+ *  beat the relayed `paint` frame and be counted `module-eval`, which only sends the candidate to
+ *  repair. */
+const THROW_IN_EFFECT = `import { defineApp, Screen, Stack, Heading, useEffect } from 'vc-sdk';
 function Home() {
-  return <Screen><Stack><Heading size="title">Late</Heading><Button label="Boom" onPress={() => { throw new Error('late-throw'); }} /></Stack></Screen>;
+  useEffect(() => { setTimeout(() => { throw new Error('effect-throw'); }, 400); }, []);
+  return <Screen><Stack><Heading size="title">Late</Heading></Stack></Screen>;
 }
 export default defineApp({ name: 'Late', initial: 'Home', screens: { Home }, capabilities: [] });
 `;
 
-/** Drops the outer page's `probes` frame before it reaches the host relay, standing in for a
- *  harness that never heard a verdict. Registered after the observers' own transport shim, so it
- *  wraps the `ReactNativeWebView` that shim defined. */
-async function dropProbesFrames(page: Page): Promise<void> {
-  await page.addInitScript(() => {
-    const g = globalThis as unknown as { top?: unknown; ReactNativeWebView?: { postMessage(s: string): void } };
-    const transport = g.ReactNativeWebView;
-    if (g.top !== g || !transport) return;
-    const post = transport.postMessage.bind(transport);
-    transport.postMessage = (raw: string) => {
-      if (!raw.includes('"kind":"probes"')) post(raw);
-    };
-  });
+/** What the outer page's `probes` frame becomes before it reaches the host relay: gone, a loader
+ *  `[probes]` error frame, or a verdict whose `contained` is not a boolean. The frame keeps the
+ *  `trusted` flag the real outer page gave it, so only its kind and payload change. Registered after
+ *  the observers' own transport shim, so it wraps the `ReactNativeWebView` that shim defined. */
+type ProbesFrameRewrite = 'drop' | 'loader-error' | 'malformed';
+
+function rewriteProbesFrames(mode: ProbesFrameRewrite): (page: Page) => Promise<void> {
+  return async (page) => {
+    await page.addInitScript((rewrite: ProbesFrameRewrite) => {
+      const g = globalThis as unknown as { top?: unknown; ReactNativeWebView?: { postMessage(s: string): void } };
+      const transport = g.ReactNativeWebView;
+      if (g.top !== g || !transport) return;
+      const post = transport.postMessage.bind(transport);
+      transport.postMessage = (raw: string) => {
+        if (!raw.includes('"kind":"probes"')) return post(raw);
+        if (rewrite === 'drop') return;
+        const frame = JSON.parse(raw) as { kind: string; payload: Record<string, unknown> };
+        if (rewrite === 'loader-error') {
+          post(JSON.stringify({ ...frame, kind: 'error', payload: { where: 'probes', name: 'Error', message: 'loader-probes-failure' } }));
+        } else {
+          post(JSON.stringify({ ...frame, payload: { ...frame.payload, contained: 'yes' } }));
+        }
+      };
+    }, mode);
+  };
 }
 
 type Settled<T> = { ok: true; value: T } | { ok: false; error: Error };
@@ -495,13 +512,30 @@ async function testUnobservedPhase(): Promise<void> {
       ok(hangReport.unobservedPhase === 'mount-timeout', `the mount hang is attributed to mount-timeout (got ${hangReport.unobservedPhase})`);
 
       const lateReport = await within(
-        runCandidate(THROW_AFTER_PAINT, { budgets: { ...budgets, mountBudgetMs: 5000 }, beforeNavigate: dropProbesFrames }),
+        runCandidate(THROW_IN_EFFECT, { budgets: { ...budgets, mountBudgetMs: 5000, actionQuietMs: 900, actionHardCapMs: 2500 }, beforeNavigate: rewriteProbesFrames('drop') }),
         30000,
-        'the throw-after-paint run with no probes frame',
+        'the throw-in-effect run with no probes frame',
       );
       ok(lateReport.contained === null, `precondition: with the probes frame dropped the verdict is unobserved (got ${JSON.stringify(lateReport.contained)})`);
-      ok(lateReport.diagnostics.some((d) => d.kind === 'runtime_throw' && d.message.includes('late-throw')), 'precondition: the throw happened and was recorded after the paint');
-      ok(lateReport.unobservedPhase === 'none', `a throw after paint is not module-eval; with no loader cause the phase is none (got ${lateReport.unobservedPhase})`);
+      ok(lateReport.diagnostics.some((d) => d.kind === 'runtime_throw' && d.message.includes('effect-throw')), 'precondition: the effect threw and the throw was recorded');
+      ok(lateReport.unobservedPhase === 'none', `a throw in an effect after the first paint is not module-eval; with no loader cause the phase is none (got ${lateReport.unobservedPhase})`);
+
+      const loaderReport = await within(
+        runCandidate(HARMLESS, { budgets: { ...budgets, mountBudgetMs: 5000 }, beforeNavigate: rewriteProbesFrames('loader-error') }),
+        30000,
+        'the run whose probes frame is a loader [probes] error',
+      );
+      ok(loaderReport.contained === null, `precondition: a loader probes error leaves the verdict unobserved (got ${JSON.stringify(loaderReport.contained)})`);
+      ok(loaderReport.diagnostics.some((d) => d.message.startsWith('[probes]')), 'precondition: the loader error frame was recorded as a [probes] diagnostic');
+      ok(loaderReport.unobservedPhase === 'probes', `a loader [probes] error is attributed to probes, not to the candidate (got ${loaderReport.unobservedPhase})`);
+
+      const malformedReport = await within(
+        runCandidate(HARMLESS, { budgets: { ...budgets, mountBudgetMs: 5000 }, beforeNavigate: rewriteProbesFrames('malformed') }),
+        30000,
+        'the run whose probes payload is not a boolean verdict',
+      );
+      ok(malformedReport.contained === null, `precondition: a non-boolean verdict is unobserved, not a breach (got ${JSON.stringify(malformedReport.contained)})`);
+      ok(malformedReport.unobservedPhase === 'none', `a malformed verdict payload has phase none (got ${malformedReport.unobservedPhase})`);
 
       const containedReport = await within(runCandidate(HARMLESS, { budgets: { ...budgets, mountBudgetMs: 5000 } }), 30000, 'the contained run');
       ok(containedReport.contained === true, `precondition: the harmless run is contained (got ${JSON.stringify(containedReport.contained)})`);

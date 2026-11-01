@@ -47,7 +47,7 @@ import { checkCredit, invalidateCreditCache, type CreditCheckOptions } from '../
 import { budgetExhaustedRefusal } from '../src/admission/refusals';
 import { createRunStage } from '../src/generation/stages/run';
 import { createCheckStage } from '../src/generation/stages/check';
-import { fakeReport, stubRunCandidate } from './run-stage-fixtures';
+import { fakeReport, sequencedRunCandidate, stubRunCandidate } from './run-stage-fixtures';
 import type { RunReport } from '../../synthrun/contract';
 import type { Diagnostic, GenerateRequest, GenerationEvent, Usage } from '@whim/contract';
 
@@ -771,7 +771,7 @@ async function testContainmentFailureShortCircuit(): Promise<void> {
     model,
     check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
     build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
-    run: scriptedRun([{ contained: false, diagnostics: [], verdict: { kind: 'breach', check: 'containment_failure' } }]),
+    run: scriptedRun([{ contained: false, diagnostics: [], verdict: { kind: 'breach', check: 'containment_failure' }, rerun: false }]),
   });
   const machine = new GenerationMachine(deps);
   const trace: RunTrace = { generationIds: [] };
@@ -803,8 +803,8 @@ async function testUnobservedVerdictIsTerminalWithItsOwnReason(): Promise<void> 
     model,
     check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
     build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
-    // One outcome only: a second `run` call — a re-run of the same candidate — exhausts the script
-    // and throws, so "an unobserved verdict is NOT automatically re-run" (D3) is enforced too.
+    // One outcome only: the machine never calls `run` twice for one candidate (the run stage owns the
+    // one re-run), so a second call exhausts the script and throws.
     run: scriptedRun([
       { contained: null, repairable: false, diagnostics: [], verdict: { kind: 'unobserved', check: 'containment_unobserved' }, phase: 'probes', rerun: true },
     ]),
@@ -852,14 +852,14 @@ const PLANTED = {
   console: 'PLANTED-CONSOLE-7f3a',
 } as const;
 
-async function verdictLogFor(report: RunReport): Promise<{ events: GenerationEvent[]; terminal: Record<string, unknown>[]; raw: string[] }> {
+async function verdictLogFor(...reports: RunReport[]): Promise<{ events: GenerationEvent[]; terminal: Record<string, unknown>[]; raw: string[] }> {
   const model = new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON]), engineerTurn([`export default {}; // ${PLANTED.source}`])]);
   const deps = baseDeps({
     model,
     check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
     build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
     // The real adapter over a hand-built harness report: the mapping and the logging together.
-    run: createRunStage(stubRunCandidate(report)),
+    run: createRunStage(sequencedRunCandidate(...reports).runCandidate),
   });
   const trace: RunTrace = { generationIds: [], requestId: 'req-verdict-1' };
   const capture = captureLogs();
@@ -874,10 +874,18 @@ async function verdictLogFor(report: RunReport): Promise<{ events: GenerationEve
 async function testUnverifiedVerdictIsLoggedWithoutContent(): Promise<void> {
   section('machine — a containment_failed or run_unverified ending logs its verdict kind and check once, with no content (beta-1 D11)');
 
-  const cases: { label: string; report: RunReport; expected: Record<string, unknown> }[] = [
+  const breachReport = fakeReport({
+    ok: false,
+    contained: false,
+    diagnostics: [
+      { kind: 'runtime_throw', severity: 'error', message: PLANTED.console, hint: PLANTED.dom },
+      { kind: 'containment_failure', severity: 'error', message: 'probes reported a breach', hint: 'none' },
+    ],
+  });
+  const cases: { label: string; reports: RunReport[]; expected: Record<string, unknown> }[] = [
     {
       label: 'run_unverified after a probes failure',
-      report: fakeReport({
+      reports: [fakeReport({
         ok: false,
         contained: null,
         unobservedPhase: 'probes',
@@ -885,34 +893,33 @@ async function testUnverifiedVerdictIsLoggedWithoutContent(): Promise<void> {
           { kind: 'runtime_throw', severity: 'error', message: `the page showed "${PLANTED.dom}"`, hint: `console said ${PLANTED.console}` },
           { kind: 'containment_unobserved', severity: 'error', message: 'no authenticated verdict', hint: 'rerun' },
         ],
-      }),
+      })],
       expected: { reason: 'run_unverified', verdict: 'unobserved', check: 'runtime_throw', phase: 'probes', rerun: true, requestId: 'req-verdict-1', level: 30 },
     },
     {
       label: 'run_unverified with nothing else recorded',
-      report: fakeReport({
+      reports: [fakeReport({
         ok: false,
         contained: null,
         unobservedPhase: 'none',
         diagnostics: [{ kind: 'containment_unobserved', severity: 'error', message: PLANTED.dom, hint: PLANTED.console }],
-      }),
+      })],
       expected: { reason: 'run_unverified', verdict: 'unobserved', check: 'containment_unobserved', phase: 'none', rerun: true, requestId: 'req-verdict-1', level: 30 },
     },
     {
       label: 'containment_failed',
-      report: fakeReport({
-        ok: false,
-        contained: false,
-        diagnostics: [
-          { kind: 'runtime_throw', severity: 'error', message: PLANTED.console, hint: PLANTED.dom },
-          { kind: 'containment_failure', severity: 'error', message: 'probes reported a breach', hint: 'none' },
-        ],
-      }),
+      reports: [breachReport],
       expected: { reason: 'containment_failed', verdict: 'breach', check: 'containment_failure', phase: 'none', rerun: false, requestId: 'req-verdict-1', level: 30 },
     },
+    {
+      // A candidate that hid its verdict once and then breached: the forensic case (#58 review).
+      label: 'containment_failed after a re-run',
+      reports: [fakeReport({ ok: false, contained: null, unobservedPhase: 'probes', diagnostics: [{ kind: 'containment_unobserved', severity: 'error', message: PLANTED.dom, hint: PLANTED.console }] }), breachReport],
+      expected: { reason: 'containment_failed', verdict: 'breach', check: 'containment_failure', phase: 'none', rerun: true, requestId: 'req-verdict-1', level: 30 },
+    },
   ];
-  for (const { label, report, expected } of cases) {
-    const { events, terminal, raw } = await verdictLogFor(report);
+  for (const { label, reports, expected } of cases) {
+    const { events, terminal, raw } = await verdictLogFor(...reports);
     eq(`${label}: the run ends in one failure`, terminals(events).map((e) => e.type), ['failure']);
     eq(
       `${label}: one terminal line carries the request id, the verdict kind and the check`,
@@ -997,6 +1004,42 @@ async function testNeverMountedCandidateIsRepaired(): Promise<void> {
   );
   eq('never mounted: no terminal failure line is logged for a run that delivered', withMessage(capture, 'terminal failure').length, 0);
   check('never mounted: the throw text appears in no log line', capture.raw.every((line) => !line.includes('Currency code')));
+}
+
+async function testRerunThatDeliversIsLogged(): Promise<void> {
+  section('machine — a re-run that then delivers leaves one content-free info line naming the phase that caused it (#58, D2)');
+
+  const rerunLines = async (...reports: RunReport[]): Promise<{ delivered: boolean; lines: Record<string, unknown>[] }> => {
+    const model = new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON]), engineerTurn(['export default {}; // v1'])]);
+    const deps = baseDeps({
+      model,
+      check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
+      build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
+      run: createRunStage(sequencedRunCandidate(...reports).runCandidate),
+    });
+    const capture = captureLogs();
+    try {
+      const events = await collect(new GenerationMachine(deps).run(NEW_APP_REQUEST, undefined, { generationIds: [], requestId: 'req-rerun-delivers' }));
+      return { delivered: events.at(-1)?.type === 'result', lines: withMessage(capture, 'run re-run') };
+    } finally {
+      capture.stop();
+    }
+  };
+
+  const flaky = await rerunLines(
+    fakeReport({ ok: false, contained: null, unobservedPhase: 'probes', diagnostics: [{ kind: 'containment_unobserved', severity: 'error', message: PLANTED.dom, hint: PLANTED.console }] }),
+    fakeReport({ contained: true, diagnostics: [] }),
+  );
+  check('rerun delivers: the run ends in a result', flaky.delivered);
+  eq(
+    'rerun delivers: one info line names the first run\'s phase and nothing about the candidate',
+    flaky.lines.map((r) => ({ phase: r.phase, level: r.level, requestId: r.requestId, content: ['message', 'hint', 'symbol', 'check'].filter((key) => key in r) })),
+    [{ phase: 'probes', level: 30, requestId: 'req-rerun-delivers', content: [] }],
+  );
+
+  const clean = await rerunLines(fakeReport({ contained: true, diagnostics: [] }));
+  check('no re-run: the run ends in a result', clean.delivered);
+  eq('no re-run: no re-run line is logged', clean.lines.length, 0);
 }
 
 async function testNeverMountedWithNoRepairLeftIsRepairExhausted(): Promise<void> {
@@ -2454,6 +2497,7 @@ export async function runMachineTests(): Promise<void> {
   await testUnobservedVerdictIsTerminalWithItsOwnReason();
   await testUnverifiedVerdictIsLoggedWithoutContent();
   await testNeverMountedCandidateIsRepaired();
+  await testRerunThatDeliversIsLogged();
   await testNeverMountedWithNoRepairLeftIsRepairExhausted();
   await testStageThrowYieldsOneFailure();
   await testAbortBeforeStart();

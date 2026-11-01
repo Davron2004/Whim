@@ -133,7 +133,8 @@ export type NeverMountedPhase = Extract<UnobservedPhase, 'module-eval' | 'bundle
 
 /** `contained: false` is TERMINAL (design D7): `diagnostics` and any assembled record are ignored
  *  entirely by the machine, no repair attempt is consumed, and nothing about the escape is fed back
- *  to the model.
+ *  to the model. `rerun` says whether the stage had re-run the candidate after an unobserved first
+ *  run: a candidate that hid its verdict once and then breached is the case forensics cares about.
  *
  *  `contained: null` — the harness observed no authenticated containment verdict at all — is never
  *  a containment failure and never a pass: never heard back is not evidence of a breach, and it is
@@ -149,12 +150,13 @@ export type NeverMountedPhase = Extract<UnobservedPhase, 'module-eval' | 'bundle
  *
  *  When `contained` is `true`, `record` is ALWAYS present (the harness-validated `WireAppRecord`,
  *  design D12) — the machine, not the stage, decides whether to deliver it or keep repairing, based
- *  on `diagnostics[].severity` (design D6). */
+ *  on `diagnostics[].severity` (design D6). `rerunOf` is present when the stage re-ran the candidate
+ *  after an unobserved first run, naming that first run's phase; the machine logs it. */
 export type RunOutcome =
-  | { contained: false; diagnostics: Diagnostic[]; verdict: RunVerdict<'breach'> }
+  | { contained: false; diagnostics: Diagnostic[]; verdict: RunVerdict<'breach'>; rerun: boolean }
   | { contained: null; repairable: false; diagnostics: Diagnostic[]; verdict: RunVerdict<'unobserved'>; phase: UnobservedPhase; rerun: boolean }
   | { contained: null; repairable: true; diagnostics: Diagnostic[]; phase: NeverMountedPhase }
-  | { contained: true; diagnostics: Diagnostic[]; record: WireAppRecord };
+  | { contained: true; diagnostics: Diagnostic[]; record: WireAppRecord; rerunOf?: UnobservedPhase };
 
 /** A non-affirmative verdict, content-free (beta-1 D11): which one, and the closed diagnostic kind
  *  of the check that tripped it. Logged once with the run's terminal failure, never fed back to
@@ -585,7 +587,7 @@ type CandidateOutcome =
   | { kind: 'deliver'; record: WireAppRecord }
   | { kind: 'repair'; diagnostics: Diagnostic[]; warningsOnly: boolean }
   | { kind: 'failed'; reason: string; code: TerminalFailureCode; phase?: UnobservedPhase }
-  | { kind: 'contained-failure'; verdict: RunVerdict }
+  | { kind: 'contained-failure'; verdict: RunVerdict; rerun: boolean }
   | { kind: 'containment-unobserved'; verdict: RunVerdict; phase: UnobservedPhase; rerun: boolean };
 
 /** Maps a terminal non-affirmative containment verdict onto its own terminal outcome — the one
@@ -597,7 +599,7 @@ type CandidateOutcome =
 function unverifiedRunOutcome(outcome: Exclude<RunOutcome, { contained: true } | { repairable: true }>): CandidateOutcome {
   switch (outcome.contained) {
     case false:
-      return { kind: 'contained-failure', verdict: outcome.verdict };
+      return { kind: 'contained-failure', verdict: outcome.verdict, rerun: outcome.rerun };
     case null:
       return { kind: 'containment-unobserved', verdict: outcome.verdict, phase: outcome.phase, rerun: outcome.rerun };
   }
@@ -629,6 +631,7 @@ function failureTerminalFor(
         terminal: { type: 'failure', reason: CONTAINMENT_FAILURE_REASON, attempts, diagnostics: [] },
         code: 'containment_failed',
         verdict: outcome.verdict,
+        rerun: outcome.rerun,
       };
     // Terminal on the same terms as a containment failure — an unverified run is not a candidate to
     // iterate on — but with its OWN reason (design D3/D6). It is what is left once a candidate that
@@ -1259,6 +1262,7 @@ export class GenerationMachine {
       return unverifiedRunOutcome(runOutcome);
     }
 
+    if (runOutcome.rerunOf) state.log.info({ phase: runOutcome.rerunOf }, 'run re-run');
     yield* this.emitDiagnosticsAndDone(runOutcome.diagnostics, 'run', attemptField, state, signal);
     if (signal?.aborted) return { kind: 'aborted' };
 

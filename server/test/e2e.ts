@@ -174,12 +174,12 @@ async function testModuleScopeThrowIsRepaired(session: SynthRunSession): Promise
   );
   check(
     'the run stage streamed the harness\'s runtime_throw as a diagnostic',
-    events.some((e) => e.type === 'diagnostic' && e.diagnostic.kind === 'runtime_throw'),
+    events.some((e) => e.type === 'diagnostic' && e.diagnostic.kind === 'runtime_throw' && /Currency code is required/.test(e.diagnostic.message ?? '')),
   );
   eq('the model was asked for plan, generate and exactly one repair', model.requests.map((r) => r.role), ['plan', 'engineer', 'repair']);
   const repairPrompt = model.requests[2]?.request.messages.map((m) => m.content).join('\n') ?? '';
   check('the repair request carries the runtime_throw diagnostic', repairPrompt.includes('runtime_throw'));
-  check('the repair request carries the engine\'s own message for the throw', /currency/i.test(repairPrompt));
+  check('the repair request\'s diagnostics line for the throw carries the engine\'s own message', /runtime_throw[^\n]*Currency code is required/.test(repairPrompt));
   check('the repair request names no containment_unobserved detail', !repairPrompt.includes('containment_unobserved'));
   if (terminal?.type === 'result') check('the delivered app is the repaired candidate, not the broken one', !terminal.app.source.includes('Intl.NumberFormat'));
 }

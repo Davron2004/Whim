@@ -14,7 +14,7 @@
 import { assembleRecord } from '../record';
 import type { CheckedManifest, NeverMountedPhase, RunInput, RunOutcome, RunStage, RunVerdict } from '../machine';
 import type { Diagnostic } from '@whim/contract';
-import type { RunCandidate, RunReport, RuntimeDiagnostic } from '../../../../synthrun/contract';
+import type { RunCandidate, RunReport, RuntimeDiagnostic, UnobservedPhase } from '../../../../synthrun/contract';
 
 function toWireDiagnostic(d: RuntimeDiagnostic): Diagnostic {
   return { kind: d.kind, severity: d.severity, message: d.message, symbol: d.symbol, line: d.line, hint: d.hint };
@@ -63,6 +63,7 @@ export function createRunStage(runCandidate: RunCandidate): RunStage {
     async run(input: RunInput, signal?: AbortSignal): Promise<RunOutcome> {
       let report = await runCandidate(input.source, { signal });
       let rerun = false;
+      let rerunOf: UnobservedPhase | undefined;
 
       // An unobserved verdict that is not the candidate's own fault is a harness fault: the same
       // source is run once more, in the fresh browser context every call gets, consuming no repair
@@ -70,6 +71,7 @@ export function createRunStage(runCandidate: RunCandidate): RunStage {
       // then handled as a first run's would be, except that a still-unobserved one is terminal
       // whatever its phase. An abandoned run is not re-run.
       if (report.contained === null && !neverMountedPhase(report) && !signal?.aborted) {
+        rerunOf = report.unobservedPhase ?? 'none';
         report = await runCandidate(input.source, { signal });
         rerun = true;
       }
@@ -87,7 +89,7 @@ export function createRunStage(runCandidate: RunCandidate): RunStage {
       // about the escape attempt is even carried this far, so "feeds nothing back to the model"
       // holds at the type level too. What does travel is the content-free verdict the machine logs
       // (beta-1 D11): the probes' own `containment_failure`.
-      if (report.contained === false) return { contained: false, diagnostics: [], verdict: { kind: 'breach', check: 'containment_failure' } };
+      if (report.contained === false) return { contained: false, diagnostics: [], verdict: { kind: 'breach', check: 'containment_failure' }, rerun };
       if (report.contained === null) {
         const phase = neverMountedPhase(report);
         // A first run that never mounted by the candidate's own fault goes to repair with the
@@ -120,7 +122,7 @@ export function createRunStage(runCandidate: RunCandidate): RunStage {
 
       const manifest = requireManifest(input.manifest);
       const record = assembleRecord(input.source, manifest, input.build);
-      return { contained: true, diagnostics, record };
+      return { contained: true, diagnostics, record, ...(rerunOf ? { rerunOf } : {}) };
     },
   };
 }

@@ -58,3 +58,23 @@ Branch `chain/generation-reliability-run-verdict`, BASE b6a3b2d6. tasks.md not t
 - [A] `run never mounted` is logged only when the candidate is sent to repair (not when the budget is spent); the
   repair-exhausted terminal line keeps that run's phase instead.
 - `docs/deploy.md` describes `terminal failure` lines but lists no field set; not touched.
+
+## Fix round 1 (review `run-verdict-review-1.md`: findings 1, 2, 3, 4, 5, 7; 6 accepted as-is, parked loader issue filed by the orchestrator)
+
+| # | Change | Test | Red evidence (mutation, types kept) |
+|---|---|---|---|
+| 1 | `RunOutcome` `contained:false` arm carries `rerun`; stage sets it; `contained-failure` carries it to the `terminal failure` line. `handoff/run-verdict.md` updated. | `machine.suite` case "containment_failed after a re-run" (sequenced unobserved then breach, asserts `rerun:true`); `run-stage.suite` asserts `rerun` true after a re-run breach and false on a first-run breach | stage hardcoded `rerun: false` on the breach arm: both fail ("and it says the candidate was re-run — got false, expected true", terminal-line case) |
+| 2 | `e2e.ts`: the diagnostics line must match `/runtime_throw[^\n]*Currency code is required/`; the streamed `diagnostic` event message must hold it too | `server:e2e` module-scope throw case | `toWireDiagnostic` sending `message: d.kind`: both fail |
+| 3 | Fixture now throws from a timer armed by a first-render `useEffect` (400 ms, after the paint frame), run with a wider quiet window | `synthrun` resilience "unobserved phase" | `if (state.paintAtMs === null)` removed from the module-eval stamp: "a throw in an effect after the first paint ... (got module-eval)" |
+| 4 | Test-side transport rewrite (`rewriteProbesFrames`: drop / loader `[probes]` error frame / non-boolean `contained`, keeping the real `trusted` flag) replaces `dropProbesFrames` | same case: asserts `probes` and `none` | `LOADER_PHASES` recording removed: "got mount-timeout"; unobserved stamp changed to `mount-timeout`: the malformed case fails "got mount-timeout" |
+| 5 | Comment in `machine.suite.ts` says the machine never calls `run` twice and the stage owns the one re-run | - | - |
+| 7 | `RunOutcome` delivered arm gains optional `rerunOf` (first run's phase); the machine logs info `run re-run {phase}` | `machine.suite` "a re-run that then delivers is logged": one line with `phase:'probes'` and no content; none without a re-run | log line deleted: the case fails (`got []`) |
+
+Note on 3: a throw from the effect BODY (synchronous on first render) was tried first and measured as `module-eval`:
+the effect runs before the loader's double-rAF `paint` frame, so the CDP exception beats it. This is safe (the candidate
+goes to repair) but differs from the spec scenario's wording; the test comment records it as out of scope, and the fix would
+need a new channel (a loader `mounted` frame).
+
+Commands (all through `capped-run.sh`): `npm run -s typecheck` exit 0; `npx eslint --max-warnings 0` on the 6 touched TS files exit 0;
+`server:test --only run-stage,machine` exit 0 (601 passed, 0 failed); `synthrun:test --only resilience` exit 0 (100 checks);
+`server:e2e` exit 0 (68 passed). Red runs exited 1 as shown above; every mutation was restored (`git diff` shows only the intended change).

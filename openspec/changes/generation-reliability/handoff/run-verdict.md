@@ -30,21 +30,23 @@ Channels: CDP `runtime_throw`/`unhandled_rejection` whose top frame `url === ''`
 export type NeverMountedPhase = Extract<UnobservedPhase, 'module-eval' | 'bundle' | 'mount-timeout'>;
 
 export type RunOutcome =
-  | { contained: false; diagnostics: Diagnostic[]; verdict: RunVerdict<'breach'> }
+  | { contained: false; diagnostics: Diagnostic[]; verdict: RunVerdict<'breach'>; rerun: boolean }
   | { contained: null; repairable: false; diagnostics: Diagnostic[]; verdict: RunVerdict<'unobserved'>; phase: UnobservedPhase; rerun: boolean }
   | { contained: null; repairable: true; diagnostics: Diagnostic[]; phase: NeverMountedPhase }
-  | { contained: true; diagnostics: Diagnostic[]; record: WireAppRecord };
+  | { contained: true; diagnostics: Diagnostic[]; record: WireAppRecord; rerunOf?: UnobservedPhase };
 ```
 
 - `repairable: true` diagnostics = the report's diagnostics minus every `containment_*` kind. The
   terminal arm still carries `diagnostics: []` (nothing fed back).
+- `rerun` (breach and unverified arms) = the stage re-ran the candidate after an unobserved first run. `rerunOf` (delivered arm only,
+  present only after a re-run) = the first run's phase; the machine logs it as the info line `run re-run {phase}`.
 - `UnobservedPhase` is imported type-only from `../../../synthrun/contract`.
 
 ### Functions changed (merge hot spots for chain-upstream)
 
 | Symbol | Change |
 |---|---|
-| `CandidateOutcome` | `failed` gains optional `phase?: UnobservedPhase`; `containment-unobserved` gains `phase`, `rerun` |
+| `CandidateOutcome` | `failed` gains optional `phase?: UnobservedPhase`; `contained-failure` gains `rerun`; `containment-unobserved` gains `phase`, `rerun` |
 | `unverifiedRunOutcome(outcome)` | param is now `Exclude<RunOutcome, {contained: true} \| {repairable: true}>`; copies `phase`, `rerun` |
 | `Completion` (type) | failure arm gains optional `phase?`, `rerun?` |
 | `failureTerminalFor(outcome, state)` | same signature; `containment-unobserved` and `failed` pass `phase`/`rerun` through to `Completion` |
@@ -68,7 +70,8 @@ A never-mounted phase on a FIRST run is the repairable arm.
 
 - `terminal failure` (info): `{ reason, verdict?, check?, phase, rerun }`. `phase`: `UnobservedPhase`, `'none'`
   unless the ending run was unobserved (or a repair-exhausted ending on a never-mounted candidate, which keeps
-  that phase). `rerun`: boolean, `true` only for `run_unverified` endings.
+  that phase). `rerun`: boolean, `true` whenever the ending run was a re-run (`run_unverified` or `containment_failed`).
+- `run re-run` (info): `{ phase }` (the first run's `UnobservedPhase`), logged when a re-run ended in a delivered record.
 - `run never mounted` (info): `{ phase }` (a `NeverMountedPhase`), logged only when the candidate is sent to
   repair (not when the budget is spent).
 

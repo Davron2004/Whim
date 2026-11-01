@@ -26,6 +26,7 @@ async function testContainmentFailureShortCircuit(): Promise<void> {
   check('contained:false short-circuits without needing a manifest', outcome.contained === false);
   if (outcome.contained !== false) return;
   eq('nothing is fed back — diagnostics is empty regardless of what the harness itself reported', outcome.diagnostics, []);
+  eq('a first-run breach was not re-run', outcome.rerun, false);
   eq('the verdict the machine logs is the probes’ breach, not the earlier throw', outcome.verdict, { kind: 'breach', check: 'containment_failure' });
 
   // red-check (non-vacuity): the adapter is a real conditional, not hardcoded to always report a
@@ -205,11 +206,13 @@ async function testRerunVerdictIsHandledAsAFirstRunsWould(): Promise<void> {
   const delivering = sequencedRunCandidate(unobserved, fakeReport({ contained: true, diagnostics: [] }));
   const delivered = await createRunStage(delivering.runCandidate).run({ source: 's', manifest: A_MANIFEST, build: { bundle: 'b' } });
   check('a re-run that earns an affirmative verdict delivers', delivered.contained === true);
+  eq('the delivery names the phase that caused the re-run', delivered.contained === true ? delivered.rerunOf : 'not delivered', 'none');
   eq('and took exactly two runs', delivering.calls(), 2);
 
   const breaching = sequencedRunCandidate(unobserved, fakeReport({ ok: false, contained: false, diagnostics: [{ kind: 'containment_failure', severity: 'error', message: 'm', hint: 'h' }] }));
   const breached = await createRunStage(breaching.runCandidate).run({ source: 's', build: { bundle: '' } });
   eq('a re-run that reports a breach is the terminal containment failure', breached.contained === false ? breached.verdict : breached.contained, { kind: 'breach', check: 'containment_failure' });
+  eq('and it says the candidate was re-run', breached.contained === false ? breached.rerun : 'not a breach', true);
 
   // Only an observed true delivers: the first-run null never does, however the re-run reads.
   const stillNull = sequencedRunCandidate(unobserved);
