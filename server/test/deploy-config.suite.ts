@@ -2068,7 +2068,7 @@ function cloudRunDeploySmokeTests(): void {
   const siteRollback = `gcloud --project anycognition-whim run deploy whim-site --region us-east4 --image ${PREVIOUS_SITE_IMAGE}`;
 
   withSandbox((sandbox) => {
-    writeOperatorFile(sandbox, { WHIM_ALERT_EMAIL: PROVISION_VALUES.WHIM_ALERT_EMAIL, WHIM_POLICY_ATTEMPT_TIMEOUT_MS: '6000', WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY: '12', WHIM_LIMIT_POLICY_CHECKS_PER_DAY: '300' });
+    writeOperatorFile(sandbox, { WHIM_ALERT_EMAIL: PROVISION_VALUES.WHIM_ALERT_EMAIL, WHIM_POLICY_ATTEMPT_TIMEOUT_MS: '6000', WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY: '12', WHIM_LIMIT_POLICY_CHECKS_PER_DAY: '300', WHIM_PROVIDER_BREAKER_FAILURES: '0', WHIM_PROVIDER_BREAKER_WINDOW_MS: '90000', WHIM_PROVIDER_BREAKER_COOLDOWN_MS: '30000' });
     const head = headOf(sandbox);
     writeCloudRunRules(sandbox, head, { gcloudAfter: [...monitoringNone, ...serverImage] });
     const run = runScript(sandbox, 'cloudrun/deploy.sh', []);
@@ -2084,6 +2084,11 @@ function cloudRunDeploySmokeTests(): void {
       "  ... and the operator's content-policy attempt timeout and policy-check limits forwarded, as the server reads them",
       [served.policyAttemptTimeoutMs, served.limitPolicyChecksPerDeviceDay, served.limitPolicyChecksPerDay],
       [6000, 12, 300],
+    );
+    eq(
+      "  ... and the operator's provider breaker settings, WHIM_PROVIDER_BREAKER_FAILURES=0 reaching Cloud Run as the breaker-off lever",
+      [served.providerBreakerFailures, served.providerBreakerWindowMs, served.providerBreakerCooldownMs],
+      [0, 90_000, 30_000],
     );
   });
 
@@ -2154,6 +2159,9 @@ function deployFullTests(health: HealthBodies): void {
       WHIM_PROVIDER_QUANTIZATIONS: 'fp8,bf16',
       WHIM_QUEUE_MAX: '0',
       WHIM_QUEUE_MAX_WAIT_MS: '60000',
+      WHIM_PROVIDER_BREAKER_FAILURES: '0',
+      WHIM_PROVIDER_BREAKER_WINDOW_MS: '90000',
+      WHIM_PROVIDER_BREAKER_COOLDOWN_MS: '30000',
     });
     fullDeployRules(sandbox, true);
     writeRules(sandbox, 'curl', [healthRule(withCommit(health.androidRaised, headOf(sandbox))), ...API_UP, ...PAGES_UP]);
@@ -2169,6 +2177,11 @@ function deployFullTests(health: HealthBodies): void {
       '  ... and the operator\'s quantizations and line, WHIM_QUEUE_MAX=0 kept as the no-line lever',
       [served.providerQuantizations, served.queueMax, served.queueMaxWaitMs],
       [['fp8', 'bf16'], 0, 60_000],
+    );
+    eq(
+      '  ... and the operator\'s provider breaker settings, WHIM_PROVIDER_BREAKER_FAILURES=0 kept as the breaker-off lever',
+      [served.providerBreakerFailures, served.providerBreakerWindowMs, served.providerBreakerCooldownMs],
+      [0, 90_000, 30_000],
     );
   });
 

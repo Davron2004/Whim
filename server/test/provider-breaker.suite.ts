@@ -59,16 +59,24 @@ interface Rig {
   probeCalls: AbortSignal[];
   /** The next probe waits on this; replace it before the cooldown passes. */
   probeGate: { current: Held };
+  /** Fires the time limit of the probe in flight, as the real timer would after ten seconds. */
+  expireProbe(): void;
+  /** How many probe time limits were stopped (a probe that settled stops its timer). */
+  deadlinesCancelled(): number;
 }
 
-function rig(overrides: { failures?: number } = {}): Rig {
+function rig(overrides: { failures?: number; probe?: ProviderProbe } = {}): Rig {
   let now = Date.UTC(2026, 0, 15, 12, 0, 0);
   const probeCalls: AbortSignal[] = [];
   const probeGate = { current: held() };
-  const probe: ProviderProbe = (signal) => {
-    probeCalls.push(signal);
-    return probeGate.current.promise;
-  };
+  const deadlines: AbortController[] = [];
+  let cancelled = 0;
+  const probe: ProviderProbe =
+    overrides.probe ??
+    ((signal) => {
+      probeCalls.push(signal);
+      return probeGate.current.promise;
+    });
   const breaker = createProviderBreaker({
     failures: overrides.failures ?? 4,
     windowMs: WINDOW_MS,
@@ -76,8 +84,43 @@ function rig(overrides: { failures?: number } = {}): Rig {
     clock: () => now,
     log: log.child({ scope: 'provider-breaker-test' }),
     probe,
+    probeDeadline: () => {
+      const controller = new AbortController();
+      deadlines.push(controller);
+      return { signal: controller.signal, cancel: () => (cancelled += 1) };
+    },
   });
-  return { breaker, advance: (ms) => (now += ms), now: () => now, probeCalls, probeGate };
+  return {
+    breaker,
+    advance: (ms) => (now += ms),
+    now: () => now,
+    probeCalls,
+    probeGate,
+    expireProbe: () => deadlines.at(-1)?.abort(new DOMException('The operation timed out.', 'TimeoutError')),
+    deadlinesCancelled: () => cancelled,
+  };
+}
+
+type Outcome<T> = { kind: 'value'; value: T } | { kind: 'threw'; error: unknown } | { kind: 'hung' };
+
+/** What `make()` came to, or `hung` when its promise has not settled after a real second: a
+ *  regression that leaves a probe unsettled fails the check that names it instead of hanging the
+ *  suite. The guard timer is ref'd and cleared the moment the promise settles. */
+async function outcomeOf<T>(make: () => Promise<T>): Promise<Outcome<T>> {
+  let guard: NodeJS.Timeout | undefined;
+  const hung = new Promise<Outcome<T>>((resolve) => {
+    guard = setTimeout(() => resolve({ kind: 'hung' }), 1000);
+  });
+  const settled = (async (): Promise<Outcome<T>> => {
+    try {
+      return { kind: 'value', value: await make() };
+    } catch (error) {
+      return { kind: 'threw', error };
+    }
+  })();
+  const outcome = await Promise.race([settled, hung]);
+  clearTimeout(guard);
+  return outcome;
 }
 
 function fail(r: Rig, err: unknown, signal?: AbortSignal): void {
@@ -304,6 +347,69 @@ async function testProbe(): Promise<void> {
     const waiting = r.breaker.admit();
     r.probeGate.current.reject(new OpenRouterAuthError('bad key'));
     eq('a probe failing for any reason (here a 401) re-opens it', await waiting, { ok: false, retryAfterSeconds: 60 });
+  }
+
+  section('A probe that is no longer the current one has no say');
+
+  {
+    const r = rig();
+    const capture = captureLogs();
+    failUpstream(r, 4);
+    r.advance(COOLDOWN_MS);
+    const waiting = r.breaker.admit();
+    r.breaker.record('completed');
+    failUpstream(r, 4);
+    r.advance(5_000);
+    r.probeGate.current.resolve();
+    eq('a probe that completes after a newer cycle opened tells its waiter that cycle is still refusing', await waiting, { ok: false, retryAfterSeconds: 55 });
+    eq('... and the newer cycle stays open for the rest of its cooldown', await r.breaker.admit(), { ok: false, retryAfterSeconds: 55 });
+    capture.stop();
+    eq('... with one closed line (the completed call\'s), none from the stale probe', logged(capture, PROVIDER_BREAKER_CLOSED_MESSAGE).map((l) => l.openMs), [COOLDOWN_MS]);
+  }
+
+  {
+    const r = rig();
+    failUpstream(r, 4);
+    r.advance(COOLDOWN_MS);
+    const waiting = r.breaker.admit();
+    r.breaker.record('completed');
+    failUpstream(r, 4);
+    r.advance(5_000);
+    r.probeGate.current.reject(upstream503());
+    eq('a stale probe that fails refuses its waiter by the newer cycle\'s clock', await waiting, { ok: false, retryAfterSeconds: 55 });
+    eq('... and does not restart that cycle\'s cooldown', await r.breaker.admit(), { ok: false, retryAfterSeconds: 55 });
+  }
+
+  section('The probe has a time limit of its own, and a probe that throws is a failed probe');
+
+  {
+    const r = rig();
+    const capture = captureLogs();
+    failUpstream(r, 4);
+    r.advance(COOLDOWN_MS);
+    const waiting = r.breaker.admit();
+    check('the probe ignores its signal and never settles on its own', r.probeCalls.length === 1 && !r.probeCalls[0]?.aborted);
+    r.expireProbe();
+    eq('when its time limit fires, the waiter is refused for a full new cooldown', await outcomeOf(() => waiting), { kind: 'value', value: { ok: false, retryAfterSeconds: 60 } });
+    capture.stop();
+    eq('... the probe-failed line carrying errorKind timeout', logged(capture, PROVIDER_PROBE_FAILED_MESSAGE).map((l) => [l.level, l.errorKind, l.status]), [[40, 'timeout', undefined]]);
+    eq('... its timer stopped', r.deadlinesCancelled(), 1);
+    r.advance(30_000);
+    eq('... and the breaker is open again, refusing without a second probe', [await r.breaker.admit(), r.probeCalls.length], [{ ok: false, retryAfterSeconds: 30 }, 1]);
+  }
+
+  {
+    const r = rig({
+      probe: () => {
+        throw upstream503();
+      },
+    });
+    const capture = captureLogs();
+    failUpstream(r, 4);
+    r.advance(COOLDOWN_MS);
+    eq('a probe that throws synchronously refuses its admission like a failed probe', await outcomeOf(async () => r.breaker.admit()), { kind: 'value', value: { ok: false, retryAfterSeconds: 60 } });
+    capture.stop();
+    eq('... logging it with the classified errorKind and status', logged(capture, PROVIDER_PROBE_FAILED_MESSAGE).map((l) => [l.errorKind, l.status]), [['server', 503]]);
   }
 
   section('Any completed call closes an open breaker');

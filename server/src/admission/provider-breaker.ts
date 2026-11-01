@@ -38,8 +38,8 @@ export interface ProviderBreaker {
   admit(): Promise<BreakerAdmission>;
 }
 
-/** One cheap call to the provider. Resolves when it completed, rejects when it failed (it never
- *  throws synchronously). The signal aborts after `PROVIDER_PROBE_TIMEOUT_MS`. */
+/** One cheap call to the provider. Resolves when it completed, rejects when it failed. The signal
+ *  aborts after `PROVIDER_PROBE_TIMEOUT_MS`; the breaker does not rely on the call honoring it. */
 export type ProviderProbe = (signal: AbortSignal) => Promise<void>;
 
 export interface ProviderBreakerOptions {
@@ -51,6 +51,9 @@ export interface ProviderBreakerOptions {
   clock: () => number;
   log: ServerLogger;
   probe: ProviderProbe;
+  /** Starts the probe's time limit: a signal that aborts with a `TimeoutError` reason after
+   *  `timeoutMs`, and a way to stop the timer. Defaults to a real timer; a test supplies its own. */
+  probeDeadline?: (timeoutMs: number) => { signal: AbortSignal; cancel(): void };
 }
 
 type State =
@@ -58,8 +61,15 @@ type State =
   | { kind: 'open'; openedAt: number; until: number }
   | { kind: 'probing'; openedAt: number; result: Promise<BreakerAdmission> };
 
+function timerDeadline(timeoutMs: number): { signal: AbortSignal; cancel(): void } {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new DOMException('The operation timed out.', 'TimeoutError')), timeoutMs);
+  timer.unref();
+  return { signal: controller.signal, cancel: () => clearTimeout(timer) };
+}
+
 export function createProviderBreaker(options: ProviderBreakerOptions): ProviderBreaker {
-  const { failures, windowMs, cooldownMs, clock, log, probe } = options;
+  const { failures, windowMs, cooldownMs, clock, log, probe, probeDeadline = timerDeadline } = options;
   let state: State = { kind: 'closed', count: 0, firstAt: 0 };
 
   const refusal = (until: number): BreakerAdmission => ({
@@ -89,28 +99,51 @@ export function createProviderBreaker(options: ProviderBreakerOptions): Provider
     );
   };
 
-  const onProbeSettled = (openedAt: number, failure: ModelFailure | undefined): BreakerAdmission => {
+  /** What a waiter on a probe that is no longer the breaker's current one is told: how things stand. */
+  const currentVerdict = (): BreakerAdmission | Promise<BreakerAdmission> => {
+    if (state.kind === 'closed') return { ok: true };
+    return state.kind === 'open' ? refusal(state.until) : state.result;
+  };
+
+  const onProbeSettled = (
+    openedAt: number,
+    isCurrent: () => boolean,
+    failure: ModelFailure | undefined,
+  ): BreakerAdmission | Promise<BreakerAdmission> => {
+    if (failure !== undefined) {
+      log.warn(
+        { errorKind: failure.errorKind, ...(failure.status !== undefined ? { status: failure.status } : {}) },
+        PROVIDER_PROBE_FAILED_MESSAGE,
+      );
+    }
+    // A call that completed while the probe was out has already closed the breaker, and it may have
+    // opened again since: a probe that is no longer the current state has no say.
+    if (!isCurrent()) return currentVerdict();
     if (failure === undefined) {
-      if (state.kind !== 'closed') close(openedAt);
+      close(openedAt);
       return { ok: true };
     }
-    log.warn(
-      { errorKind: failure.errorKind, ...(failure.status !== undefined ? { status: failure.status } : {}) },
-      PROVIDER_PROBE_FAILED_MESSAGE,
-    );
-    // A call that completed while the probe was out has already closed the breaker.
-    if (state.kind === 'closed') return { ok: true };
     const until = clock() + cooldownMs;
     state = { kind: 'open', openedAt, until };
     return refusal(until);
   };
 
   const startProbe = (openedAt: number): Promise<BreakerAdmission> => {
-    const signal = AbortSignal.timeout(PROVIDER_PROBE_TIMEOUT_MS);
-    const result = probe(signal).then(
-      () => onProbeSettled(openedAt, undefined),
-      (err: unknown) => onProbeSettled(openedAt, modelFailureOf(err, signal)),
-    );
+    const deadline = probeDeadline(PROVIDER_PROBE_TIMEOUT_MS);
+    const { signal } = deadline;
+    const expired = new Promise<never>((_, reject) => {
+      if (signal.aborted) reject(signal.reason);
+      signal.addEventListener('abort', () => reject(signal.reason), { once: true });
+    });
+    // An async function runs the probe at once, and turns a synchronous throw into a failed probe.
+    const attempt = (async () => probe(signal))();
+    const isCurrent = (): boolean => state.kind === 'probing' && state.result === result;
+    const result: Promise<BreakerAdmission> = Promise.race([attempt, expired])
+      .then(
+        () => onProbeSettled(openedAt, isCurrent, undefined),
+        (err: unknown) => onProbeSettled(openedAt, isCurrent, modelFailureOf(err, signal)),
+      )
+      .finally(deadline.cancel);
     state = { kind: 'probing', openedAt, result };
     return result;
   };

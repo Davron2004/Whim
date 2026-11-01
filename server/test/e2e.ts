@@ -22,7 +22,8 @@ import { build } from 'esbuild';
 import { devBundleExternals } from '../build.mjs';
 import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
 import { check, eq, report, section } from './harness';
-import { ScriptedModelClient } from './scripted-model';
+import { ScriptedModelClient, type ScriptedTurn } from './scripted-model';
+import { OpenRouterNetworkError } from '../src/openrouter';
 import { E2E_ROSTER, heldRunTurns, MOUNT_HANG } from './e2e-fixtures';
 import { BootError, runBootSelfTest, startServer, type ServerHandle } from '../src/lifecycle';
 import { createCheckStage } from '../src/generation/stages/check';
@@ -453,6 +454,82 @@ async function testComposedServerBootAndDisconnect(): Promise<void> {
   }
 }
 
+// ── The provider breaker on the composed server (generation-reliability D8: the composition root
+//    guards the one shared client and hands the breaker to admission) ──
+
+/** Posts one `/v1/clarify` for a fresh device straight to the composed server. */
+function postClarify(url: string, prompt: string): Promise<Response> {
+  return testFetch(`${url}/v1/clarify`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-whim-device': randomUUID(), ...PROTOCOL_HEADERS },
+    body: JSON.stringify({ prompt }),
+  });
+}
+
+async function testProviderBreakerOnComposedServer(): Promise<void> {
+  section('spec: the composed server opens the provider breaker on real policy-check upstream failures, then refuses clarify before any model call');
+
+  const savedRequest = Object.getOwnPropertyDescriptor(globalThis, 'Request');
+  const savedResponse = Object.getOwnPropertyDescriptor(globalThis, 'Response');
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-e2e-breaker-'));
+  // Four 503s, the default threshold. The content-policy check asks twice per request when its
+  // first call ends without a verdict, so two requests supply them. A fifth turn would let a
+  // request that reaches the model through an unwired breaker be recorded instead of failing the
+  // script, so "no further model request" can fail.
+  const turns: ScriptedTurn[] = [
+    ...Array.from({ length: 4 }, (): ScriptedTurn => ({
+      role: 'rewrite',
+      deltas: [],
+      error: new OpenRouterNetworkError('provider unavailable', undefined, 503),
+    })),
+    { role: 'rewrite', deltas: ['{"verdict":"allow"}'] },
+  ];
+  const model = new ScriptedModelClient(E2E_ROSTER, turns);
+  let handle: ServerHandle | undefined;
+  try {
+    const started = await within(
+      startServer({
+        env: { WHIM_DATA_DIR: dataDir, WHIM_SYNTHRUN_CONCURRENCY: '1' },
+        overrides: { model: { client: model, roster: E2E_ROSTER } },
+        listen: { host: '127.0.0.1', port: 0 },
+      }),
+      60_000,
+    );
+    if (started === TIMED_OUT) {
+      check('the composed server booted', false, 'did not boot within 60 s');
+      return;
+    }
+    handle = started;
+
+    const answers: unknown[] = [];
+    for (let i = 0; i < 2; i++) {
+      const response = await postClarify(handle.url, 'a recipe app with a shopping list');
+      answers.push([response.status, ((await response.json()) as { error?: string }).error]);
+    }
+    eq('two clarify requests whose policy check the provider fails with 503 answer policy_unavailable', answers, [
+      [503, 'policy_unavailable'],
+      [503, 'policy_unavailable'],
+    ]);
+    eq('setup: the four upstream failures were four model requests', model.requests.length, 4);
+
+    const refused = await postClarify(handle.url, 'a recipe app with a shopping list');
+    const body = (await refused.json()) as { error?: string };
+    eq('the next clarify is refused 503 provider_unavailable by the open breaker', [refused.status, body.error], [503, 'provider_unavailable']);
+    const retryAfter = refused.headers.get('retry-after') ?? '';
+    check('... carrying an integer Retry-After within the 60 s cooldown', /^\d+$/.test(retryAfter) && Number(retryAfter) >= 1 && Number(retryAfter) <= 60, retryAfter);
+    eq('... and made no model request', model.requests.length, 4);
+
+    const closing = await within(handle.close(), 30_000);
+    check('the server drains closed', closing !== TIMED_OUT);
+    handle = undefined;
+  } finally {
+    if (handle) await within(handle.close(), 30_000);
+    if (savedRequest) Object.defineProperty(globalThis, 'Request', savedRequest);
+    if (savedResponse) Object.defineProperty(globalThis, 'Response', savedResponse);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+}
+
 // ── A real server process under SIGTERM with a synthetic run in flight (spec "SIGTERM drains
 //    in-flight work before exit", "The deadline aborts the rest") ──
 
@@ -830,6 +907,7 @@ async function main(): Promise<void> {
   }
 
   await testComposedServerBootAndDisconnect();
+  await testProviderBreakerOnComposedServer();
   await testRealPipelineSigtermDrain();
   await testDrainWaitsForProbes();
   await testLoadtestServerCapacityAndNoSpend();

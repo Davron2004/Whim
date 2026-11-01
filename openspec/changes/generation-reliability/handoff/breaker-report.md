@@ -72,3 +72,25 @@ All through `/Users/davrondjabborov/.cache/whim-run/capped-run.sh`, from the wor
 - Gap: the deploy scripts (`deploy/lib.sh`, `deploy/cloudrun/deploy.sh`, `operator.env.example`) do not forward the three new env vars, so on Cloud Run the defaults apply. `docs/deploy.md` says so. Forwarding them is a separate change outside this chain's file list.
 - Gap: `lifecycle.ts`'s 3-line composition (call `guardModel`, pass `providerBreaker` to `createApp`) is covered by typecheck and `guardModel`'s test, not by a startServer test (that needs Chromium; `server/test/e2e.ts` is the only suite that boots it).
 - Not run: `launcher:test`, e2e, gate, knip.
+
+## Fix round 1 (after breaker-review-1 REJECT)
+
+| # | Finding | Change | Test | Red evidence (mutation, type-satisfying; failing checks from the log) |
+|---|---|---|---|---|
+| 1 | production wiring untested | none (test only) | `server/test/e2e.ts` `testProviderBreakerOnComposedServer`: real `startServer` + scripted model; two `/v1/clarify` whose policy check gets 503s (4 upstream failures) answer `policy_unavailable`; the next answers `503 provider_unavailable`, integer `Retry-After` in 1..60, and the scripted client (which has a 5th, allowing turn) records no 5th request | `providerBreaker: breaker` deleted from `createApp(...)` in `lifecycle.ts` (tsc 0): `the next clarify is refused 503 provider_unavailable by the open breaker` (got 500), `... carrying an integer Retry-After...`, `... and made no model request` (got 5, expected 4); 71 passed, 3 failed. (With only 4 scripted turns the third check could not fail: the script threw before recording. A fifth turn fixed that.) |
+| 2 | env vars not forwarded | the three `WHIM_PROVIDER_BREAKER_*` keys added to `deploy/lib.sh` `WHIM_VALUE_KEYS`, `deploy/deploy.sh` and `deploy/cloudrun/deploy.sh` `server_optional_keys`, `deploy/operator.env.example`; rows in the `docs/deploy.md` env table; the "none of them forwarded" sentence replaced | `deploy-config.suite.ts`: the VM full deploy and the Cloud Run plain deploy each carry `FAILURES=0`, `WINDOW_MS`, `COOLDOWN_MS` from the operator file into the config the server loads (`loadServerConfig` reads them back as `[0, 90000, 30000]`) | the three keys removed from both `server_optional_keys` lists: both new `eq`s fail (got `[4, 180000, 60000]`, expected `[0, 90000, 30000]`), 787 passed, 2 failed |
+| 3 | stale probe acts on a newer cycle | `provider-breaker.ts`: a settling probe changes state only if `state` is still its own probing object (`isCurrent`); a stale one logs its failure and answers its waiters from the current state | `provider-breaker.suite.ts` "A probe that is no longer the current one has no say" (success and failure variants, closed line count) | `isCurrent` always true: 66 passed, 7 failed, incl. `a probe that completes after a newer cycle opened...` (got ok:true), `... with one closed line...` (got [60000, 65000]), `a stale probe that fails refuses its waiter by the newer cycle's clock` (got 60, expected 55) |
+| 4 | probe timeout rests on the client | the probe is raced against an abort of its own deadline signal; deadline factory injectable (`probeDeadline`, default a real unref'd timer, stopped when the probe settles) | `a probe that ignores its signal... when its time limit fires` -> re-opens with a full cooldown, `provider probe failed` carries `errorKind: 'timeout'`, timer stopped, no second probe; fake deadline, no sleeps (a 1 s guard only on failure) | race removed: `when its time limit fires...` (got `hung`), `... the probe-failed line carrying errorKind timeout` (got []), `... its timer stopped` (got 0); run then hit exit 13 (a later admit awaits the never-settled probe) |
+| 5 | sync-throwing probe | `const attempt = (async () => probe(signal))()` | `a probe that throws synchronously refuses its admission like a failed probe` and its logged `server`/503 | `const attempt = probe(signal)`: both checks fail (`threw`), 71 passed, 2 failed |
+| 6 | docs wording | `docs/deploy.md` alert row: the first admission after the cooldown probes the provider | none (prose) | n/a |
+
+Deviation [A]: finding 5 asked for `Promise.resolve().then(() => probe(signal))`; that defers the call by a microtask and would break the existing synchronous "exactly one probe call" check, so an async IIFE does the same job (the probe runs at once, a sync throw becomes a rejection).
+
+The `Check-removal` ratchet: no assertion removed anywhere (all additions).
+
+Commands (all through `capped-run.sh`, from the worktree), exit codes:
+- `npm run -s server:test -- --only provider-breaker` green 0 (73 passed incl. new cases); three red runs 1, 13 (hung, see #4), 1
+- `npm run -s server:test -- --only deploy-config` (4096 MB, 900 s) 0, 789 passed, 0 failed
+- `npm run -s server:e2e` (4096 MB, 900 s): final green 0 (74 passed, 0 failed); red 1 twice (4-turn script: 72 passed/2 failed; final 5-turn script: 71 passed/3 failed)
+- red run of `--only deploy-config` with the keys removed from both scripts: 1
+- `npm run -s typecheck` 0; `npx eslint --max-warnings 0` on the 4 touched TS files 0
