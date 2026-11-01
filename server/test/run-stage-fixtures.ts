@@ -32,6 +32,16 @@ export function stubRunCandidate(r: RunReport): RunCandidate {
   return async (_source: string, _opts?: RunOptions) => r;
 }
 
+/** A `RunCandidate` answering call N with `reports[N]` (the last report once they run out), and
+ *  counting its calls, so a test can say exactly how many times the stage ran a candidate. */
+export function sequencedRunCandidate(...reports: RunReport[]): { runCandidate: RunCandidate; calls: () => number } {
+  let calls = 0;
+  return {
+    runCandidate: async (_source: string, _opts?: RunOptions) => reports[Math.min(calls++, reports.length - 1)],
+    calls: () => calls,
+  };
+}
+
 export const A_MANIFEST: CheckedManifest = { name: 'X', manifest: {}, schema: {} };
 
 /** Compact, non-lossy detail for a failing `contained` assertion: the raw verdict (`JSON.stringify`

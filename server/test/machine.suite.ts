@@ -23,6 +23,7 @@ import { parsePlan, validatePlan, type Plan } from '../src/generation/plan';
 import {
   GenerationMachine,
   CONTAINMENT_FAILURE_REASON,
+  REPAIR_EXHAUSTED_REASON,
   UNVERIFIED_RUN_REASON,
   GENERIC_INTERNAL_ERROR_REASON,
   EXPIRED_REASON,
@@ -804,7 +805,9 @@ async function testUnobservedVerdictIsTerminalWithItsOwnReason(): Promise<void> 
     build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
     // One outcome only: a second `run` call — a re-run of the same candidate — exhausts the script
     // and throws, so "an unobserved verdict is NOT automatically re-run" (D3) is enforced too.
-    run: scriptedRun([{ contained: null, diagnostics: [], verdict: { kind: 'unobserved', check: 'mount_timeout' } }]),
+    run: scriptedRun([
+      { contained: null, repairable: false, diagnostics: [], verdict: { kind: 'unobserved', check: 'containment_unobserved' }, phase: 'probes', rerun: true },
+    ]),
   });
   const trace: RunTrace = { generationIds: [] };
   const events = await collect(new GenerationMachine(deps).run(NEW_APP_REQUEST, undefined, trace));
@@ -873,21 +876,27 @@ async function testUnverifiedVerdictIsLoggedWithoutContent(): Promise<void> {
 
   const cases: { label: string; report: RunReport; expected: Record<string, unknown> }[] = [
     {
-      label: 'run_unverified after a mount timeout',
+      label: 'run_unverified after a probes failure',
       report: fakeReport({
         ok: false,
         contained: null,
+        unobservedPhase: 'probes',
         diagnostics: [
-          { kind: 'mount_timeout', severity: 'error', message: `the page showed "${PLANTED.dom}"`, hint: `console said ${PLANTED.console}` },
+          { kind: 'runtime_throw', severity: 'error', message: `the page showed "${PLANTED.dom}"`, hint: `console said ${PLANTED.console}` },
           { kind: 'containment_unobserved', severity: 'error', message: 'no authenticated verdict', hint: 'rerun' },
         ],
       }),
-      expected: { reason: 'run_unverified', verdict: 'unobserved', check: 'mount_timeout', requestId: 'req-verdict-1', level: 30 },
+      expected: { reason: 'run_unverified', verdict: 'unobserved', check: 'runtime_throw', phase: 'probes', rerun: true, requestId: 'req-verdict-1', level: 30 },
     },
     {
       label: 'run_unverified with nothing else recorded',
-      report: fakeReport({ ok: false, contained: null, diagnostics: [{ kind: 'containment_unobserved', severity: 'error', message: PLANTED.dom, hint: PLANTED.console }] }),
-      expected: { reason: 'run_unverified', verdict: 'unobserved', check: 'containment_unobserved', requestId: 'req-verdict-1', level: 30 },
+      report: fakeReport({
+        ok: false,
+        contained: null,
+        unobservedPhase: 'none',
+        diagnostics: [{ kind: 'containment_unobserved', severity: 'error', message: PLANTED.dom, hint: PLANTED.console }],
+      }),
+      expected: { reason: 'run_unverified', verdict: 'unobserved', check: 'containment_unobserved', phase: 'none', rerun: true, requestId: 'req-verdict-1', level: 30 },
     },
     {
       label: 'containment_failed',
@@ -899,7 +908,7 @@ async function testUnverifiedVerdictIsLoggedWithoutContent(): Promise<void> {
           { kind: 'containment_failure', severity: 'error', message: 'probes reported a breach', hint: 'none' },
         ],
       }),
-      expected: { reason: 'containment_failed', verdict: 'breach', check: 'containment_failure', requestId: 'req-verdict-1', level: 30 },
+      expected: { reason: 'containment_failed', verdict: 'breach', check: 'containment_failure', phase: 'none', rerun: false, requestId: 'req-verdict-1', level: 30 },
     },
   ];
   for (const { label, report, expected } of cases) {
@@ -907,8 +916,13 @@ async function testUnverifiedVerdictIsLoggedWithoutContent(): Promise<void> {
     eq(`${label}: the run ends in one failure`, terminals(events).map((e) => e.type), ['failure']);
     eq(
       `${label}: one terminal line carries the request id, the verdict kind and the check`,
-      terminal.map((r) => ({ reason: r.reason, verdict: r.verdict, check: r.check, requestId: r.requestId, level: r.level })),
+      terminal.map((r) => ({ reason: r.reason, verdict: r.verdict, check: r.check, phase: r.phase, rerun: r.rerun, requestId: r.requestId, level: r.level })),
       [expected],
+    );
+    eq(
+      `${label}: the line carries no message, hint or symbol field`,
+      ['message', 'hint', 'symbol'].filter((key) => key in terminal[0]),
+      [],
     );
     const leaked = Object.values(PLANTED).filter((planted) => raw.some((line) => line.includes(planted)));
     eq(`${label}: no prompt, source, DOM or console text appears in any log line`, leaked, []);
@@ -916,6 +930,113 @@ async function testUnverifiedVerdictIsLoggedWithoutContent(): Promise<void> {
 
   const delivered = await verdictLogFor(fakeReport({ contained: true, diagnostics: [] }));
   eq('a delivered run logs no terminal failure line', delivered.terminal.length, 0);
+}
+
+/** What the run stage returns for a candidate that threw while its module was evaluated (#58): the
+ *  harness's own `runtime_throw`, with no `containment_*` detail, and the phase that kept the verdict
+ *  away. */
+const NEVER_MOUNTED_THROW: Diagnostic = {
+  kind: 'runtime_throw',
+  severity: 'error',
+  message: 'RangeError: Currency code is required with currency style.',
+  line: 2,
+  hint: 'an uncaught exception escaped the candidate — wrap the risky call or fix the bug it exposes',
+};
+const NEVER_MOUNTED_OUTCOME: RunOutcome = { contained: null, repairable: true, diagnostics: [NEVER_MOUNTED_THROW], phase: 'module-eval' };
+
+async function testNeverMountedCandidateIsRepaired(): Promise<void> {
+  section('machine — a candidate that never mounted by its own fault is repaired, never delivered, and the trace is logged without content (#58, D1/D2)');
+
+  const model = new ScriptedModelClient(ROSTER, [
+    planTurn([VALID_PLAN_JSON]),
+    engineerTurn(['export default {}; // v1']),
+    repairTurn(['export default {}; // v2']),
+  ]);
+  const deps = baseDeps({
+    model,
+    check: scriptedCheck([
+      { diagnostics: [], manifest: MANIFEST },
+      { diagnostics: [], manifest: MANIFEST },
+    ]),
+    build: scriptedBuild([
+      { ok: true, result: BUILD_RESULT },
+      { ok: true, result: BUILD_RESULT },
+    ]),
+    run: scriptedRun([NEVER_MOUNTED_OUTCOME, { contained: true, diagnostics: [], record: WIRE_RECORD }]),
+  });
+  const trace: RunTrace = { generationIds: [], requestId: 'req-never-mounted' };
+  const capture = captureLogs();
+  let events: GenerationEvent[];
+  try {
+    events = await collect(new GenerationMachine(deps).run(NEW_APP_REQUEST, undefined, trace));
+  } finally {
+    capture.stop();
+  }
+  assertCompletedEnvelope('never mounted', events);
+
+  eq('never mounted: a repair pair ran, with attempt 1', stageEvents(events, 'repair').map((e) => `${e.status}:${e.attempt}`), ['start:1', 'done:1']);
+  eq('never mounted: the first run stage closed, then the repaired candidate ran as attempt 1', stageEvents(events, 'run').map((e) => `${e.status}:${e.attempt}`), ['start:undefined', 'done:undefined', 'start:1', 'done:1']);
+  eq(
+    'never mounted: the run stage streamed the harness runtime_throw as a diagnostic',
+    events.filter((e) => e.type === 'diagnostic').map((e) => (e.type === 'diagnostic' ? e.diagnostic.kind : '')),
+    ['runtime_throw'],
+  );
+  eq('never mounted: the model saw plan, generate and exactly one repair turn', model.requests.length, 3);
+  const repairPrompt = model.requests[2].request.messages.map((m) => m.content).join('\n');
+  check('never mounted: the repair prompt carries the throw message', repairPrompt.includes(NEVER_MOUNTED_THROW.message ?? '?'));
+  check('never mounted: the repair prompt carries the throw hint', repairPrompt.includes(NEVER_MOUNTED_THROW.hint));
+  check('never mounted: the repair prompt names no containment_unobserved detail', !repairPrompt.includes('containment_unobserved'));
+  const last = events.at(-1);
+  check('never mounted: the run ends in the repaired candidate\'s result', last?.type === 'result');
+  eq('never mounted: the trace records no failure code', trace.failureCode, undefined);
+
+  eq(
+    'never mounted: one info line names the phase and nothing else about the candidate',
+    withMessage(capture, 'run never mounted').map((r) => ({ phase: r.phase, level: r.level, requestId: r.requestId, content: ['message', 'hint', 'symbol', 'check'].filter((key) => key in r) })),
+    [{ phase: 'module-eval', level: 30, requestId: 'req-never-mounted', content: [] }],
+  );
+  eq('never mounted: no terminal failure line is logged for a run that delivered', withMessage(capture, 'terminal failure').length, 0);
+  check('never mounted: the throw text appears in no log line', capture.raw.every((line) => !line.includes('Currency code')));
+}
+
+async function testNeverMountedWithNoRepairLeftIsRepairExhausted(): Promise<void> {
+  section('machine — a never-mounted candidate with no repair budget ends repair-exhausted, not unverified (#58, D1)');
+
+  const model = new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON]), engineerTurn(['export default {}; // v1'])]);
+  const deps = baseDeps({
+    model,
+    bounds: { repairAttempts: 0 },
+    check: scriptedCheck([{ diagnostics: [], manifest: MANIFEST }]),
+    build: scriptedBuild([{ ok: true, result: BUILD_RESULT }]),
+    run: scriptedRun([NEVER_MOUNTED_OUTCOME]),
+  });
+  const trace: RunTrace = { generationIds: [], requestId: 'req-never-mounted-last' };
+  const capture = captureLogs();
+  let events: GenerationEvent[];
+  try {
+    events = await collect(new GenerationMachine(deps).run(NEW_APP_REQUEST, undefined, trace));
+  } finally {
+    capture.stop();
+  }
+  assertCompletedEnvelope('never mounted, no budget', events);
+
+  eq('never mounted, no budget: the ledger code is repair_exhausted', trace.failureCode, 'repair_exhausted');
+  eq('never mounted, no budget: no result is emitted', events.filter((e) => e.type === 'result').length, 0);
+  eq('never mounted, no budget: no repair stage begins', stageEvents(events, 'repair').length, 0);
+  const terminal = events.at(-1);
+  check('never mounted, no budget: the terminal is a failure', terminal?.type === 'failure');
+  if (terminal?.type === 'failure') {
+    eq('never mounted, no budget: the reason is the repair-exhausted one, not the unverified one', terminal.reason, REPAIR_EXHAUSTED_REASON);
+    check('never mounted, no budget: the reason is not the unverified sentence', terminal.reason !== UNVERIFIED_RUN_REASON);
+    eq('never mounted, no budget: the throw rides the failure like any exhausted run\'s diagnostics', terminal.diagnostics.map((d) => d.kind), ['runtime_throw']);
+    eq('never mounted, no budget: attempts is 1', terminal.attempts, 1);
+  }
+  eq(
+    'never mounted, no budget: the terminal line keeps the ending run\'s phase and says nothing was re-run',
+    withMessage(capture, 'terminal failure').map((r) => ({ reason: r.reason, phase: r.phase, rerun: r.rerun, verdict: r.verdict })),
+    [{ reason: 'repair_exhausted', phase: 'module-eval', rerun: false, verdict: undefined }],
+  );
+  eq('never mounted, no budget: no run never mounted line, since nothing was sent to repair', withMessage(capture, 'run never mounted').length, 0);
 }
 
 async function testStageThrowYieldsOneFailure(): Promise<void> {
@@ -2332,6 +2453,8 @@ export async function runMachineTests(): Promise<void> {
   await testContainmentFailureShortCircuit();
   await testUnobservedVerdictIsTerminalWithItsOwnReason();
   await testUnverifiedVerdictIsLoggedWithoutContent();
+  await testNeverMountedCandidateIsRepaired();
+  await testNeverMountedWithNoRepairLeftIsRepairExhausted();
   await testStageThrowYieldsOneFailure();
   await testAbortBeforeStart();
   await testAbortDuringGenerateTokens();
