@@ -1,0 +1,8 @@
+upgrade check: android, 20261031-211107
+server: http://127.0.0.1:8787 {"ok":true,"service":"whim-server","commit":"unknown","minBuild":{"ios":0,"android":0}}
+device: emulator-5560 (AVD Whim_Verify, wiped)
+from: /Users/davrondjabborov/.cache/whim-upgrade/beta-2/from-397438.apk, build 397438, sha256 32f168256db66de2265a4d4c31a28e5db250f0f2d9300dc012ac349cb5c486c9
+seed: scripts/release/upgrade-check/seed.yaml
+to: /Users/davrondjabborov/.cache/whim-upgrade/beta-2/to-437758.apk, build 437758, sha256 6652ce3b3812524680adc9aa4349da5ed2840eafefdaad39f12370b98bf40463
+upgrade-diff: PASS: 4 apps, 5 versions, 2 saved values, the consent grant and the device id are unchanged
+RESULT: PASS

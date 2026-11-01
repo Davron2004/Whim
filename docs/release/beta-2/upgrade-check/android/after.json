@@ -1,0 +1,41 @@
+{
+  "deviceId": "18858a7f-16c9-47a3-8aa8-80dea8d40aff",
+  "consent": {
+    "version": 2,
+    "grantedAt": "2026-11-01T01:16:05.031Z"
+  },
+  "tiles": [
+    {
+      "id": "tip-splitter",
+      "name": "Tip Splitter",
+      "example": true,
+      "onGrid": true,
+      "versions": 1
+    },
+    {
+      "id": "water-counter",
+      "name": "Water Counter",
+      "example": true,
+      "onGrid": true,
+      "versions": 1
+    },
+    {
+      "id": "style-gallery",
+      "name": "Style Gallery",
+      "example": true,
+      "onGrid": true,
+      "versions": 1
+    },
+    {
+      "id": "app-mvx5372n-ltply6t9",
+      "name": "Hello App",
+      "example": false,
+      "onGrid": true,
+      "versions": 2
+    }
+  ],
+  "savedData": {
+    "Water Counter / Glasses": "2",
+    "Water Counter / History entries": "2"
+  }
+}

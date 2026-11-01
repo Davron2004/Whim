@@ -1,0 +1,8 @@
+upgrade check: ios, 20261031-211109
+server: http://127.0.0.1:8787 {"ok":true,"service":"whim-server","commit":"unknown","minBuild":{"ios":0,"android":0}}
+device: C72080F2-8A8D-4CED-9718-4E8033651AD6 (new simulator, com.apple.CoreSimulator.SimDeviceType.iPhone-15-Plus)
+from: /Users/davrondjabborov/.cache/whim-upgrade/beta-2/from-397438/Whim.app, build 397438, sha256 bf463c8ad0530791ebd12157f78598113c23664406338208351dbcb6a229e4ec
+seed: scripts/release/upgrade-check/seed.yaml
+to: /Users/davrondjabborov/.cache/whim-upgrade/beta-2/to-437758/Whim.app, build 437758, sha256 78bc531d8361f4ff1da9c4bbe279f22a4848a8c3a032e50ccf5e308596e344b9
+upgrade-diff: PASS: 4 apps, 5 versions, 2 saved values, the consent grant and the device id are unchanged
+RESULT: PASS

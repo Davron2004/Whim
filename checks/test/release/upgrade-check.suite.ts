@@ -41,9 +41,10 @@ const IOS_BEFORE = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-ch
 const IOS_AFTER = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-ios/after');
 // 382511's tile menu on iOS, open on the seed's generated app: one element, its rows joined.
 const IOS_TILE_MENU = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-ios/tile-menu-382511.json');
-// 382511's Settings on Android with the keyboard up, as Maestro saw it when a seed tap failed there:
-// the app's window (its root view below) and the keyboard's, whose back key is labelled "Back" too.
-const ANDROID_SETTINGS_KEYBOARD = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-android/settings-keyboard-382511.json');
+// 397438's Settings on Android with the keyboard up (the release the seed targets), from `maestro hierarchy`
+// after the seed's own steps up to typing the server address: the app's window (its root view below) and
+// the keyboard's, whose back key is labelled "Back" too.
+const ANDROID_SETTINGS_KEYBOARD = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-android/settings-keyboard-397438.json');
 const ANDROID_APP_WINDOW = 'com.anycognition.whim:id/action_bar_root';
 const STORE = path.join(CAPTURE, 'storage/whim.launcher');
 const FLOWS = path.join(REPO_ROOT, 'scripts/release/upgrade-check');

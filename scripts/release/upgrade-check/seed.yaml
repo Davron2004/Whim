@@ -38,11 +38,29 @@ env:
 #    ScrollView (the field and its label sit under the keyboard there), and tap the header's Back
 #    once the keyboard's key is gone.
 - tapOn: "Settings"
+# Advanced is the last row of Settings and, on a build whose Settings is taller than the screen
+# (397438, iPhone 15 Plus), sits on the bottom edge where a tap does not expand it. Scroll it to the
+# middle of the screen first, then expand it and require its content before typing anything.
 - scrollUntilVisible:
     element:
       text: "ADVANCED|Advanced"
     timeout: 15000
+    centerElement: true
 - tapOn: "ADVANCED|Advanced"
+# On iOS the header's centre can lie in the home-indicator strip (y 889-921 of 932pt on 397438's
+# iPhone 15 Plus), where the system defers the touch and nothing happens. If the tap above did not
+# expand it, tap the header's upper edge, 895pt down (the header's position does not depend on the
+# screen's height).
+- runFlow:
+    when:
+      platform: iOS
+      notVisible: "Use your own server|Server address"
+    commands:
+      - tapOn:
+          point: ${'50%,' + Math.round(100 * 895 / SCREEN_HEIGHT) + '%'}
+- extendedWaitUntil:
+    visible: "Use your own server|Server address"
+    timeout: 15000
 - runFlow:
     when:
       visible: "Use your own server"
@@ -50,8 +68,11 @@ env:
       - tapOn: "Use your own server"
       - tapOn: "Use my own server"
 - tapOn: "(https://)?api\\.whim\\..*"
+# After typing, tap the hint under the field: it stays in view with the keyboard up (the shell scrolls
+# the field's block into view, which pushes the About section off the top on a tall Settings screen).
+# The alternation names the 397438 wording and today's.
 - inputText: ${SERVER_URL}
-- tapOn: "ABOUT|About"
+- tapOn: "Where Whim sends (your prompts to build apps|what you describe to make apps)\\."
 - extendedWaitUntil:
     notVisible:
       id: "android:id/input_method_nav_back"
@@ -105,6 +126,8 @@ env:
 - extendedWaitUntil:
     visible: "What should it do\\?"
     timeout: 30000
+# 397438's compose field does not take focus on its own: tap it first, or the text goes nowhere.
+- tapOn: "Describe an app…|Make an app…"
 - inputText: "A page that says hello"
 - runFlow:
     when:
@@ -160,6 +183,8 @@ env:
 - extendedWaitUntil:
     visible: "What should change\\?"
     timeout: 30000
+# The field is not focused on arrival (397438), and its placeholder differs from the first compose's.
+- tapOn: "Add, change, or remove something…|Describe a change…"
 - inputText: "Make the text bigger"
 - runFlow:
     when:
