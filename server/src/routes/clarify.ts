@@ -31,6 +31,7 @@ import type { SlotController, SlotHandle } from '../admission/slots';
 import { checkCredit, invalidateCreditCache, type CreditTransport } from '../admission/credit';
 import type { ProviderBreaker } from '../admission/provider-breaker';
 import {
+  breakerRefusal,
   budgetExhaustedRefusal,
   contentPolicyRefusal,
   dailyLimitRefusal,
@@ -255,7 +256,7 @@ export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<Unary
 
   if (providerBreaker) {
     const breaker = await providerBreaker.admit();
-    if (!breaker.ok) return { ok: false, refusal: providerUnavailableRefusal(breaker.retryAfterSeconds) };
+    if (!breaker.ok) return { ok: false, refusal: breakerRefusal(breaker.retryAfterSeconds) };
   }
 
   if (creditTransport) {
@@ -493,6 +494,7 @@ export function makeClarifyRoute(
       });
       if (!admission.ok) {
         const r = admission.refusal;
+        if (r.refusedBy) c.set('refusedBy', r.refusedBy);
         return c.json(r.body, r.status, r.headers);
       }
       const { requestId, release, policy: policyCalls } = admission;

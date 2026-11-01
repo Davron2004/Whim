@@ -43,7 +43,7 @@ export type LegacyEnvelope = typeof LEGACY_ENVELOPE;
 /** The envelope a `/v1` request is served under. */
 export type RequestEnvelope = ClientEnvelope | LegacyEnvelope;
 
-/** The context variables a `/v1` route can rely on: every one is set before any route runs. */
+/** The context variables a `/v1` route can rely on: every one but `refusedBy` is set before any route runs. */
 export interface RequestVariables {
   /** This request's id — the `x-whim-request-id` value and the ledger row id. */
   requestId: string;
@@ -57,6 +57,9 @@ export interface RequestVariables {
    *  `readProtocolLevel`, which also adapts every error body to it. The events a route makes go
    *  through `wire-level.ts#eventForLevel` with it. */
   protocolLevel: number;
+  /** Set by a route that refused at the provider breaker; the request log line carries it. Unset on
+   *  every other request. */
+  refusedBy: 'breaker';
 }
 
 /** The env every `/v1` route module is typed with. */

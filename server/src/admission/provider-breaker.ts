@@ -9,8 +9,10 @@
  * `cooldownMs`; while open, admission refuses without touching the provider. There is no timer:
  * the first `admit()` after the cooldown runs one shared probe (the pattern of `./credit.ts`'s
  * in-flight lookup), and every admission arriving meanwhile awaits that same probe. A completed
- * model call from any role, or a completed probe, closes it. State is in memory: the server runs
- * as one Cloud Run instance.
+ * call to the engineer model, or a probe that did not fail upstream, closes it; a probe that
+ * failed upstream re-opens it. Only the engineer model's calls are counted (the probe checks that
+ * model too): an outage of the model the policy, clarify, rewrite and summary roles use alone is
+ * not the breaker's to see. State is in memory: the server runs as one Cloud Run instance.
  *
  * Logs carry counts, durations and the closed `errorKind`/`status` vocabulary, never content.
  */
@@ -77,9 +79,16 @@ export function createProviderBreaker(options: ProviderBreakerOptions): Provider
     retryAfterSeconds: Math.ceil((until - clock()) / 1000),
   });
 
-  const close = (openedAt: number): void => {
+  const close = (openedAt: number, probeFailure?: ModelFailure): void => {
     state = { kind: 'closed', count: 0, firstAt: 0 };
-    log.info({ openMs: clock() - openedAt }, PROVIDER_BREAKER_CLOSED_MESSAGE);
+    log.info(
+      {
+        openMs: clock() - openedAt,
+        ...(probeFailure ? { errorKind: probeFailure.errorKind } : {}),
+        ...(probeFailure?.status !== undefined ? { status: probeFailure.status } : {}),
+      },
+      PROVIDER_BREAKER_CLOSED_MESSAGE,
+    );
   };
 
   const recordFailure = (failure: ModelFailure): void => {
@@ -119,12 +128,19 @@ export function createProviderBreaker(options: ProviderBreakerOptions): Provider
     // A call that completed while the probe was out has already closed the breaker, and it may have
     // opened again since: a probe that is no longer the current state has no say.
     if (!isCurrent()) return currentVerdict();
-    if (failure === undefined) {
-      close(openedAt);
+    // Only an upstream failure says the provider is still down. A probe refused for any other
+    // reason (a 402, a 401, a 400) would fail the same way every time, and an open breaker refuses
+    // before the credit check: it would hide `budget_exhausted` and its alert until a restart.
+    if (failure === undefined || !failure.upstream) {
+      close(openedAt, failure);
       return { ok: true };
     }
     const until = clock() + cooldownMs;
     state = { kind: 'open', openedAt, until };
+    log.warn(
+      { reopened: true, windowMs, cooldownMs, errorKind: failure.errorKind, ...(failure.status !== undefined ? { status: failure.status } : {}) },
+      PROVIDER_BREAKER_OPEN_MESSAGE,
+    );
     return refusal(until);
   };
 
@@ -182,12 +198,14 @@ async function* observeDeltas(deltas: AsyncIterable<ModelDelta>, signal: AbortSi
   breaker.record('completed');
 }
 
-/** The feed (D8): wraps the one client every role shares, so each call's outcome reaches the
- *  breaker. Everything else about the stream passes through untouched. */
-export function withProviderBreaker(inner: ModelClient, breaker: ProviderBreaker): ModelClient {
+/** The feed (D8): wraps the one client every role shares, so each call to the engineer model
+ *  reaches the breaker. A call to any other model neither counts nor resets, and every stream
+ *  passes through untouched. */
+export function withProviderBreaker(inner: ModelClient, breaker: ProviderBreaker, engineerModel: string): ModelClient {
   return {
     stream(req: ModelRequest, signal?: AbortSignal): ModelStream {
       const stream = inner.stream(req, signal);
+      if (req.model !== engineerModel) return stream;
       return { ...stream, deltas: observeDeltas(stream.deltas, signal, breaker) };
     },
   };
@@ -225,7 +243,7 @@ export interface GuardedModel {
 }
 
 /** The composition root's one step (D8): builds the breaker from the configuration and wraps the
- *  client every role shares, so the pipeline, summary, policy, clarify and rewrite all feed it.
+ *  client every role shares; the calls to the roster's engineer model feed it.
  *  The probe goes through the client as given, not the wrapped one. */
 export function guardModel(
   model: { client: ModelClient; roster: ModelRoster },
@@ -240,5 +258,5 @@ export function guardModel(
     log: breakerLog,
     probe: createModelProbe(model.client, model.roster),
   });
-  return { model: { client: withProviderBreaker(model.client, breaker), roster: model.roster }, breaker };
+  return { model: { client: withProviderBreaker(model.client, breaker, model.roster.engineer.model), roster: model.roster }, breaker };
 }

@@ -14,7 +14,7 @@ import { REFUSAL_RULES, refusalRemedy, refusalText, retryAtOf, retryLine, servic
 import { GenerationClientError } from '../transport-shared';
 import { rewritePrompt } from '../generation-client';
 import { grantedOptions } from './client-fixtures';
-import { providerUnavailableRefusal } from '../../../../server/src/admission/refusals';
+import { breakerRefusal } from '../../../../server/src/admission/refusals';
 import { errorForLevel } from '../../../../server/src/wire-level';
 import { PROTOCOL_LEVEL } from '../wire-headers';
 import { formatClockTime } from '../copy';
@@ -62,7 +62,7 @@ export async function runServiceRefusalTests(h: Harness): Promise<void> {
 
   // The refusal as the server's own builder makes it and the route answers it, read by the real client.
   await h.test('provider_unavailable: the server’s refusal with Retry-After 45 is a refusal carrying its hint and a 45-second window, landing at the sender, neutral, with the hint verbatim', async () => {
-    const built = providerUnavailableRefusal(45);
+    const built = breakerRefusal(45);
     const onWire = errorForLevel(built.body, PROTOCOL_LEVEL);
     h.eq(onWire.compat?.min, PROTOCOL_LEVEL, 'setup: the route sends this build the refusal with its compat, as the wire form');
     const answer = async () => new Response(JSON.stringify(onWire), { status: built.status, headers: { 'Content-Type': 'application/json', ...built.headers } });

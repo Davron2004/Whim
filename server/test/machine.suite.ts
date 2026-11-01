@@ -2302,6 +2302,24 @@ async function testSecondProviderDropIsTerminal(): Promise<void> {
   eq('second drop: both dropped calls are left for reconciliation', trace.uncreditedGenerationIds, ['gen-dropped-1', 'gen-dropped-2']);
 }
 
+async function testUpstreamShapedThrowOutsideATurnIsInternal(): Promise<void> {
+  section('machine — provider_unavailable is decided at the model turn: an upstream-shaped throw from a stage is an internal_error (#66, D6)');
+
+  // The same error a failed engineer call carries, thrown by the check stage instead.
+  const model = new ScriptedModelClient(ROSTER, [planTurn([VALID_PLAN_JSON]), engineerTurn(['export default {};'])]);
+  const throwingCheck: CheckStage = {
+    check: () => {
+      throw new OpenRouterNetworkError('check stage hit a 503', undefined, 503);
+    },
+  };
+  const trace: RunTrace = { generationIds: [] };
+  const { events } = await runLogged(baseDeps({ model, check: throwingCheck }), trace);
+  assertCompletedEnvelope('stage throws 503', events);
+  eq('stage throws 503: the generic sentence, not the provider one', lastFailure(events)?.reason, GENERIC_INTERNAL_ERROR_REASON);
+  eq('stage throws 503: no cause on the terminal', lastFailure(events)?.cause, undefined);
+  eq('stage throws 503: the trace records internal_error', trace.failureCode, 'internal_error');
+}
+
 async function testOnlyUpstreamGenerateAndRepairFailuresAreResent(): Promise<void> {
   section('machine — only a turn failing upstream is resent: a 4xx or a non-provider error is not, on any turn (beta-1 D10, #57)');
 
@@ -2549,6 +2567,7 @@ export async function runMachineTests(): Promise<void> {
   await testProviderDropBeforeFirstTokenIsResent();
   await testProviderDropMidTurnRestarts();
   await testSecondProviderDropIsTerminal();
+  await testUpstreamShapedThrowOutsideATurnIsInternal();
   await testOnlyUpstreamGenerateAndRepairFailuresAreResent();
   await testNoChangeSummaryNeedsUnchangedSource();
   await testRunTraceOutcomeAndBudgetDefaults();

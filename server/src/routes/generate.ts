@@ -42,12 +42,12 @@ import type { LineOutcome, LineTicket, SlotController, SlotHandle } from '../adm
 import { checkCredit, type CreditTransport } from '../admission/credit';
 import type { ProviderBreaker } from '../admission/provider-breaker';
 import {
+  breakerRefusal,
   budgetExhaustedRefusal,
   contentPolicyRefusal,
   dailyLimitRefusal,
   payloadTooLargeRefusal,
   policyUnavailableRefusal,
-  providerUnavailableRefusal,
   serverBusyCeilingRefusal,
   serverBusyRefusal,
   slotRefusal,
@@ -226,6 +226,7 @@ export function makeGenerateRoute(pipeline: Pipeline, usageStore: UsageStore, op
       });
       if (!admission.ok) {
         const r = admission.refusal;
+        if (r.refusedBy) c.set('refusedBy', r.refusedBy);
         return c.json(r.body, r.status, r.headers);
       }
 
@@ -279,7 +280,7 @@ async function admitGeneration(deps: AdmissionDeps): Promise<Admission> {
 
   if (providerBreaker) {
     const breaker = await providerBreaker.admit();
-    if (!breaker.ok) return { ok: false, refusal: providerUnavailableRefusal(breaker.retryAfterSeconds) };
+    if (!breaker.ok) return { ok: false, refusal: breakerRefusal(breaker.retryAfterSeconds) };
   }
 
   if (creditTransport) {

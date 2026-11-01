@@ -19,6 +19,9 @@ export interface ServiceRefusal {
   /** `{ 'Retry-After': '<integer seconds>' }` on `daily_limit`, the ceiling `server_busy` and a
    *  `provider_unavailable` given a window; empty on every other refusal. Pass straight to the response as headers. */
   readonly headers: Readonly<Record<string, string>>;
+  /** Set exactly on a refusal made by an open provider breaker, so the request log line can tell it
+   *  from a `provider_unavailable` that a clarify or rewrite call came to mid-call. */
+  readonly refusedBy?: 'breaker';
 }
 
 /** The D8 hint table. `server_busy` has two variants: capacity (also used while draining) and the
@@ -52,8 +55,9 @@ function refusal(
   error: ServiceRefusalCode,
   hint: string,
   headers: Readonly<Record<string, string>> = NO_HEADERS,
+  refusedBy?: 'breaker',
 ): ServiceRefusal {
-  return Object.freeze({ status, body: Object.freeze({ error, hint }), headers });
+  return Object.freeze({ status, body: Object.freeze({ error, hint }), headers, ...(refusedBy ? { refusedBy } : {}) });
 }
 
 function retryAfterUntilMidnight(now: () => number): Readonly<Record<string, string>> {
@@ -101,12 +105,16 @@ export function budgetExhaustedRefusal(): ServiceRefusal {
   return refusal(503, 'budget_exhausted', REFUSAL_HINTS.budget_exhausted);
 }
 
-/** `503` — the AI provider the server depends on is failing. `Retry-After` (whole seconds,
- *  rounded up by the caller) only when a window is known, as from an open breaker; a run that
- *  failed mid-call has none. */
-export function providerUnavailableRefusal(retryAfterSeconds?: number): ServiceRefusal {
-  const headers = retryAfterSeconds === undefined ? NO_HEADERS : Object.freeze({ 'Retry-After': String(retryAfterSeconds) });
-  return refusal(503, 'provider_unavailable', REFUSAL_HINTS.provider_unavailable, headers);
+/** `503` — the AI provider the server depends on is failing, as a call came to mid-request. No
+ *  `Retry-After`: no window is known. */
+export function providerUnavailableRefusal(): ServiceRefusal {
+  return refusal(503, 'provider_unavailable', REFUSAL_HINTS.provider_unavailable);
+}
+
+/** `503` — an open provider breaker refuses before any work. `Retry-After` is the whole seconds
+ *  left in its cooldown (rounded up by the caller), and the refusal is marked `refusedBy: 'breaker'`. */
+export function breakerRefusal(retryAfterSeconds: number): ServiceRefusal {
+  return refusal(503, 'provider_unavailable', REFUSAL_HINTS.provider_unavailable, Object.freeze({ 'Retry-After': String(retryAfterSeconds) }), 'breaker');
 }
 
 /** `426` — the request's build is below its platform's minimum (the `/v1` minimum-build gate).

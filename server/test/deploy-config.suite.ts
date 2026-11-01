@@ -3389,13 +3389,13 @@ async function alertFilterTests(): Promise<void> {
     [breakerPolicy.displayName, 'WHIM_PROVIDER_BREAKER_FAILURES', 'WHIM_PROVIDER_BREAKER_WINDOW_MS', 'WHIM_PROVIDER_BREAKER_COOLDOWN_MS'].every((name) => operatingDocs.includes(name)),
   );
   eq(
-    'its filter matches the one line the breaker writes when it opens, not its probe failure or its close',
+    'its filter matches the line the breaker writes when it opens and again when a failed probe re-opens it, not the probe failure or the close',
     breakerMatching(breakerFilter).map((line) => line.msg),
-    [PROVIDER_BREAKER_OPEN_MESSAGE],
+    [PROVIDER_BREAKER_OPEN_MESSAGE, PROVIDER_BREAKER_OPEN_MESSAGE],
   );
   check(
     '  red: a filter on the breaker\'s scope alone is not discriminating — it also catches the probe failure and the close',
-    breakerMatching(`${CLOUD_RUN_SERVER_SELECTOR} AND jsonPayload.scope="provider-breaker"`).length === 3,
+    breakerMatching(`${CLOUD_RUN_SERVER_SELECTOR} AND jsonPayload.scope="provider-breaker"`).length === 4,
     JSON.stringify(breakerLines.map((line) => line.msg)),
   );
   const weakerFilter = `${CLOUD_RUN_SERVER_SELECTOR} AND jsonPayload.status=503`;

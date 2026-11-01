@@ -31,7 +31,7 @@ import { invalidateCreditCache, type CreditLookupResponse, type CreditTransport 
 import { CLASSIFIER_SYSTEM_MARKER, cachedPolicy, ModelContentPolicy, StubContentPolicy, type ContentPolicy } from '../src/policy';
 import { defaultModelRoster, type ModelClient, type ModelDelta, type ModelRoster, type ModelStream } from '../src/generation/model';
 import { ResolveTracker, type GenerationStats, type UsageAndCostTransport } from '../src/usage/resolve';
-import { ScriptedModelClient } from './scripted-model';
+import { ScriptedModelClient, type ScriptedTurn } from './scripted-model';
 import { REFUSAL_HINTS } from '../src/admission/refusals';
 import { OpenRouterAuthError, OpenRouterNetworkError, OpenRouterRateLimitError } from '../src/openrouter';
 import { PROTOCOL_HEADERS } from './route-doubles';
@@ -1018,6 +1018,23 @@ async function testMalformedClassifierVerdictKeepsAccounting(): Promise<void> {
   }
 }
 
+async function testUpstreamClassifierFailureIsPolicyUnavailable(): Promise<void> {
+  section('A classifier call that fails upstream answers policy_unavailable, never provider_unavailable (generation-reliability D8)');
+
+  for (const route of ['clarify', 'rewrite'] as const) {
+    invalidateCreditCache();
+    const outage = (): ScriptedTurn => ({ role: 'rewrite', deltas: [], error: new OpenRouterNetworkError('provider unavailable', undefined, 503) });
+    const model = new ScriptedModelClient(ROSTER, [outage(), outage()]);
+    const policy = cachedPolicy(
+      new ModelContentPolicy({ modelClient: model, rewriteModelId: ROSTER.rewrite.model, categories: 'test category', timeoutMs: 5000 }),
+    );
+    const { app } = testApp({ model, policy });
+    const res = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER);
+    const body = (await res.json()) as { error?: string };
+    eq(`${route}: an upstream classifier failure is the fail-closed content-check refusal`, [res.status, body.error, res.headers.get('retry-after')], [503, 'policy_unavailable', null]);
+  }
+}
+
 async function testFailedClassifierUsageStillResolvesById(): Promise<void> {
   section('Classifier IDs survive a stream failure before usage');
 
@@ -1569,6 +1586,7 @@ export async function runRoutesUnaryTests(): Promise<void> {
   await testClassifierReasoningIsIndependentOfRewriteRole();
   await testCachedVerdictAddsNoClassifierUsage();
   await testMalformedClassifierVerdictKeepsAccounting();
+  await testUpstreamClassifierFailureIsPolicyUnavailable();
   await testFailedClassifierUsageStillResolvesById();
   await testClassifierCreditedOnceOnUnaryEndings();
   await testBudgetExhaustedMidCall();

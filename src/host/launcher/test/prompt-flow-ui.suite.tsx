@@ -25,7 +25,7 @@ import { Share, emitAccessibility, holdModalDismissals, modalPresentations } fro
 import { cancelled, elapse, holdAnimations } from './native-reanimated';
 import type { FlickerPulse } from '../home-live';
 import { chooseRow, longPress, pressToastAction, toastOf } from './home-rig';
-import { providerUnavailableRefusal } from '../../../../server/src/admission/refusals';
+import { breakerRefusal } from '../../../../server/src/admission/refusals';
 import { errorForLevel } from '../../../../server/src/wire-level';
 import { PROTOCOL_LEVEL } from '../wire-headers';
 import { streamResponse } from './client-fixtures';
@@ -724,7 +724,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
   });
 
   await h.test('flow: a generation refused during a provider outage lands on the plan page with the server’s hint, the rows and a held Make it, and never the failure page', async () => {
-    const refusal = providerUnavailableRefusal(45);
+    const refusal = breakerRefusal(45);
     const onWire = errorForLevel(refusal.body, PROTOCOL_LEVEL);
     const rows = [{ label: 'Timer', text: 'Counts down.' }, { label: 'Alert', text: 'Buzzes.' }];
     await withLauncher({
@@ -757,7 +757,7 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
   });
 
   await h.test('flow: a clarify refused during a provider outage lands back on Describe with the words and the hint', async () => {
-    const refusal = providerUnavailableRefusal(45);
+    const refusal = breakerRefusal(45);
     await withLauncher({
       server: () => new Response(JSON.stringify(errorForLevel(refusal.body, PROTOCOL_LEVEL)), { status: refusal.status, headers: { 'Content-Type': 'application/json', ...refusal.headers } }),
     }, async ({ tree }) => {
