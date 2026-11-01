@@ -41,6 +41,8 @@ import { unwrapSourceFence } from './source-block';
 import { claimsNoChange, neutralSummary, type SourceChange, type Summariser, type SummariserInput } from './summarise';
 import type { TerminalFailureCode } from './failure-codes';
 import { invalidateCreditCache } from '../admission/credit';
+import { REFUSAL_HINTS } from '../admission/refusals';
+import { modelFailureOf } from '../model-failure';
 import { log, type ServerLogger } from '../logger';
 
 /** Per-run pipeline breadcrumbs — run start, stage transitions, model-call failures, repair
@@ -260,6 +262,10 @@ export const EXPIRED_REASON = 'This took too long to make. Please try again.';
 /** A provider `402` (design D6b). Same sentence as the `budget_exhausted` admission refusal hint, so
  *  a device sees one wording whether the budget ran out before admission or mid-run. */
 export const CREDIT_EXHAUSTED_REASON = 'Whim has used up its budget for making apps for now. Try again later.';
+/** A turn that failed upstream twice (#66, design D6). The `provider_unavailable` refusal hint
+ *  itself, imported so a run's terminal and a refused request can never drift apart: no vendor or
+ *  model name, and it says the failure is not the user's doing. */
+export const PROVIDER_UNAVAILABLE_REASON = REFUSAL_HINTS.provider_unavailable;
 
 function sumUsage(a: Usage, b: Usage): Usage {
   return {
@@ -350,7 +356,8 @@ function errorClassOf(error: unknown): string {
   return error instanceof Error ? error.constructor.name : typeof error;
 }
 
-/** How many times a generate or repair turn is resent after an upstream failure (beta-1 D10). */
+/** How many times a plan, generate or repair turn is resent after an upstream failure (beta-1 D10,
+ *  plan added in #57). */
 const MODEL_TURN_RETRIES = 1;
 
 /** One model call's ending: its text, or the error it failed with and whether it had already
@@ -745,9 +752,12 @@ export class GenerationMachine {
 
   /** A stage or model call threw. Stops quietly when the run was already aborted or expired;
    *  otherwise ends in one failure. A provider `402` gets its own reason and no repair, since a
-   *  repair spends more of a budget that is already gone (design D6b). */
+   *  repair spends more of a budget that is already gone (design D6b). A model turn that is still
+   *  failing upstream after its resend ends as `provider_unavailable`, with the structured `cause`
+   *  so a device does not advise rewording (#66, design D6/D11); no other ending sets `cause`. */
   private async *endOnThrow(err: unknown, signal: AbortSignal, state: RunState): AsyncGenerator<GenerationEvent, void> {
     const creditExhausted = isCreditExhaustedError(err);
+    const providerUnavailable = !creditExhausted && modelFailureOf(err, signal).upstream;
     // Authoritative even when an abort or the deadline got there first: the next admission must
     // re-query the credit rather than trust the cached value.
     if (creditExhausted) invalidateCreditCache();
@@ -760,6 +770,19 @@ export class GenerationMachine {
       },
       creditExhausted ? 'provider credit exhausted' : 'run failed',
     );
+    if (providerUnavailable) {
+      yield* this.emitCompletion(state, signal, {
+        terminal: {
+          type: 'failure',
+          reason: PROVIDER_UNAVAILABLE_REASON,
+          attempts: state.candidatesProduced,
+          diagnostics: state.diagnostics,
+          cause: 'provider_unavailable',
+        },
+        code: 'provider_unavailable',
+      });
+      return;
+    }
     yield* this.emitCompletion(state, signal, {
       terminal: {
         type: 'failure',
@@ -810,9 +833,10 @@ export class GenerationMachine {
    *  reasoning setting actually streams one: the device needs to know the model is working during
    *  the plan turn just as much as during generate/repair — it is the silent one otherwise.
    *
-   *  A generate or repair turn that fails upstream (`isUpstreamModelFailure`: 5xx, 429, network or
-   *  stream error) is sent once more with the same messages (beta-1 D10). When the failed attempt
-   *  had already streamed `token` events, `restart` goes first, so the device voids them. Any other
+   *  A plan, generate or repair turn that fails upstream (`isUpstreamModelFailure`: 5xx, 429,
+   *  network or stream error) is sent once more with the same messages (beta-1 D10). When the failed
+   *  attempt had already streamed `token` events (never a plan turn), `restart` goes first, so the
+   *  device voids them. Any other
    *  failure, a failure after the run was stopped, and the resend's own failure are thrown to
    *  `endOnThrow` exactly as before. */
   private async *runModelTurn(
@@ -824,7 +848,7 @@ export class GenerationMachine {
     state: RunState,
     emitTokens: boolean,
   ): AsyncGenerator<GenerationEvent, { text: string; aborted: boolean }> {
-    const retries = label === 'generate' || label === 'repair' ? MODEL_TURN_RETRIES : 0;
+    const retries = label === 'plan' || label === 'generate' || label === 'repair' ? MODEL_TURN_RETRIES : 0;
     for (let resends = 0; ; resends++) {
       const turn = yield* this.streamModelTurn(messages, roleSetting, label, signal, trace, state, emitTokens);
       if (turn.ok) return { text: turn.text, aborted: turn.aborted };

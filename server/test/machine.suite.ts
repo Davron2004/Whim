@@ -26,6 +26,7 @@ import {
   REPAIR_EXHAUSTED_REASON,
   UNVERIFIED_RUN_REASON,
   GENERIC_INTERNAL_ERROR_REASON,
+  PROVIDER_UNAVAILABLE_REASON,
   EXPIRED_REASON,
   CREDIT_EXHAUSTED_REASON,
   type BuildOutcome,
@@ -1991,7 +1992,8 @@ async function testTheProviderClientsHttp402IsRecognised(): Promise<void> {
 
   const cases = [
     { status: 402, reason: CREDIT_EXHAUSTED_REASON },
-    { status: 500, reason: GENERIC_INTERNAL_ERROR_REASON },
+    { status: 500, reason: PROVIDER_UNAVAILABLE_REASON },
+    { status: 401, reason: GENERIC_INTERNAL_ERROR_REASON },
   ];
   for (const c of cases) {
     invalidateCreditCache();
@@ -2279,7 +2281,7 @@ async function testProviderDropMidTurnRestarts(): Promise<void> {
 }
 
 async function testSecondProviderDropIsTerminal(): Promise<void> {
-  section('machine — a resent turn that fails too ends the run as it does today (beta-1 D10)');
+  section('machine — a resent turn that fails upstream too ends the run as provider_unavailable (beta-1 D10, #66)');
 
   // A third engineer turn is scripted and would deliver: only a second resend could reach it.
   const model = new ScriptedModelClient(ROSTER, [
@@ -2292,8 +2294,8 @@ async function testSecondProviderDropIsTerminal(): Promise<void> {
   const { events, retried, failed } = await runLogged(deliveringDeps(model, []), trace);
 
   assertCompletedEnvelope('second drop', events);
-  eq('second drop: the run ends in the generic failure', lastFailure(events)?.reason, GENERIC_INTERNAL_ERROR_REASON);
-  eq('second drop: the trace records internal_error', trace.failureCode, 'internal_error');
+  eq('second drop: the run ends in the provider sentence', lastFailure(events)?.reason, PROVIDER_UNAVAILABLE_REASON);
+  eq('second drop: the trace records provider_unavailable', trace.failureCode, 'provider_unavailable');
   eq('second drop: the turn was sent twice, never a third time', model.requests.length, 3);
   eq('second drop: one restart only — the second failure sends none', tokenFlow(events), ['token:export ', 'restart', 'token:export ']);
   eq('second drop: one retry line, and the run failure logged as before', [retried.length, failed.map((r) => r.errorClass)], [1, ['OpenRouterNetworkError']]);
@@ -2301,12 +2303,17 @@ async function testSecondProviderDropIsTerminal(): Promise<void> {
 }
 
 async function testOnlyUpstreamGenerateAndRepairFailuresAreResent(): Promise<void> {
-  section('machine — only a generate/repair turn failing upstream is resent: a plan turn, a 4xx or a non-provider error is not (beta-1 D10)');
+  section('machine — only a turn failing upstream is resent: a 4xx or a non-provider error is not, on any turn (beta-1 D10, #57)');
 
   const cases: { label: string; turns: ScriptedTurn[]; calls: number }[] = [
     {
-      label: 'a plan turn that drops',
-      turns: [{ role: 'plan', deltas: [], error: new OpenRouterNetworkError('fetch failed') }, planTurn([VALID_PLAN_JSON])],
+      label: 'a plan turn refused with a 400',
+      turns: [{ role: 'plan', deltas: [], error: new OpenRouterNetworkError('OpenRouter: HTTP 400', undefined, 400) }, planTurn([VALID_PLAN_JSON])],
+      calls: 1,
+    },
+    {
+      label: 'a plan turn failing with a non-provider error',
+      turns: [{ role: 'plan', deltas: [], error: new Error('parse failure') }, planTurn([VALID_PLAN_JSON])],
       calls: 1,
     },
     {
@@ -2327,6 +2334,20 @@ async function testOnlyUpstreamGenerateAndRepairFailuresAreResent(): Promise<voi
     eq(`${label}: is not resent`, [model.requests.length, retried.length], [calls, 0]);
     eq(`${label}: sends no restart`, events.filter((e) => e.type === 'restart').length, 0);
   }
+
+  // A plan turn that drops IS resent (#57): once, with no restart, because a plan streams no tokens.
+  const dropped = new ScriptedModelClient(ROSTER, [
+    { role: 'plan', deltas: [], error: new OpenRouterNetworkError('fetch failed'), id: 'gen-plan-dropped' },
+    planTurn([VALID_PLAN_JSON]),
+    engineerTurn(['export default {};']),
+  ]);
+  const droppedTrace: RunTrace = { generationIds: [] };
+  const planDrop = await runLogged(deliveringDeps(dropped, []), droppedTrace);
+  eq('a plan turn that drops: is resent once, then the run goes on to the engineer', dropped.requests.map((r) => r.role), ['plan', 'plan', 'engineer']);
+  eq('a plan turn that drops: one retry line, naming the plan', planDrop.retried.map((r) => r.role), ['plan']);
+  eq('a plan turn that drops: sends no restart', planDrop.events.filter((e) => e.type === 'restart').length, 0);
+  eq('a plan turn that drops: the run delivers', planDrop.events.at(-1)?.type, 'result');
+  eq('a plan turn that drops: the dropped call is left for reconciliation', droppedTrace.uncreditedGenerationIds, ['gen-plan-dropped']);
 }
 
 // ── §A no-change summary requires unchanged source (beta-1 D13, #106) ─────────

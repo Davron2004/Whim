@@ -8,7 +8,8 @@
  *
  * Zero questions is a first-class success (`200` with an empty list), never an error and never a
  * degraded mode: most prompts need nothing clarified. What is NOT dressed up as zero questions is
- * a broken model call — that stays an honest `502`, mirroring `/v1/rewrite`.
+ * a broken model call: an honest `502`, mirroring `/v1/rewrite`, or `503 provider_unavailable`
+ * when the provider failed upstream (#66, `../model-failure.ts`).
  *
  * Admission (design D6a/D8; specs/server-admission-control "Admission checks run in a fixed
  * order"): raw body cap, body validation, prompt byte cap, operator credit, drain state, the
@@ -33,11 +34,13 @@ import {
   dailyLimitRefusal,
   payloadTooLargeRefusal,
   policyUnavailableRefusal,
+  providerUnavailableRefusal,
   serverBusyCeilingRefusal,
   slotRefusal,
   type ServiceRefusal,
 } from '../admission/refusals';
 import { PolicyUnavailableError, policyMetering, type ContentPolicy, type PolicyMetering, type PolicyRoute } from '../policy';
+import { modelFailureOf } from '../model-failure';
 import { buildClarifyPolicyInput } from '../policy/input';
 import {
   resolveRequestUsage,
@@ -584,6 +587,11 @@ async function runClarifyWork(
       invalidateCreditCache();
       await finish('error', undefined, ids, false, 'budget_exhausted');
       const r = budgetExhaustedRefusal();
+      return Response.json(r.body, { status: r.status, headers: r.headers });
+    }
+    if (modelFailureOf(err, combined).upstream) {
+      await finish('error', undefined, ids, false, 'provider_unavailable');
+      const r = providerUnavailableRefusal();
       return Response.json(r.body, { status: r.status, headers: r.headers });
     }
     await finish('error', undefined, ids, false, 'model_failure');
