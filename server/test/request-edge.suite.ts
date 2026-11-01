@@ -559,7 +559,7 @@ async function testProtocolLevelRequired(): Promise<void> {
   const health = await within(Promise.resolve(testApp().request('/healthz')));
   eq('a route outside /v1 needs no protocol level', health === TIMED_OUT ? 'timed out' : health.status, 200);
 
-  for (const level of [PROTOCOL_LEVEL, PROTOCOL_LEVEL + 1]) {
+  for (const level of [1, PROTOCOL_LEVEL, 3]) {
     const res = await send(testApp({ stub: true }), '/v1/clarify', { 'x-whim-device': DEVICE_ID, ...ENVELOPE, [PROTOCOL_HEADER]: String(level) }, { prompt: 'a timer' });
     eq(`a client declaring level ${level} is served`, res.status, 200);
   }

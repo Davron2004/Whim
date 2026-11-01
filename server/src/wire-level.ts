@@ -9,8 +9,13 @@
  * a client below the message's level gets the entry's lower-level form when it has one, and
  * otherwise only the envelope — `{ type, compat }` for an event, `{ error, hint, compat }` for an
  * error — so its own decoder applies the fallback. It never gets the higher-level payload.
+ *
+ * A level-1 message may also gain a field later: its entry's `fields` lists each such field with
+ * the level it arrived at, and a client below that level receives the message without it. That is
+ * how `failure.cause` (level 2) reaches a level-2 client only, while `failure` stays level 1.
  */
 import type { ApiError, Compat, DeviceIdError, GenerationEvent, ServiceRefusalCode } from '@whim/contract';
+import { REFUSAL_HINTS } from './admission/refusals';
 
 /** Anything that goes out as an SSE event: a contract `GenerationEvent`, or the envelope a client
  *  below the event's level gets instead. */
@@ -25,6 +30,10 @@ export interface WireEntry<M> {
   readonly level: number;
   /** Required above level 1: what a client that cannot use the message does instead. */
   readonly compat?: Compat;
+  /** Fields of this message introduced after its own level, by name to the level each arrived at.
+   *  A client below a field's level never receives the field; the rest of the message is sent
+   *  as it is. */
+  readonly fields?: Readonly<Record<string, number>>;
   /** The same content in a form a client at `clientLevel` understands, or `undefined` when there is
    *  none. The result's own entry must be at or below `clientLevel`, or the envelope is sent. */
   readonly downgrade?: (message: M, clientLevel: number) => M | undefined;
@@ -59,7 +68,7 @@ const EVENT_LEVELS = {
   queued: LEVEL_1,
   restart: LEVEL_1,
   result: LEVEL_1,
-  failure: LEVEL_1,
+  failure: Object.freeze({ level: 1, fields: Object.freeze({ cause: 2 }) }),
 } satisfies { readonly [K in GenerationEvent['type']]: WireEntry<WireEvent> };
 
 const ERROR_LEVELS = {
@@ -72,6 +81,10 @@ const ERROR_LEVELS = {
   budget_exhausted: LEVEL_1,
   update_required: LEVEL_1,
   consent_required: LEVEL_1,
+  provider_unavailable: Object.freeze({
+    level: 2,
+    compat: Object.freeze({ min: 2, fallback: 'fail', notice: REFUSAL_HINTS.provider_unavailable }),
+  }),
   missing_device_id: LEVEL_1,
   invalid_device_id: LEVEL_1,
   invalid_envelope: LEVEL_1,
@@ -94,6 +107,15 @@ function withCompat<M extends { readonly compat?: Compat }>(message: M, entry: W
   return entry.compat === undefined ? message : { ...message, compat: entry.compat };
 }
 
+/** `message` without each of its entry's `fields` introduced above `clientLevel`. */
+function withoutNewerFields<M extends { readonly compat?: Compat }>(message: M, entry: WireEntry<M>, clientLevel: number): M {
+  const newer = Object.entries(entry.fields ?? {}).filter(([name, level]) => level > clientLevel && name in message);
+  if (newer.length === 0) return message;
+  const kept: Record<string, unknown> = { ...(message as Record<string, unknown>) };
+  for (const [name] of newer) delete kept[name];
+  return kept as M;
+}
+
 /** The form of `message` a client at `clientLevel` may receive: itself (with its entry's `compat`)
  *  when its entry is at or below the level, else its downgrade when that one is, else the
  *  envelope `envelopeOf` builds from the entry's `compat`. */
@@ -105,7 +127,7 @@ function forLevel<M extends { readonly compat?: Compat }>(
   envelopeOf: (compat: Compat) => M,
 ): M {
   const entry = entryOf(entries, keyOf(message));
-  if (entry.level <= clientLevel) return withCompat(message, entry);
+  if (entry.level <= clientLevel) return withCompat(withoutNewerFields(message, entry, clientLevel), entry);
   const lower = entry.downgrade?.(message, clientLevel);
   if (lower !== undefined) {
     const lowerEntry = entryOf(entries, keyOf(lower));

@@ -33,6 +33,7 @@ import {
   policyUnavailableRefusal,
   serverBusyCeilingRefusal,
   serverBusyRefusal,
+  providerUnavailableRefusal,
   slotRefusal,
   updateRequiredRefusal,
   type ServiceRefusal,
@@ -394,6 +395,7 @@ function runRefusals(): void {
     { name: 'content_policy', refusal: contentPolicyRefusal(), status: 422, code: 'content_policy' },
     { name: 'policy_unavailable', refusal: policyUnavailableRefusal(), status: 503, code: 'policy_unavailable' },
     { name: 'budget_exhausted', refusal: budgetExhaustedRefusal(), status: 503, code: 'budget_exhausted' },
+    { name: 'provider_unavailable', refusal: providerUnavailableRefusal(), status: 503, code: 'provider_unavailable' },
     { name: 'update_required', refusal: updateRequiredRefusal(), status: 426, code: 'update_required' },
     { name: 'consent_required', refusal: consentRequiredRefusal(), status: 403, code: 'consent_required' },
   ];
@@ -412,6 +414,8 @@ function runRefusals(): void {
 
   const covered = new Set(cases.map((c) => c.code));
   check('every ServiceRefusalCode has a builder', ServiceRefusalCode.options.every((code) => covered.has(code)));
+
+  eq('provider_unavailable carries Retry-After exactly when given a window, in whole seconds', [providerUnavailableRefusal(45).headers, providerUnavailableRefusal().headers], [{ 'Retry-After': '45' }, {}]);
 
   const onlyKnowable = [deviceBusyRefusal(), serverBusyRefusal(), dailyLimitRefusal(clock)].map((r) => 'Retry-After' in r.headers);
   eq('of device_busy, concurrency server_busy and daily_limit, only daily_limit carries Retry-After', onlyKnowable, [false, false, true]);
