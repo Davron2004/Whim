@@ -36,3 +36,5 @@
 - re-review chain-breaker #2 (Opus): ACCEPT (1-6 resolved; 2 LOW: stale Gap lines in report, stale probe's deadline cancel runs late — harmless, accepted). handoff/breaker-review-2.md
 - runner chain-breaker #2: PASS (gate 0, e2e 0, integrity 0, ratchet 0, wiring e2e redcheck assertion RED). handoff/breaker-runner-2.md
 - merged: chain-breaker (tasks 4.1–4.6 ticked). Next: gate-full on the staging tip (final regate) + whole-change Opus review in parallel.
+- gate-full on cae360d2 (all four chains): FULL GATE PASSED, exit 0.
+- whole-change review #1 (Opus): REJECT — MED: breaker can stay open forever on a non-upstream probe failure; MED: any-model success resets the count (engineer-only outage never opens). LOW 3-8. Decisions: probe non-upstream failure closes; count/reset on engineer model only; policy upstream stays policy_unavailable (documented); provider_unavailable origin tagged at model-turn; breaker refusals marked on the request line; run re-run line in delta; alert doc note; 8 accepted. Fix chain fix1 dispatched (BASE cae360d2, .claude/worktrees/generation-reliability-fix1). handoff/whole-review-1.md
