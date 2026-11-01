@@ -68,10 +68,11 @@ env:
       - tapOn: "Use your own server"
       - tapOn: "Use my own server"
 - tapOn: "(https://)?api\\.whim\\..*"
+# After typing, tap the hint under the field: it stays in view with the keyboard up (the shell scrolls
+# the field's block into view, which pushes the About section off the top on a tall Settings screen).
+# The alternation names the 397438 wording and today's.
 - inputText: ${SERVER_URL}
-# The hint under the field stays in view with the keyboard up (the shell scrolls the field's block
-# into view, which pushes the About section off the top on a tall Settings screen).
-- tapOn: "Where Whim sends your prompts to build apps\\."
+- tapOn: "Where Whim sends (your prompts to build apps|what you describe to make apps)\\."
 - extendedWaitUntil:
     notVisible:
       id: "android:id/input_method_nav_back"
