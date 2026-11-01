@@ -17,7 +17,7 @@
  * builder is the one place that decides how an edit is stated to the model.
  *
  * Admission runs the same ordered sequence `/v1/clarify` does — raw body cap, body validation,
- * prompt byte cap, then `admitUnaryRequest` (`./clarify`): operator credit, drain/global-unary-cap,
+ * prompt byte cap, then `admitUnaryRequest` (`./clarify`): provider breaker, operator credit, drain/global-unary-cap,
  * the device's daily rewrite allowance, content policy — all before any rewrite model call.
  */
 import { Hono } from 'hono';
@@ -28,6 +28,7 @@ import type { FailureReason, UsageStore, RequestOutcome } from '../usage-store';
 import type { ServerConfig } from '../config';
 import type { SlotController } from '../admission/slots';
 import type { CreditTransport } from '../admission/credit';
+import type { ProviderBreaker } from '../admission/provider-breaker';
 import { invalidateCreditCache } from '../admission/credit';
 import { budgetExhaustedRefusal, payloadTooLargeRefusal, providerUnavailableRefusal } from '../admission/refusals';
 import { modelFailureOf } from '../model-failure';
@@ -255,6 +256,7 @@ export interface RewriteRouteOptions {
   slots: SlotController;
   policy: ContentPolicy;
   creditTransport: CreditTransport | undefined;
+  providerBreaker?: ProviderBreaker;
   resolveTracker: ResolveTracker;
   resolveTransport: UsageAndCostTransport;
   resolveBounds: Partial<ResolveBounds> | undefined;
@@ -272,7 +274,7 @@ export function makeRewriteRoute(
   options: RewriteRouteOptions,
 ): Hono<V1Env> {
   const app = new Hono<V1Env>();
-  const { config, clock, slots, policy, creditTransport, resolveTracker, resolveTransport, resolveBounds } = options;
+  const { config, clock, slots, policy, creditTransport, providerBreaker, resolveTracker, resolveTransport, resolveBounds } = options;
 
   app.post(
     '/',
@@ -311,6 +313,7 @@ export function makeRewriteRoute(
         usageStore,
         clock,
         slots,
+        providerBreaker,
         creditTransport,
         creditTtlMs: config.creditCacheTtlMs,
         creditFloorUsd: config.minCreditUsd,

@@ -40,12 +40,14 @@ import type { RunTrace } from '../generation/machine';
 import type { ServerConfig } from '../config';
 import type { LineOutcome, LineTicket, SlotController, SlotHandle } from '../admission/slots';
 import { checkCredit, type CreditTransport } from '../admission/credit';
+import type { ProviderBreaker } from '../admission/provider-breaker';
 import {
   budgetExhaustedRefusal,
   contentPolicyRefusal,
   dailyLimitRefusal,
   payloadTooLargeRefusal,
   policyUnavailableRefusal,
+  providerUnavailableRefusal,
   serverBusyCeilingRefusal,
   serverBusyRefusal,
   slotRefusal,
@@ -126,6 +128,8 @@ export interface GenerateRouteOptions {
   policy: ContentPolicy;
   /** Absent ⇒ the operator-credit check is skipped (`handoff/app-options.md`). */
   creditTransport: CreditTransport | undefined;
+  /** Absent ⇒ no provider breaker check (generation-reliability D8). */
+  providerBreaker?: ProviderBreaker;
   resolveTracker: ResolveTracker;
   resolveTransport: UsageAndCostTransport;
   resolveBounds: Partial<ResolveBounds> | undefined;
@@ -268,10 +272,15 @@ export function makeGenerateRoute(pipeline: Pipeline, usageStore: UsageStore, op
   return app;
 }
 
-/** Operator credit, then the slot. Anything thrown after the slot was taken gives it back before
+/** The provider breaker, operator credit, then the slot. Anything thrown after the slot was taken gives it back before
  *  the error propagates; `release()` is idempotent, so a refusal that already released is fine. */
 async function admitGeneration(deps: AdmissionDeps): Promise<Admission> {
-  const { creditTransport, config, clock, slots, deviceId } = deps;
+  const { creditTransport, providerBreaker, config, clock, slots, deviceId } = deps;
+
+  if (providerBreaker) {
+    const breaker = await providerBreaker.admit();
+    if (!breaker.ok) return { ok: false, refusal: providerUnavailableRefusal(breaker.retryAfterSeconds) };
+  }
 
   if (creditTransport) {
     const credit = await checkCredit({ transport: creditTransport, clock, ttlMs: config.creditCacheTtlMs, floorUsd: config.minCreditUsd });

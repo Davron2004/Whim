@@ -20,6 +20,7 @@ const ROSTER_ROLE_OF: Record<ModelCallLabel, ModelRole> = {
   plan: 'plan',
   generate: 'engineer',
   repair: 'repair',
+  probe: 'engineer',
 };
 
 /** One recorded turn: which roster role it must be requested for (see `ROSTER_ROLE_OF` — a

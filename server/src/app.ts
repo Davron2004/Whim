@@ -48,6 +48,7 @@ import { loadServerConfig, type ServerConfig } from './config';
 import { createSlotController, type SlotController } from './admission/slots';
 import { slotRefusal } from './admission/refusals';
 import type { CreditTransport } from './admission/credit';
+import type { ProviderBreaker } from './admission/provider-breaker';
 import { cachedPolicy } from './policy/cache';
 import { StubContentPolicy, type ContentPolicy } from './policy/policy';
 import { InMemoryReportStore, type ReportStore } from './reports/store';
@@ -132,6 +133,10 @@ export interface AppOptions {
    *  clarify and rewrite admission. Omitted entirely means the credit check is skipped (never
    *  refuses on budget) — `main.ts` supplies `createOpenRouterCreditTransport(...)` in production. */
   creditTransport?: CreditTransport;
+  /** The provider breaker generate, clarify and rewrite consult at admission, immediately before the
+   *  credit check (generation-reliability D8). Omitted means no breaker: `lifecycle.ts` supplies the
+   *  one its guarded model client feeds. */
+  providerBreaker?: ProviderBreaker;
   /** The in-flight generation registry a drain aborts once its wait runs out. Omitted, `createApp`
    *  makes one unreachable from outside. */
   inFlight?: InFlightGenerations;
@@ -208,7 +213,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   const resolveTracker = options.resolver?.tracker ?? new ResolveTracker();
   const resolveTransport = options.resolver?.transport ?? NO_OP_RESOLVE_TRANSPORT;
   const resolveBounds = options.resolver?.bounds;
-  const { creditTransport } = options;
+  const { creditTransport, providerBreaker } = options;
   const inFlight = options.inFlight ?? new InFlightGenerations();
   const minBuild: MinimumBuilds = Object.freeze({ ios: config.minBuildIos, android: config.minBuildAndroid });
   const wireRegistry = options.wireRegistry ?? (options.stub ? STUB_WIRE_REGISTRY : WIRE_REGISTRY);
@@ -353,6 +358,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
       slots,
       policy,
       creditTransport,
+      providerBreaker,
       resolveTracker,
       resolveTransport,
       resolveBounds,
@@ -370,6 +376,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
       slots,
       policy,
       creditTransport,
+      providerBreaker,
       resolveTracker,
       resolveTransport,
       resolveBounds,
@@ -384,6 +391,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
       slots,
       policy,
       creditTransport,
+      providerBreaker,
       resolveTracker,
       resolveTransport,
       resolveBounds,

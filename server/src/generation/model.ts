@@ -30,8 +30,9 @@ export type ReasoningSetting = 'off' | 'on' | 'low' | 'medium' | 'high' | 'defau
 
 /** Attributes a model call for the per-call `model call` log line (design D4) and for test
  *  assertions. Distinct from `ModelRole` (the roster's own keys): the content-policy classifier
- *  labels itself `policy` while still resolving its model from the roster's `rewrite` role. */
-export type ModelCallLabel = 'policy' | 'clarify' | 'rewrite' | 'summary' | 'plan' | 'generate' | 'repair';
+ *  labels itself `policy` while still resolving its model from the roster's `rewrite` role, and the
+ *  provider breaker's `probe` resolves from `engineer`. */
+export type ModelCallLabel = 'policy' | 'clarify' | 'rewrite' | 'summary' | 'plan' | 'generate' | 'repair' | 'probe';
 
 export interface ModelRequest {
   /** The resolved model id for this turn — the caller picks it via a `ModelRoster`; a

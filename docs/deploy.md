@@ -580,9 +580,18 @@ string the deploy scripts use, from `deploy/lib.sh`).
   | Whim: new report | a user sent a report; the email names its id and reason only | at most 1 per 5 min | `node server/admin.mjs reports show <id>` (then `reports list` for any the rate limit folded in) |
   | Whim: generation failures | more than 5 `terminal failure` lines in an hour (log metric `whim-terminal-failures`) | while it lasts | `node server/admin.mjs usage --days 1` for counts by reason, then the "Terminal failures" query above |
   | Whim: credit exhausted | a `budget_exhausted` refusal (`jsonPayload.msg="request" jsonPayload.error="budget_exhausted"`), or a mid-generation provider `402` (`jsonPayload.scope="run" jsonPayload.msg="provider credit exhausted"`) | at most 1 per hour | check the OpenRouter credit balance at https://openrouter.ai/credits and top it up |
+  | Whim: AI provider unavailable | the provider breaker opened: `jsonPayload.msg="provider breaker open"`, after 4 consecutive upstream model failures (a 5xx, a rate limit, a network error or a timeout) within 3 minutes | at most 1 per hour | read `errorKind` and `status` on that line, check https://status.openrouter.ai; the server probes the provider once a minute and closes the breaker itself |
   | Whim: device error | a phone sent a diagnostic at `ERROR` or above | at most 1 per hour | the "Device errors" query above, plus `severity>=ERROR` |
   | Whim: purge job failed | the Cloud Run Job `whim-purge` logged at `ERROR` or above | at most 1 per hour | `gcloud run jobs executions list --job whim-purge --region us-east4 --limit 5` (section "Firestore stores") |
   | Whim monthly spend (budget) | GCP spend on `WHIM_BILLING_ACCOUNT` for this project passes 50, 90 or 100 % of `WHIM_MONTHLY_BUDGET` | once per threshold per month | the Billing reports page for the project, by service |
+
+  While the provider breaker is open, generate, clarify and rewrite refuse at once with
+  `provider_unavailable` and a `Retry-After` of the seconds left in the cooldown, using no daily unit
+  and no slot. The server reads three settings, none of them forwarded by the deploy scripts, so the
+  defaults apply on Cloud Run: `WHIM_PROVIDER_BREAKER_FAILURES` (default `4`; `0` turns the breaker
+  off), `WHIM_PROVIDER_BREAKER_WINDOW_MS` (`180000`, how close together the failures must fall) and
+  `WHIM_PROVIDER_BREAKER_COOLDOWN_MS` (`60000`, how long it refuses before the next admission
+  probes the provider). The breaker's state is in memory, so a restart closes it.
 
   "While it lasts" means one email when the condition starts and one when it clears. The budget
   (created by `provision.sh`) also emails the billing account's admins.
