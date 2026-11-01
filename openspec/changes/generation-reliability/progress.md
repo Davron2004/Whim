@@ -28,3 +28,4 @@
 - re-review chain-upstream #2 (Opus): ACCEPT (1-3 + diagnostic resolved; compat at level 2 is correct per live spec). LOW carried to chain-breaker: full level-2 body deepEqual. handoff/upstream-review-2.md
 - runner chain-upstream #2: PASS (gate 0, integrity 0, ratchet 0, redcheck assertion RED, typecheck-tests 2). handoff/upstream-runner-2.md
 - merged: chain-upstream at a3bd8756fa89e0f78bed7d9ffd08840f29b1fd8b (tasks 3.1–3.6 ticked). Regate deferred: chain-breaker follows; gate-full on the final tip is the last regate.
+- dispatched: chain-breaker BASE 612c9de5, .claude/worktrees/generation-reliability-breaker (chain/generation-reliability-breaker)
