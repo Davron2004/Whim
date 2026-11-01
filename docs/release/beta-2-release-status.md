@@ -44,12 +44,10 @@ CLOUDSDK_PYTHON=/opt/homebrew/bin/python3.14`.
   observed through a logging resolver (no `wnd-` query with the deny on; the query appears with it
   off). Storage and bridge probes PASS; seeded and storage apps work under the deny. API 29 not
   installed. Evidence: `~/.cache/whim-upgrade/accept-android/result.md`.
-- **Upgrade check 397438 → 437758:** BLOCKED on both platforms at the seed step. `seed.yaml` was
-  written against 382511's Settings screen (iOS: the Advanced row sits at the bottom edge and the tap
-  never expands it; Android: the keyboard-drop tap target scrolls away). The candidate was not
-  exercised. Evidence: `~/.cache/whim-upgrade/upgrade-check/result.md` and `blocked-run-1/`.
-  **Risk:** the iOS build is already in Beta App Review. If the upgrade check then fails, remove
-  437758 from `Public beta` (App Store Connect → TestFlight → Public beta → Builds) before testers get it.
+- **Upgrade check 397438 → 437758:** PASS on both platforms (Whim_Verify wiped; script-created
+  iPhone 15 Plus, iOS 27.0): `upgrade-diff: PASS: 4 apps, 5 versions, 2 saved values, the consent
+  grant and the device id are unchanged`. Evidence: `docs/release/beta-2/upgrade-check/{android,ios}/`.
+  The first run was blocked by `seed.yaml` (written for 382511's screens); fixed in `dca41f71`.
 - **Association files (#42):** the committed Play signing fingerprint was wrong. Play signs every
   delivered APK with `25:90:6F:…:53:F3` (Play API `generatedApks`, and Play Console's Digital Asset Links
   snippet); `E4:58:10:2B:…` is a previous app signing key. The published `assetlinks.json` therefore
