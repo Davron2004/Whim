@@ -152,7 +152,10 @@ function runProviderBreakerTests(defaults: ServerConfig): void {
     [defaults.providerBreakerFailures, defaults.providerBreakerWindowMs, defaults.providerBreakerCooldownMs],
     [4, 180_000, 60_000],
   );
-  eq('WHIM_PROVIDER_BREAKER_FAILURES=0 loads, with the breaker disabled', loadServerConfig(baseEnv({ WHIM_PROVIDER_BREAKER_FAILURES: '0' })).providerBreakerFailures, 0);
+  const zeroEnv = baseEnv({ WHIM_PROVIDER_BREAKER_FAILURES: '0' });
+  const zeroRefusal = configError(() => loadServerConfig(zeroEnv));
+  eq('WHIM_PROVIDER_BREAKER_FAILURES=0 loads', zeroRefusal?.message, undefined);
+  eq('  ... with the breaker disabled', zeroRefusal === undefined ? loadServerConfig(zeroEnv).providerBreakerFailures : 'refused', 0);
   for (const [what, raw] of [['a negative count', '-1'], ['garbage', 'lots'], ['a fraction', '2.5'], ['an empty value', '']] as const) {
     check(`WHIM_PROVIDER_BREAKER_FAILURES: ${what} (${JSON.stringify(raw)}) fails startup naming the variable`, throwsNaming(() => loadServerConfig(baseEnv({ WHIM_PROVIDER_BREAKER_FAILURES: raw })), 'WHIM_PROVIDER_BREAKER_FAILURES'));
   }

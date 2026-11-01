@@ -743,7 +743,7 @@ interface BreakerRig {
 /** The real app on the real routes, with a breaker the test opens by feeding it four real
  *  upstream failures. Every resource a wrongly admitted request would touch is observable: the
  *  ledger, the slot controller, the credit endpoint, the scripted model and the pipeline. */
-function breakerRig(open: boolean): BreakerRig {
+function breakerRig(open: boolean, probe: () => Promise<void> = () => Promise.reject(new Error('the admission rig expects no probe'))): BreakerRig {
   let now = Date.UTC(2026, 0, 15, 12, 0, 0);
   const breaker = createProviderBreaker({
     failures: 4,
@@ -751,7 +751,7 @@ function breakerRig(open: boolean): BreakerRig {
     cooldownMs: 60_000,
     clock: () => now,
     log: log.child({ scope: 'admission-test-breaker' }),
-    probe: () => Promise.reject(new Error('the admission rig expects no probe')),
+    probe,
   });
   if (open) {
     for (let i = 0; i < 4; i++) breaker.record(modelFailureOf(new OpenRouterNetworkError('provider down', undefined, 503)));
@@ -866,6 +866,34 @@ async function runBreakerAdmission(): Promise<void> {
     rig.advance(15_000);
     const res = await postBreaker(rig, '/v1/rewrite', BREAKER_BODY);
     eq('the Retry-After counts down with the clock: 15 s later it reads 25', res === TIMED_OUT ? res : res.headers.get('retry-after'), '25');
+  }
+
+  {
+    let probes = 0;
+    const rig = breakerRig(true, () => {
+      probes++;
+      return Promise.resolve();
+    });
+    rig.advance(40_000);
+    const res = await postBreaker(rig, '/v1/generate', BREAKER_BODY);
+    if (res === TIMED_OUT) {
+      check('a request after the cooldown is answered', false, 'no response');
+    } else {
+      await res.body?.cancel();
+      eq('the first request after the cooldown probes once, and a completed probe lets it through', [res.status, probes, rig.usage.admitted.length], [200, 1, 1]);
+    }
+  }
+
+  {
+    let probes = 0;
+    const rig = breakerRig(true, () => {
+      probes++;
+      return Promise.reject(new OpenRouterNetworkError('bad gateway', undefined, 502));
+    });
+    rig.advance(40_000);
+    const res = await postBreaker(rig, '/v1/clarify', BREAKER_BODY);
+    eq('a probe that fails refuses the request with the full cooldown as Retry-After', res === TIMED_OUT ? res : [res.status, res.headers.get('retry-after')], [503, '60']);
+    eq('... having probed once and admitted nothing', [probes, rig.usage.admitted.length, rig.slotAcquires(), rig.creditLookups()], [1, 0, 0, 0]);
   }
 
   {
