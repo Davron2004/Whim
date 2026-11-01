@@ -1,6 +1,6 @@
 ## 1. Run verdict: repair never-mounted candidates, re-run harness faults once (#58)
 
-- [ ] 1.1 Harness phase attribution (design D3; specs/synthetic-run "An unobserved verdict names the phase that kept it away", "The unobserved phase comes from the channel, never the message"):
+- [x] 1.1 Harness phase attribution (design D3; specs/synthetic-run "An unobserved verdict names the phase that kept it away", "The unobserved phase comes from the channel, never the message"):
   - Add `unobservedPhase?: UnobservedPhase` to `RunReport` in `synthrun/contract.ts`, with the closed union exported.
   - In `synthrun/observe.ts`, record the first cause's phase into `ObservationState`:
     - `onException`: a top frame with `url === ''` before any paint gives `module-eval`.
@@ -14,7 +14,7 @@
     - a paint-then-effect-throw run with no probes frame gives `none`
     - a contained run has no field
   - Red before: the field doesn't exist, so every assertion fails.
-- [ ] 1.2 Run-stage split (design D1; specs/generation-pipeline "The run stage is the synthetic harness, and containment failure is terminal"):
+- [x] 1.2 Run-stage split (design D1; specs/generation-pipeline "The run stage is the synthetic harness, and containment failure is terminal"):
   - In `server/src/generation/stages/run.ts`, `contained === null` with phase `module-eval|bundle|mount-timeout` returns a new repairable `RunOutcome` arm. It carries the report's diagnostics minus every `containment_*` kind, plus `phase`.
   - Any other phase re-runs the same source once through the bound `runCandidate`. The re-run is skipped when the signal is aborted.
   - A re-run verdict `true`/`false` is mapped as a first run's would be.
@@ -26,7 +26,7 @@
     - a second-call `contained:true` maps to delivery
     - discriminating red-check: a `[probes]`-phase report is NOT repairable
   - Red before: every `null` maps to terminal after one call.
-- [ ] 1.3 Machine handling of the repairable arm (design D1):
+- [x] 1.3 Machine handling of the repairable arm (design D1):
   - In `machine.ts`'s run branch, close the `run` stage with the arm's diagnostics streamed as `diagnostic` events (like the build-failure branch).
   - Return `repair` while repair budget remains, else `failed`/`repair_exhausted`. Never deliver.
   - Regression: `server/test/machine.suite.ts`, a scripted run stage returning repairable then contained:
@@ -34,7 +34,7 @@
     - with the budget at 0, the terminal is the repair-exhausted reason
   - Red before: the terminal is `UNVERIFIED_RUN_REASON` with `attempts:1`.
   - Update the existing machine-suite cases that asserted mount-timeout gives `run_unverified`. Rewrite them, don't delete them (removal ratchet).
-- [ ] 1.4 Logging (design D2; specs/generation-pipeline "An unverified or failed containment verdict is logged without content"):
+- [x] 1.4 Logging (design D2; specs/generation-pipeline "An unverified or failed containment verdict is logged without content"):
   - `emitCompletion`'s `terminal failure` line gains `phase` (the ending run's unobserved phase, else `none`) and `rerun`.
   - Sending a never-mounted candidate to repair logs info `run never mounted {phase}`.
   - Update `UNVERIFIED_RUN_REASON`'s and `failureTerminalFor`'s doc comments, which say "never re-run".
@@ -42,7 +42,7 @@
     - a residual run_unverified line has `phase:'none'` (or `'probes'`), `rerun:true`, and no message field
     - a repaired module-eval run logs `run never mounted` with `phase:'module-eval'`
   - Red before: the fields are absent.
-- [ ] 1.5 End-to-end regression with real Chromium (specs/generation-pipeline scenario "A candidate that throws while its module loads is repaired"):
+- [x] 1.5 End-to-end regression with real Chromium (specs/generation-pipeline scenario "A candidate that throws while its module loads is repaired"):
   - In `server/test/e2e.ts`, follow the `fullMachine` pattern in `git show 58b8df82:server/test/rc58-repro.ts`: real check, build and run stages plus `ScriptedModelClient`.
   - Turns:
     - a plan

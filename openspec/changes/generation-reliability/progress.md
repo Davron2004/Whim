@@ -11,3 +11,8 @@
 - review chain-run-verdict #1 (Opus): REJECT — safety core holds; 2 med (rerun missing on contained:false log; tautological e2e currency assertion) + 5 low. Fixer dispatched for 1-5,7; 6 accepted → parked loader issue. handoff/run-verdict-review-1.md
 - runner chain-wire #1: FAIL — gate red: deploy-config smoke envelope (smoke.sh/lib.sh hardcode protocol 1 vs bench-envelope level 2); integrity 0, ratchet 0, device redcheck RED, server redcheck coarse RED. handoff/wire-runner-1.md. Wire fixer dispatched (review #1 findings 1-6 + gate).
 - fix round 1 chain-run-verdict: tip 2a6bcf18 (findings 1-5,7 fixed; 3 used post-paint timer, effect-body race recorded out of scope). Runner #1 + Opus re-review dispatched.
+- re-review chain-run-verdict #2 (Opus): ACCEPT (findings 1-5,7 resolved). Spec scenario wording tightened on staging aa2e11b4. handoff/run-verdict-review-2.md
+- fix round 1 chain-wire: tip e718ffdd (gate: WHIM_SMOKE_PROTOCOL_LEVEL in deploy/lib.sh pinned to PROTOCOL_LEVEL; review findings 1-6). Opus re-review dispatched; runner #2 queued behind run-verdict runner.
+- re-review chain-wire #2 (Opus): ACCEPT (findings 1-6 + gate resolved). handoff/wire-review-2.md
+- runner chain-run-verdict #1: PASS (gate 0, e2e 0, integrity 0, ratchet 0, redchecks RED: server coarse/type-kept mutation reds in report, synthrun + e2e assertion RED). handoff/run-verdict-runner.md
+- merged: chain-run-verdict at ba91fad7 (tasks 1.1–1.5 ticked). Regate deferred to after the chain-wire merge (one gate at a time; the post-wire regate covers both merges).
