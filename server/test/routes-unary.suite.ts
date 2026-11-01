@@ -1294,8 +1294,11 @@ async function testProviderUnavailableByProtocolLevel(): Promise<void> {
     const { app: app2 } = testApp({ model: model() });
     const level2 = await post(app2, `/v1/${route}`, { prompt: 'a habit tracker' }, { 'x-whim-device': DEVICE_ID, 'x-whim-protocol': '2' });
     eq(`${route}: a level-2 request → 503`, level2.status, 503);
-    const body = (await level2.json()) as ApiError;
-    eq(`${route}: a level-2 request gets the refusal itself`, [body.error, body.hint], ['provider_unavailable', REFUSAL_HINTS.provider_unavailable]);
+    eq(`${route}: a level-2 request gets the whole refusal body`, await level2.json(), {
+      error: 'provider_unavailable',
+      hint: REFUSAL_HINTS.provider_unavailable,
+      compat: { min: 2, fallback: 'fail', notice: REFUSAL_HINTS.provider_unavailable },
+    });
   }
 }
 

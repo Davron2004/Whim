@@ -25,13 +25,16 @@ import { ScriptedModelClient } from './scripted-model';
 import { readSseResponse } from './sse-reader';
 import { createApp } from '../src/app';
 import { benchEnvelopeHeaders } from '../src/bench-envelope';
-import { createServerLogger } from '../src/logger';
+import { createServerLogger, log as serverLog } from '../src/logger';
 import { KEEP_PERIOD_VARIABLES, loadServerConfig, ServerConfigError } from '../src/config';
 import { createStubPipeline } from '../src/pipeline';
 import { InMemoryUsageStore } from '../src/usage-store';
 import { InMemoryWaitlistStore } from '../src/waitlist/store';
 import { TRAP_FIELD } from '../src/routes/beta-signup';
 import { invalidateCreditCache, type CreditTransport } from '../src/admission/credit';
+import { createProviderBreaker, PROVIDER_BREAKER_OPEN_MESSAGE } from '../src/admission/provider-breaker';
+import { modelFailureOf } from '../src/model-failure';
+import { OpenRouterNetworkError } from '../src/openrouter';
 import { cachedPolicy, PolicyUnavailableError, type ContentPolicy, type PolicyCheckResult } from '../src/policy';
 import { defaultModelRoster } from '../src/generation/model';
 import type { Clock } from '../src/generation/machine';
@@ -2065,7 +2068,7 @@ function cloudRunDeploySmokeTests(): void {
   const siteRollback = `gcloud --project anycognition-whim run deploy whim-site --region us-east4 --image ${PREVIOUS_SITE_IMAGE}`;
 
   withSandbox((sandbox) => {
-    writeOperatorFile(sandbox, { WHIM_ALERT_EMAIL: PROVISION_VALUES.WHIM_ALERT_EMAIL, WHIM_POLICY_ATTEMPT_TIMEOUT_MS: '6000', WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY: '12', WHIM_LIMIT_POLICY_CHECKS_PER_DAY: '300' });
+    writeOperatorFile(sandbox, { WHIM_ALERT_EMAIL: PROVISION_VALUES.WHIM_ALERT_EMAIL, WHIM_POLICY_ATTEMPT_TIMEOUT_MS: '6000', WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY: '12', WHIM_LIMIT_POLICY_CHECKS_PER_DAY: '300', WHIM_PROVIDER_BREAKER_FAILURES: '0', WHIM_PROVIDER_BREAKER_WINDOW_MS: '90000', WHIM_PROVIDER_BREAKER_COOLDOWN_MS: '30000' });
     const head = headOf(sandbox);
     writeCloudRunRules(sandbox, head, { gcloudAfter: [...monitoringNone, ...serverImage] });
     const run = runScript(sandbox, 'cloudrun/deploy.sh', []);
@@ -2081,6 +2084,11 @@ function cloudRunDeploySmokeTests(): void {
       "  ... and the operator's content-policy attempt timeout and policy-check limits forwarded, as the server reads them",
       [served.policyAttemptTimeoutMs, served.limitPolicyChecksPerDeviceDay, served.limitPolicyChecksPerDay],
       [6000, 12, 300],
+    );
+    eq(
+      "  ... and the operator's provider breaker settings, WHIM_PROVIDER_BREAKER_FAILURES=0 reaching Cloud Run as the breaker-off lever",
+      [served.providerBreakerFailures, served.providerBreakerWindowMs, served.providerBreakerCooldownMs],
+      [0, 90_000, 30_000],
     );
   });
 
@@ -2151,6 +2159,9 @@ function deployFullTests(health: HealthBodies): void {
       WHIM_PROVIDER_QUANTIZATIONS: 'fp8,bf16',
       WHIM_QUEUE_MAX: '0',
       WHIM_QUEUE_MAX_WAIT_MS: '60000',
+      WHIM_PROVIDER_BREAKER_FAILURES: '0',
+      WHIM_PROVIDER_BREAKER_WINDOW_MS: '90000',
+      WHIM_PROVIDER_BREAKER_COOLDOWN_MS: '30000',
     });
     fullDeployRules(sandbox, true);
     writeRules(sandbox, 'curl', [healthRule(withCommit(health.androidRaised, headOf(sandbox))), ...API_UP, ...PAGES_UP]);
@@ -2166,6 +2177,11 @@ function deployFullTests(health: HealthBodies): void {
       '  ... and the operator\'s quantizations and line, WHIM_QUEUE_MAX=0 kept as the no-line lever',
       [served.providerQuantizations, served.queueMax, served.queueMaxWaitMs],
       [['fp8', 'bf16'], 0, 60_000],
+    );
+    eq(
+      '  ... and the operator\'s provider breaker settings, WHIM_PROVIDER_BREAKER_FAILURES=0 kept as the breaker-off lever',
+      [served.providerBreakerFailures, served.providerBreakerWindowMs, served.providerBreakerCooldownMs],
+      [0, 90_000, 30_000],
     );
   });
 
@@ -3087,6 +3103,34 @@ class AlwaysUnavailablePolicy implements ContentPolicy {
 
 const CREDIT_TEST_DEVICE_ID = 'd4d4d4d4-d4d4-4d4d-8d4d-d4d4d4d4d4d4';
 
+/** Every line the real provider breaker writes over one outage: it opens, its probe fails, and a
+ *  second probe closes it. Only the first is the provider-breaker alert's source; the other two
+ *  share its scope and are the filter's red cases. */
+async function providerBreakerAlertSourceLines(): Promise<Record<string, unknown>[]> {
+  const capture = captureLogs();
+  try {
+    let now = Date.UTC(2026, 0, 15, 12, 0, 0);
+    let probeError: unknown = new OpenRouterNetworkError('bad gateway', undefined, 502);
+    const breaker = createProviderBreaker({
+      failures: 4,
+      windowMs: 180_000,
+      cooldownMs: 60_000,
+      clock: () => now,
+      log: serverLog.child({ scope: 'provider-breaker' }),
+      probe: () => (probeError === undefined ? Promise.resolve() : Promise.reject(probeError)),
+    });
+    for (let i = 0; i < 4; i++) breaker.record(modelFailureOf(new OpenRouterNetworkError('provider down', undefined, 503)));
+    now += 60_000;
+    await breaker.admit();
+    probeError = undefined;
+    now += 60_000;
+    await breaker.admit();
+  } finally {
+    capture.stop();
+  }
+  return capture.records;
+}
+
 /** Every log line the real server writes for the "credit exhausted" alert's two sources — a
  *  pre-admission `budget_exhausted` refusal (the cached operator credit is already below the
  *  floor) and a mid-generation provider `402` (`scope="run" msg="provider credit exhausted"`,
@@ -3207,7 +3251,7 @@ function runbookTerminalFailureFilter(code: string): string {
   return [CLOUD_RUN_SERVER_SELECTOR, ...predicates, narrow.replace('<code>', code)].join(' AND ');
 }
 
-function policyFile(name: string): { conditions: Array<{ conditionMatchedLog?: { filter: string; labelExtractors?: Record<string, string> } }>; documentation: { content: string } } {
+function policyFile(name: string): { displayName: string; alertStrategy?: { notificationRateLimit?: { period: string } }; conditions: Array<{ conditionMatchedLog?: { filter: string; labelExtractors?: Record<string, string> } }>; documentation: { content: string } } {
   return JSON.parse(readRepoFile(`deploy/monitoring/${name}`)) as ReturnType<typeof policyFile>;
 }
 
@@ -3281,7 +3325,7 @@ function filterTargetProblems({ where, filter, kind }: MonitoringFilter): string
 function monitoringTargetTests(files: ReadonlyMap<string, string>): void {
   section("Deploy artifacts: the alerts watch the Cloud Run service's logs (#138)");
   const monitoring = [...files.keys()].filter((rel) => rel.startsWith('deploy/monitoring/'));
-  check('deploy/monitoring holds the log metric and the log-matching policies', ['metric-whim-terminal-failures.json', 'policy-report.json', 'policy-device-error.json', 'policy-credit-exhausted.json', 'policy-terminal-failures.json'].every((name) => monitoring.includes(`deploy/monitoring/${name}`)), monitoring.join(', '));
+  check('deploy/monitoring holds the log metric and the log-matching policies', ['metric-whim-terminal-failures.json', 'policy-report.json', 'policy-device-error.json', 'policy-credit-exhausted.json', 'policy-provider-breaker-open.json', 'policy-terminal-failures.json'].every((name) => monitoring.includes(`deploy/monitoring/${name}`)), monitoring.join(', '));
   checkClean('no monitoring file mentions log_id("docker") or gce_instance, and every log filter watches the Cloud Run service', monitoringTargetProblems(files));
   const deviceError = files.get('deploy/monitoring/policy-device-error.json') ?? '';
   const escapedSelector = CLOUD_RUN_SERVER_SELECTOR.replaceAll('"', '\\"');
@@ -3331,6 +3375,28 @@ async function alertFilterTests(): Promise<void> {
     "its single condition matches the budget_exhausted refusal and the mid-generation provider 402, and nothing else",
     creditMatching(creditFilter).map((line) => (line.msg === 'provider credit exhausted' ? line.msg : line.error)).sort((a, b) => String(a).localeCompare(String(b))),
     ['budget_exhausted', 'provider credit exhausted'].sort((a, b) => a.localeCompare(b)),
+  );
+  const breakerLines = await providerBreakerAlertSourceLines();
+  const breakerMatching = (filter: string): Array<Record<string, unknown>> => breakerLines.filter((line) => filterMatches(filter, line));
+  const breakerConditions = policyFile('policy-provider-breaker-open.json').conditions;
+  eq('the provider-breaker alert has exactly one condition', breakerConditions.length, 1);
+  const breakerFilter = breakerConditions[0]?.conditionMatchedLog?.filter ?? '';
+  const breakerPolicy = policyFile('policy-provider-breaker-open.json');
+  eq('  ... at most one email an hour', breakerPolicy.alertStrategy?.notificationRateLimit?.period, '3600s');
+  const operatingDocs = readRepoFile('docs/deploy.md');
+  check(
+    '  ... and docs/deploy.md names the alert and its three settings',
+    [breakerPolicy.displayName, 'WHIM_PROVIDER_BREAKER_FAILURES', 'WHIM_PROVIDER_BREAKER_WINDOW_MS', 'WHIM_PROVIDER_BREAKER_COOLDOWN_MS'].every((name) => operatingDocs.includes(name)),
+  );
+  eq(
+    'its filter matches the one line the breaker writes when it opens, not its probe failure or its close',
+    breakerMatching(breakerFilter).map((line) => line.msg),
+    [PROVIDER_BREAKER_OPEN_MESSAGE],
+  );
+  check(
+    '  red: a filter on the breaker\'s scope alone is not discriminating — it also catches the probe failure and the close',
+    breakerMatching(`${CLOUD_RUN_SERVER_SELECTOR} AND jsonPayload.scope="provider-breaker"`).length === 3,
+    JSON.stringify(breakerLines.map((line) => line.msg)),
   );
   const weakerFilter = `${CLOUD_RUN_SERVER_SELECTOR} AND jsonPayload.status=503`;
   check(

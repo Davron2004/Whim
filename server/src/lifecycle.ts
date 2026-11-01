@@ -37,6 +37,7 @@ import { modelRosterFromEnv, ModelRosterEnvError, type ModelClient, type ModelRo
 import { loadContentPolicyDocument } from './generation/prompts/inputs';
 import { createSlotController, type SlotController } from './admission/slots';
 import { createOpenRouterCreditTransport, type CreditTransport } from './admission/credit';
+import { guardModel } from './admission/provider-breaker';
 import { cachedPolicy, ModelContentPolicy, parseCategoryList, StubContentPolicy, type ContentPolicy } from './policy';
 import { ResolveTracker, runCostResolutionSweep, type UsageAndCostTransport } from './usage/resolve';
 import { openRouterUsageAndCostTransport } from './usage/openrouter-stats';
@@ -119,6 +120,7 @@ const COST_SWEEP_BOOT_DELAY_MS = 30_000;
 const bootLog = log.child({ scope: 'boot' });
 const drainLog = log.child({ scope: 'drain' });
 const browserLog = log.child({ scope: 'browser' });
+const breakerLog = log.child({ scope: 'provider-breaker' });
 
 function messageOf(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
@@ -371,7 +373,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
   const dataDir = path.resolve(config.dataDir);
   atStep('preflight', () => runPreflight({ root: process.cwd(), dataDir }));
 
-  const model = atStep('model', () => {
+  const unguardedModel = atStep('model', () => {
     if (overrides.model) return overrides.model;
     try {
       const deps = buildModelDepsFromEnv(options.env, providerRouting(config));
@@ -389,6 +391,12 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
       return undefined;
     }
   });
+
+  // The one client every role shares (pipeline, summary, policy, clarify, rewrite) is guarded once
+  // here: each call's outcome feeds the provider breaker, which admission consults.
+  const guarded = unguardedModel ? guardModel(unguardedModel, config, breakerLog) : undefined;
+  const model = guarded?.model;
+  const breaker = guarded?.breaker;
 
   const opened = new Opened();
   try {
@@ -476,6 +484,7 @@ export async function startServer(options: StartServerOptions): Promise<ServerHa
       reportStore,
       waitlistStore,
       resolver: { transport: statsTransport, tracker: resolveTracker },
+      providerBreaker: breaker,
       creditTransport: overrides.creditTransport ?? (apiKey ? createOpenRouterCreditTransport({ apiKey }) : undefined),
       inFlight,
     });

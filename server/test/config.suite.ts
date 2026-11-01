@@ -81,6 +81,9 @@ const PARSE_CASES: ParseCase[] = [
   { key: 'WHIM_UNARY_MODEL_TIMEOUT_MS', field: 'unaryModelTimeoutMs', validValue: '70000', parsed: 70_000 },
   { key: 'WHIM_GENERATION_MAX_MS', field: 'generationMaxMs', validValue: '700000', parsed: 700_000 },
   { key: 'WHIM_CREDIT_CACHE_TTL_MS', field: 'creditCacheTtlMs', validValue: '70000', parsed: 70_000 },
+  { key: 'WHIM_PROVIDER_BREAKER_FAILURES', field: 'providerBreakerFailures', validValue: '6', parsed: 6 },
+  { key: 'WHIM_PROVIDER_BREAKER_WINDOW_MS', field: 'providerBreakerWindowMs', validValue: '120000', parsed: 120_000 },
+  { key: 'WHIM_PROVIDER_BREAKER_COOLDOWN_MS', field: 'providerBreakerCooldownMs', validValue: '30000', parsed: 30_000 },
   { key: 'WHIM_POLICY_TIMEOUT_MS', field: 'policyTimeoutMs', validValue: '11000', parsed: 11_000 },
   { key: 'WHIM_POLICY_ATTEMPT_TIMEOUT_MS', field: 'policyAttemptTimeoutMs', validValue: '6000', parsed: 6000 },
   { key: 'WHIM_LIMIT_POLICY_CHECKS_PER_DEVICE_DAY', field: 'limitPolicyChecksPerDeviceDay', validValue: '31', parsed: 31 },
@@ -139,6 +142,26 @@ function runGenerationLineTests(defaults: ServerConfig): void {
     check(`WHIM_QUEUE_MAX: ${what} (${JSON.stringify(raw)}) fails startup naming the variable`, throwsNaming(() => loadServerConfig(baseEnv({ WHIM_QUEUE_MAX: raw })), 'WHIM_QUEUE_MAX'));
   }
   check('WHIM_QUEUE_MAX_WAIT_MS=0 fails startup naming the variable', throwsNaming(() => loadServerConfig(baseEnv({ WHIM_QUEUE_MAX_WAIT_MS: '0' })), 'WHIM_QUEUE_MAX_WAIT_MS'));
+}
+
+function runProviderBreakerTests(defaults: ServerConfig): void {
+  section('The provider breaker (generation-reliability D8): defaults, and 0 failures disables it');
+
+  eq(
+    'defaults: 4 failures within 180 s open it for 60 s',
+    [defaults.providerBreakerFailures, defaults.providerBreakerWindowMs, defaults.providerBreakerCooldownMs],
+    [4, 180_000, 60_000],
+  );
+  const zeroEnv = baseEnv({ WHIM_PROVIDER_BREAKER_FAILURES: '0' });
+  const zeroRefusal = configError(() => loadServerConfig(zeroEnv));
+  eq('WHIM_PROVIDER_BREAKER_FAILURES=0 loads', zeroRefusal?.message, undefined);
+  eq('  ... with the breaker disabled', zeroRefusal === undefined ? loadServerConfig(zeroEnv).providerBreakerFailures : 'refused', 0);
+  for (const [what, raw] of [['a negative count', '-1'], ['garbage', 'lots'], ['a fraction', '2.5'], ['an empty value', '']] as const) {
+    check(`WHIM_PROVIDER_BREAKER_FAILURES: ${what} (${JSON.stringify(raw)}) fails startup naming the variable`, throwsNaming(() => loadServerConfig(baseEnv({ WHIM_PROVIDER_BREAKER_FAILURES: raw })), 'WHIM_PROVIDER_BREAKER_FAILURES'));
+  }
+  for (const key of ['WHIM_PROVIDER_BREAKER_WINDOW_MS', 'WHIM_PROVIDER_BREAKER_COOLDOWN_MS']) {
+    check(`${key}=0 fails startup naming the variable`, throwsNaming(() => loadServerConfig(baseEnv({ [key]: '0' })), key));
+  }
 }
 
 function runStubDelayTests(): void {
@@ -453,6 +476,7 @@ export function runConfigTests(): void {
   runProviderQuantizationTests();
   runStoreBackendTests(defaults);
   runGenerationLineTests(defaults);
+  runProviderBreakerTests(defaults);
   runStubDelayTests();
 
   section('modelRosterFromEnv (design D2) — the roster of per-role models and reasoning settings');

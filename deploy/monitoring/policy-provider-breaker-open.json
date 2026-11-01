@@ -1,0 +1,26 @@
+{
+  "displayName": "Whim: AI provider unavailable",
+  "combiner": "OR",
+  "conditions": [
+    {
+      "displayName": "The provider breaker opened after consecutive upstream model failures",
+      "conditionMatchedLog": {
+        "filter": "resource.type=\"cloud_run_revision\" AND resource.labels.service_name=\"whim-server\" AND logName:\"run.googleapis.com%2Fstdout\" AND jsonPayload.msg=\"provider breaker open\""
+      }
+    }
+  ],
+  "alertStrategy": {
+    "notificationRateLimit": {
+      "period": "3600s"
+    },
+    "autoClose": "3600s"
+  },
+  "notificationChannels": ["{{CHANNEL}}"],
+  "documentation": {
+    "mimeType": "text/markdown",
+    "content": "The AI provider is failing: several model calls in a row failed on the provider's side (a 5xx, a rate limit, a network error or a timeout), so generate, clarify and rewrite are refusing with `provider_unavailable` until a probe succeeds. At most one email per hour: read `errorKind` and `status` on the `provider breaker open` line, check https://status.openrouter.ai, and see docs/deploy.md, Operating: Alerts."
+  },
+  "userLabels": {
+    "whim_spec": "{{SPEC}}"
+  }
+}

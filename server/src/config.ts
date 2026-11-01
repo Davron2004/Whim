@@ -103,6 +103,13 @@ export interface ServerConfig {
   /** A non-negative decimal USD amount — the one limit that is NOT a positive integer. */
   readonly minCreditUsd: number;
   readonly creditCacheTtlMs: number;
+  /** `WHIM_PROVIDER_BREAKER_FAILURES` (generation-reliability D8): consecutive upstream model
+   *  failures that open the provider breaker. `0` disables it. */
+  readonly providerBreakerFailures: number;
+  /** `WHIM_PROVIDER_BREAKER_WINDOW_MS`: the failures must all fall within this long of the first. */
+  readonly providerBreakerWindowMs: number;
+  /** `WHIM_PROVIDER_BREAKER_COOLDOWN_MS`: how long an open breaker refuses before its probe. */
+  readonly providerBreakerCooldownMs: number;
 
   readonly policyTimeoutMs: number;
   /** `WHIM_POLICY_ATTEMPT_TIMEOUT_MS`: the bound on each of the policy check's (at most two)
@@ -413,6 +420,9 @@ export function loadServerConfig(env: NodeJS.ProcessEnv, opts?: { now?: () => nu
     generationMaxMs,
     minCreditUsd: readNonNegativeDecimal(env, 'WHIM_MIN_CREDIT_USD', 0.5),
     creditCacheTtlMs: readPositiveInt(env, 'WHIM_CREDIT_CACHE_TTL_MS', 60_000),
+    providerBreakerFailures: readNonNegativeInt(env, 'WHIM_PROVIDER_BREAKER_FAILURES', 4),
+    providerBreakerWindowMs: readPositiveInt(env, 'WHIM_PROVIDER_BREAKER_WINDOW_MS', 180_000),
+    providerBreakerCooldownMs: readPositiveInt(env, 'WHIM_PROVIDER_BREAKER_COOLDOWN_MS', 60_000),
 
     policyTimeoutMs,
     policyAttemptTimeoutMs: readPolicyAttemptTimeout(env, policyTimeoutMs),

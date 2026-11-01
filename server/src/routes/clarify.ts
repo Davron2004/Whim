@@ -12,10 +12,10 @@
  * when the provider failed upstream (#66, `../model-failure.ts`).
  *
  * Admission (design D6a/D8; specs/server-admission-control "Admission checks run in a fixed
- * order"): raw body cap, body validation, prompt byte cap, operator credit, drain state, the
+ * order"): raw body cap, body validation, prompt byte cap, provider breaker, operator credit, drain state, the
  * global unary concurrency cap, the device's daily clarify allowance and the clarify+rewrite
  * global daily ceiling, then the content policy check — all before any model call.
- * `admitUnaryRequest` below is the ONE place that orders credit → slot → daily-unit → policy for
+ * `admitUnaryRequest` below is the ONE place that orders breaker → credit → slot → daily-unit → policy for
  * both `/v1/clarify` and `/v1/rewrite`, so the two routes cannot drift apart on ordering;
  * `routes/rewrite.ts` imports it from here rather than duplicating it (design D8 shares this exact
  * ordering across every unary route).
@@ -29,6 +29,7 @@ import type { FailureReason, UsageStore, RequestKind, RequestOutcome } from '../
 import type { ServerConfig } from '../config';
 import type { SlotController, SlotHandle } from '../admission/slots';
 import { checkCredit, invalidateCreditCache, type CreditTransport } from '../admission/credit';
+import type { ProviderBreaker } from '../admission/provider-breaker';
 import {
   budgetExhaustedRefusal,
   contentPolicyRefusal,
@@ -185,6 +186,8 @@ export interface UnaryAdmissionDeps {
   usageStore: UsageStore;
   clock: () => number;
   slots: SlotController;
+  /** Absent ⇒ no provider breaker check (generation-reliability D8). */
+  providerBreaker?: ProviderBreaker;
   creditTransport: CreditTransport | undefined;
   creditTtlMs: number;
   creditFloorUsd: number;
@@ -235,7 +238,7 @@ export function resolveUnaryUsage(
 /**
  * The fixed admission order shared by `/v1/clarify` and `/v1/rewrite`, AFTER the raw body cap,
  * body validation and prompt byte cap the caller already ran (specs/server-admission-control
- * "Admission checks run in a fixed order"): operator credit → drain/global-unary-cap (one slot
+ * "Admission checks run in a fixed order"): provider breaker → operator credit → drain/global-unary-cap (one slot
  * acquire) → the device's daily allowance and the clarify+rewrite global daily ceiling → content
  * policy. Every refusal after a resource was taken (a slot, a daily unit) releases/refunds it
  * before returning, and so does anything thrown past the acquire.
@@ -248,7 +251,12 @@ export function resolveUnaryUsage(
  * usage and its cost is resolved immediately, the same way the route's own `finish()` would.
  */
 export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<UnaryAdmissionOutcome> {
-  const { deviceId, clock, slots, creditTransport, creditTtlMs, creditFloorUsd, policyRoute } = deps;
+  const { deviceId, clock, slots, providerBreaker, creditTransport, creditTtlMs, creditFloorUsd, policyRoute } = deps;
+
+  if (providerBreaker) {
+    const breaker = await providerBreaker.admit();
+    if (!breaker.ok) return { ok: false, refusal: providerUnavailableRefusal(breaker.retryAfterSeconds) };
+  }
 
   if (creditTransport) {
     const credit = await checkCredit({ transport: creditTransport, clock, ttlMs: creditTtlMs, floorUsd: creditFloorUsd });
@@ -415,6 +423,7 @@ export interface ClarifyRouteOptions {
   slots: SlotController;
   policy: ContentPolicy;
   creditTransport: CreditTransport | undefined;
+  providerBreaker?: ProviderBreaker;
   resolveTracker: ResolveTracker;
   resolveTransport: UsageAndCostTransport;
   resolveBounds: Partial<ResolveBounds> | undefined;
@@ -431,7 +440,7 @@ export function makeClarifyRoute(
   options: ClarifyRouteOptions,
 ): Hono<V1Env> {
   const app = new Hono<V1Env>();
-  const { config, clock, slots, policy, creditTransport, resolveTracker, resolveTransport, resolveBounds } = options;
+  const { config, clock, slots, policy, creditTransport, providerBreaker, resolveTracker, resolveTransport, resolveBounds } = options;
 
   app.post(
     '/',
@@ -470,6 +479,7 @@ export function makeClarifyRoute(
         usageStore,
         clock,
         slots,
+        providerBreaker,
         creditTransport,
         creditTtlMs: config.creditCacheTtlMs,
         creditFloorUsd: config.minCreditUsd,
