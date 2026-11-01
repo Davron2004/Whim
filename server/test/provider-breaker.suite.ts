@@ -328,7 +328,12 @@ async function testProbe(): Promise<void> {
     capture.stop();
     const failedLines = logged(capture, PROVIDER_PROBE_FAILED_MESSAGE);
     eq('one probe-failed warning with errorKind and status', failedLines.map((l) => [l.level, l.errorKind, l.status]), [[40, 'server', 502]]);
-    eq('it did not log a second "open" for the re-open', logged(capture, PROVIDER_BREAKER_OPEN_MESSAGE).length, 1);
+    const opens = logged(capture, PROVIDER_BREAKER_OPEN_MESSAGE);
+    eq(
+      'the re-open logs "provider breaker open" again, marked reopened, so the log and the alert show a continuing outage',
+      opens.map((l) => [l.level, l.reopened, l.cooldownMs, l.errorKind, l.status]),
+      [[40, undefined, COOLDOWN_MS, 'server', 503], [40, true, COOLDOWN_MS, 'server', 502]],
+    );
 
     r.advance(30_000);
     eq('during the new cooldown it refuses without probing', [await r.breaker.admit(), r.probeCalls.length], [{ ok: false, retryAfterSeconds: 30 }, 1]);
@@ -340,13 +345,39 @@ async function testProbe(): Promise<void> {
     eq('and a completed one closes it', await again, { ok: true });
   }
 
+  section('A probe that fails for a reason that is not upstream closes the breaker');
+
+  for (const [label, err, errorKind, status] of [
+    ['402', new OpenRouterCreditError('out of credit'), 'credit', 402],
+    ['401', new OpenRouterAuthError('bad key'), 'auth', 401],
+    ['400', new OpenRouterNetworkError('bad request', undefined, 400), 'client', 400],
+  ] as const) {
+    const r = rig();
+    const capture = captureLogs();
+    failUpstream(r, 4);
+    r.advance(COOLDOWN_MS);
+    const waiting = r.breaker.admit();
+    r.probeGate.current.reject(err);
+    eq(`a probe answered ${label} admits its waiter: the provider is up, the next check decides`, await waiting, { ok: true });
+    eq(`... and the breaker stays closed (${label})`, [(await r.breaker.admit()).ok, r.probeCalls.length], [true, 1]);
+    capture.stop();
+    eq(
+      `... the close line carries the probe's errorKind and status (${label})`,
+      logged(capture, PROVIDER_BREAKER_CLOSED_MESSAGE).map((l) => [l.level, l.openMs, l.errorKind, l.status]),
+      [[30, COOLDOWN_MS, errorKind, status]],
+    );
+    eq(`... and no second "open" line (${label})`, logged(capture, PROVIDER_BREAKER_OPEN_MESSAGE).length, 1);
+  }
+
   {
     const r = rig();
     failUpstream(r, 4);
     r.advance(COOLDOWN_MS);
     const waiting = r.breaker.admit();
-    r.probeGate.current.reject(new OpenRouterAuthError('bad key'));
-    eq('a probe failing for any reason (here a 401) re-opens it', await waiting, { ok: false, retryAfterSeconds: 60 });
+    r.probeGate.current.reject(new OpenRouterCreditError('out of credit'));
+    await waiting;
+    failUpstream(r, 3);
+    eq('after a non-upstream probe the count starts again from zero: three failures stay closed', (await r.breaker.admit()).ok, true);
   }
 
   section('A probe that is no longer the current one has no say');
@@ -459,9 +490,12 @@ async function testModelProbe(): Promise<void> {
 
 const GENERATE_REQUEST: ModelRequest = { model: ROSTER.engineer.model, messages: [], reasoning: 'off', role: 'generate' };
 
+/** A call to the model the policy, clarify and rewrite roles share, which is not the engineer's. */
+const CLARIFY_REQUEST: ModelRequest = { model: ROSTER.clarify.model, messages: [], reasoning: 'off', role: 'clarify' };
+
 /** Runs one call to its end and returns what it threw, if anything. */
-async function consume(client: ModelClient, signal?: AbortSignal): Promise<unknown> {
-  const stream = client.stream(GENERATE_REQUEST, signal);
+async function consume(client: ModelClient, signal?: AbortSignal, request: ModelRequest = GENERATE_REQUEST): Promise<unknown> {
+  const stream = client.stream(request, signal);
   stream.usage.catch(() => undefined);
   return caught(async () => {
     const deltas = stream.deltas[Symbol.asyncIterator]();
@@ -471,6 +505,7 @@ async function consume(client: ModelClient, signal?: AbortSignal): Promise<unkno
 }
 
 const failingTurn = (error: unknown): ScriptedTurn => ({ role: 'engineer', deltas: [], error });
+const failingClarifyTurn = (error: unknown): ScriptedTurn => ({ role: 'clarify', deltas: [], error });
 
 async function testFeed(): Promise<void> {
   section('The feed: a wrapped model client reports each call to the breaker');
@@ -478,7 +513,7 @@ async function testFeed(): Promise<void> {
   {
     const r = rig();
     const turns: ScriptedTurn[] = [1, 2, 3, 4].map(() => ({ role: 'engineer', deltas: ['partial'], error: upstream503() }));
-    const wrapped = withProviderBreaker(new ScriptedModelClient(ROSTER, [...turns, { role: 'engineer', deltas: ['done'] }]), r.breaker);
+    const wrapped = withProviderBreaker(new ScriptedModelClient(ROSTER, [...turns, { role: 'engineer', deltas: ['done'] }]), r.breaker, ROSTER.engineer.model);
     for (let i = 0; i < 3; i++) await consume(wrapped);
     eq('three failed turns leave it closed', (await r.breaker.admit()).ok, true);
     const lastErr = await consume(wrapped);
@@ -501,7 +536,7 @@ async function testFeed(): Promise<void> {
       new OpenRouterNetworkError('bad request', undefined, 400),
     ];
     const turns = [...notUpstream, ...notUpstream].map(failingTurn);
-    const wrapped = withProviderBreaker(new ScriptedModelClient(ROSTER, [...turns, failingTurn(new OpenRouterNetworkError('connection closed')), failingTurn(new OpenRouterNetworkError('connection closed'))]), r.breaker);
+    const wrapped = withProviderBreaker(new ScriptedModelClient(ROSTER, [...turns, failingTurn(new OpenRouterNetworkError('connection closed')), failingTurn(new OpenRouterNetworkError('connection closed'))]), r.breaker, ROSTER.engineer.model);
     for (let i = 0; i < turns.length; i++) await consume(wrapped);
     await consume(wrapped, gone.signal);
     await consume(wrapped, gone.signal);
@@ -512,13 +547,49 @@ async function testFeed(): Promise<void> {
     const r = rig();
     failUpstream(r, 3);
     const client = new ScriptedModelClient(ROSTER, [{ role: 'engineer', deltas: ['a', 'b', 'c'] }]);
-    const stream = withProviderBreaker(client, r.breaker).stream(GENERATE_REQUEST);
+    const stream = withProviderBreaker(client, r.breaker, ROSTER.engineer.model).stream(GENERATE_REQUEST);
     for await (const delta of stream.deltas) {
       check('the consumer read the first delta', delta.text === 'a');
       break;
     }
     failUpstream(r, 1);
     check('a consumer that stops early is neither a success nor a failure: the streak survives it', !(await r.breaker.admit()).ok);
+  }
+}
+
+async function testFeedIsEngineerOnly(): Promise<void> {
+  section('The feed counts and resets on engineer-model calls only: another model\'s calls change nothing');
+
+  {
+    // The scenario of an engineer-model outage: every flow's clarify call succeeds between the
+    // engineer's failures, so a reset on any call would keep the count below four.
+    const r = rig();
+    const turns: ScriptedTurn[] = [];
+    for (let i = 0; i < 4; i++) turns.push(failingTurn(upstream503()), { role: 'clarify', deltas: ['ok'] });
+    const wrapped = withProviderBreaker(new ScriptedModelClient(ROSTER, turns), r.breaker, ROSTER.engineer.model);
+    for (let i = 0; i < 3; i++) {
+      await consume(wrapped);
+      await consume(wrapped, undefined, CLARIFY_REQUEST);
+    }
+    eq('three engineer failures, each followed by a completed clarify call: still closed', (await r.breaker.admit()).ok, true);
+    await consume(wrapped);
+    eq('the fourth engineer failure opens it', await r.breaker.admit(), { ok: false, retryAfterSeconds: 60 });
+  }
+
+  {
+    const r = rig();
+    const turns = [1, 2, 3, 4, 5, 6].map(() => failingClarifyTurn(upstream503()));
+    const wrapped = withProviderBreaker(new ScriptedModelClient(ROSTER, turns), r.breaker, ROSTER.engineer.model);
+    for (let i = 0; i < turns.length; i++) await consume(wrapped, undefined, CLARIFY_REQUEST);
+    eq('six upstream failures of a model that is not the engineer\'s never open it', (await r.breaker.admit()).ok, true);
+  }
+
+  {
+    const r = rig();
+    failUpstream(r, 4);
+    const wrapped = withProviderBreaker(new ScriptedModelClient(ROSTER, [{ role: 'clarify', deltas: ['ok'] }]), r.breaker, ROSTER.engineer.model);
+    await consume(wrapped, undefined, CLARIFY_REQUEST);
+    eq('a completed call to another model does not close an open breaker', await r.breaker.admit(), { ok: false, retryAfterSeconds: 60 });
   }
 }
 
@@ -549,5 +620,6 @@ export async function runProviderBreakerTests(): Promise<void> {
   await testProbe();
   await testModelProbe();
   await testFeed();
+  await testFeedIsEngineerOnly();
   await testComposition();
 }

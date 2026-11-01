@@ -327,6 +327,7 @@ export function makeRewriteRoute(
       });
       if (!admission.ok) {
         const r = admission.refusal;
+        if (r.refusedBy) c.set('refusedBy', r.refusedBy);
         return c.json(r.body, r.status, r.headers);
       }
       const { requestId, release, policy: policyCalls } = admission;

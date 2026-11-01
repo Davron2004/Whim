@@ -42,7 +42,6 @@ import { claimsNoChange, neutralSummary, type SourceChange, type Summariser, typ
 import type { TerminalFailureCode } from './failure-codes';
 import { invalidateCreditCache } from '../admission/credit';
 import { REFUSAL_HINTS } from '../admission/refusals';
-import { modelFailureOf } from '../model-failure';
 import { log, type ServerLogger } from '../logger';
 
 /** Per-run pipeline breadcrumbs — run start, stage transitions, model-call failures, repair
@@ -266,6 +265,19 @@ export const CREDIT_EXHAUSTED_REASON = 'Whim has used up its budget for making a
  *  itself, imported so a run's terminal and a refused request can never drift apart: no vendor or
  *  model name, and it says the failure is not the user's doing. */
 export const PROVIDER_UNAVAILABLE_REASON = REFUSAL_HINTS.provider_unavailable;
+
+/** The errors a plan, generate or repair turn threw after its resend failed upstream too. Origin
+ *  is decided here, at the turn, and not from the error's shape later: a 5xx-looking error thrown
+ *  by anything else (a stage, an adapter) is an `internal_error`, not a provider outage (#66, D6). */
+const resendFailures = new WeakSet<object>();
+
+function markResendFailure(err: unknown): void {
+  if (typeof err === 'object' && err !== null) resendFailures.add(err);
+}
+
+function isResendFailure(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && resendFailures.has(err);
+}
 
 function sumUsage(a: Usage, b: Usage): Usage {
   return {
@@ -757,7 +769,7 @@ export class GenerationMachine {
    *  so a device does not advise rewording (#66, design D6/D11); no other ending sets `cause`. */
   private async *endOnThrow(err: unknown, signal: AbortSignal, state: RunState): AsyncGenerator<GenerationEvent, void> {
     const creditExhausted = isCreditExhaustedError(err);
-    const providerUnavailable = !creditExhausted && modelFailureOf(err, signal).upstream;
+    const providerUnavailable = !creditExhausted && isResendFailure(err);
     // Authoritative even when an abort or the deadline got there first: the next admission must
     // re-query the credit rather than trust the cached value.
     if (creditExhausted) invalidateCreditCache();
@@ -837,8 +849,9 @@ export class GenerationMachine {
    *  network or stream error) is sent once more with the same messages (beta-1 D10). When the failed
    *  attempt had already streamed `token` events (never a plan turn), `restart` goes first, so the
    *  device voids them. Any other
-   *  failure, a failure after the run was stopped, and the resend's own failure are thrown to
-   *  `endOnThrow` exactly as before. */
+   *  failure and a failure after the run was stopped are thrown to `endOnThrow` exactly as before; so is
+   *  the resend's own upstream failure, marked (`markResendFailure`) as the one `provider_unavailable`
+   *  is decided on. */
   private async *runModelTurn(
     messages: ModelMessage[],
     roleSetting: RoleSetting,
@@ -852,7 +865,10 @@ export class GenerationMachine {
     for (let resends = 0; ; resends++) {
       const turn = yield* this.streamModelTurn(messages, roleSetting, label, signal, trace, state, emitTokens);
       if (turn.ok) return { text: turn.text, aborted: turn.aborted };
-      if (resends >= retries || signal?.aborted || !isUpstreamModelFailure(turn.error)) throw turn.error;
+      if (resends >= retries || signal?.aborted || !isUpstreamModelFailure(turn.error)) {
+        if (resends > 0 && !signal?.aborted && isUpstreamModelFailure(turn.error)) markResendFailure(turn.error);
+        throw turn.error;
+      }
       state.log.info({ role: label, errorClass: errorClassOf(turn.error), restart: turn.yieldedTokens }, 'model turn retried');
       if (turn.yieldedTokens) yield { type: 'restart' };
     }

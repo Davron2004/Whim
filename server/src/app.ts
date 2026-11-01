@@ -234,7 +234,9 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
   // where the response is actually written: `c.json` is overridden for the lifetime of this one
   // request, so whichever refusal or route handler calls it downstream (the device gate, the
   // envelope/build gates, or a route's own `ApiError` response) hands the code straight to this
-  // closure — never by re-parsing the serialized response body.
+  // closure — never by re-parsing the serialized response body. A refusal by an open provider
+  // breaker also carries `refusedBy: 'breaker'` (set by the route), which tells it from a
+  // `provider_unavailable` that a clarify or rewrite call came to mid-call.
   app.use('*', async (c, next) => {
     const start = performance.now();
     let apiErrorCode: string | undefined;
@@ -256,6 +258,7 @@ export function createApp(options: AppOptions): Hono<AppEnv> {
           status: c.res.status,
           durationMs: Math.round(performance.now() - start),
           ...(c.res.status >= 400 && apiErrorCode !== undefined ? { error: apiErrorCode } : {}),
+          ...(c.get('refusedBy') ? { refusedBy: c.get('refusedBy') } : {}),
           ...envelopeLogFields(c.get('envelope')),
         },
         'request',
