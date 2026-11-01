@@ -58,12 +58,12 @@
 
 ## 2. Wire: the provider_unavailable refusal at protocol level 2 (#66)
 
-- [ ] 2.1 Contract (design D7; specs/generation-contract "The refusal vocabulary gains provider_unavailable", "The provider_unavailable code is introduced at protocol level 2"):
+- [x] 2.1 Contract (design D7; specs/generation-contract "The refusal vocabulary gains provider_unavailable", "The provider_unavailable code is introduced at protocol level 2"):
   - Add `provider_unavailable` to `ServiceRefusalCode` in `contract/src/index.ts`, with a doc line.
   - Set `PROTOCOL_LEVEL = 2`.
   - Regression: `server/test/contract.suite.ts` asserts `provider_unavailable` parses, `rate_limited` doesn't, and `PROTOCOL_LEVEL === 2`.
   - Red before: the parse fails.
-- [ ] 2.2 Server registry and refusal builder:
+- [x] 2.2 Server registry and refusal builder:
   - In `server/src/admission/refusals.ts`, add `REFUSAL_HINTS.provider_unavailable` = "The AI service Whim uses is having trouble right now. It’s not something you did. Please try again in a little while."
   - Add `providerUnavailableRefusal(retryAfterSeconds?: number): ServiceRefusal` (`503`, `Retry-After` only when given) and update the module doc's "Retry-After … exactly where knowable" list.
   - In `server/src/wire-level.ts`, set `ERROR_LEVELS.provider_unavailable = { level: 2, compat: { min: 2, fallback: 'fail', notice: REFUSAL_HINTS.provider_unavailable } }`.
@@ -73,23 +73,23 @@
     - at level 3 the same as level 2
   - `server/test/request-edge.suite.ts`: `x-whim-protocol: 3` is admitted.
   - Red before: "not a registered wire message".
-- [ ] 2.3 Device mirrors (specs/service-refusals "A refusal is recognised by the contract's closed refusal vocabulary"):
+- [x] 2.3 Device mirrors (specs/service-refusals "A refusal is recognised by the contract's closed refusal vocabulary"):
   - `src/host/launcher/wire-headers.ts` `PROTOCOL_LEVEL = 2`
   - `KNOWN_ERROR_CODES` in `src/host/launcher/wire-compat.ts` gains the code
   - `REFUSAL_RULES.provider_unavailable = { landing: 'sender', tone: 'neutral' }` (no `text`)
   - Move every device and server fixture that used level 2 as "the future" (`wire-future-frames.suite.ts` `levelTwo(...)`, `PROTOCOL_LEVEL + 1` cases, `server/test/wire-v2.suite.ts` if affected) to `PROTOCOL_LEVEL + 1`.
   - Regression: `npm run launcher:test -- --only wire-future-frames` keeps device level == contract level and the mirror == contract codes.
   - Red before: the typecheck fails on `REFUSAL_RULES`, and the mirror test fails.
-- [ ] 2.4 Device landing (specs/service-refusals "An availability or limit refusal lands on the step whose action sent the request"):
+- [x] 2.4 Device landing (specs/service-refusals "An availability or limit refusal lands on the step whose action sent the request"):
   - Regression: `service-refusal` suite — `provider_unavailable` with a hint is a refusal, and `Retry-After: 45` parses.
   - Regression: `refusal-landing` suite:
     - a generate refused with `provider_unavailable` + `Retry-After: 45` lands on the Plan page with the hint in a neutral notice, rows preserved, `Make it` disabled until the window passes, and no Failure page
     - a clarify refusal lands on Describe with the words preserved
   - Red before 2.3: the unknown code is not a refusal, so the Failure page opens.
-- [ ] 2.5 Pin "no report prompt" (design D9; specs/prompt-flow "Failure is shown by kind, honestly, never as a crash"):
+- [x] 2.5 Pin "no report prompt" (design D9; specs/prompt-flow "Failure is shown by kind, honestly, never as a crash"):
   - Regression: `failure-screen` suite renders a terminal `failure` whose reason is the provider sentence. It asserts the sentence shows verbatim, a retry action exists, and no report control or `ReportScreen` entry is reachable from the page.
   - This is a standing-invariant pin. It passes before the fix. The red-check is to temporarily add a report action to `FailurePage.tsx` and see the case fail, then revert.
-- [ ] 2.6 Structured `cause` on `failure`: contract, level gating, device (design D11; specs/generation-contract "The failure event gains an optional structured cause at level 2"; specs/prompt-flow "Failure is shown by kind, honestly, never as a crash"):
+- [x] 2.6 Structured `cause` on `failure`: contract, level gating, device (design D11; specs/generation-contract "The failure event gains an optional structured cause at level 2"; specs/prompt-flow "Failure is shown by kind, honestly, never as a crash"):
   - `contract/src/index.ts`: add the closed `FailureCause` (`provider_unavailable`) and `cause: FailureCause.optional()` on the `failure` arm, with a doc line saying level 2.
   - `server/src/wire-level.ts`: add `fields?: Readonly<Record<string, number>>` to `WireEntry`. `forLevel` drops each listed field whose level is above `clientLevel`. `EVENT_LEVELS.failure = { level: 1, fields: { cause: 2 } }`. Update the module doc.
   - Device `generation-client.ts`: `EVENT_OPTIONAL.failure` gains `cause: true`. `knownEventOf` keeps `cause` only when it is a member of the build's own set, else deletes it.
