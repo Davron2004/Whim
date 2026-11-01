@@ -34,3 +34,5 @@
 - runner chain-breaker #1: PASS (gate 0, e2e 0, integrity 0, ratchet 0, redcheck coarse RED + builder mutation reds, typecheck-tests 2). Fixer dispatched for review findings 1-6.
 - fix round 1 chain-breaker: tip 88670066 (e2e wiring case; env forwarding in 5 places + docs; stale-probe guard; enforced probe timeout; sync-throw probe; docs wording). Opus re-review + runner #2 dispatched.
 - re-review chain-breaker #2 (Opus): ACCEPT (1-6 resolved; 2 LOW: stale Gap lines in report, stale probe's deadline cancel runs late — harmless, accepted). handoff/breaker-review-2.md
+- runner chain-breaker #2: PASS (gate 0, e2e 0, integrity 0, ratchet 0, wiring e2e redcheck assertion RED). handoff/breaker-runner-2.md
+- merged: chain-breaker (tasks 4.1–4.6 ticked). Next: gate-full on the staging tip (final regate) + whole-change Opus review in parallel.

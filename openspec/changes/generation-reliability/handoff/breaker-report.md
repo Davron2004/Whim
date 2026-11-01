@@ -69,8 +69,8 @@ All through `/Users/davrondjabborov/.cache/whim-run/capped-run.sh`, from the wor
 - [A] `server/test/scripted-model.ts` (not in the chain file list) gained `probe: 'engineer'` in `ROSTER_ROLE_OF`; the `Record<ModelCallLabel, ModelRole>` would not typecheck otherwise.
 - [A] `generation/index.ts` untouched: `lifecycle.ts` is the only composition point (the chain lists both as options).
 - [A] `guardModel` (build the breaker from config and wrap the client) lives in `provider-breaker.ts` and `lifecycle.ts` calls it, so the composition is unit-testable without Chromium.
-- Gap: the deploy scripts (`deploy/lib.sh`, `deploy/cloudrun/deploy.sh`, `operator.env.example`) do not forward the three new env vars, so on Cloud Run the defaults apply. `docs/deploy.md` says so. Forwarding them is a separate change outside this chain's file list.
-- Gap: `lifecycle.ts`'s 3-line composition (call `guardModel`, pass `providerBreaker` to `createApp`) is covered by typecheck and `guardModel`'s test, not by a startServer test (that needs Chromium; `server/test/e2e.ts` is the only suite that boots it).
+- Gap (closed in fix round 1): the deploy scripts (`deploy/lib.sh`, `deploy/cloudrun/deploy.sh`, `operator.env.example`) do not forward the three new env vars, so on Cloud Run the defaults apply. `docs/deploy.md` says so. Forwarding them is a separate change outside this chain's file list.
+- Gap (closed in fix round 1): `lifecycle.ts`'s 3-line composition (call `guardModel`, pass `providerBreaker` to `createApp`) is covered by typecheck and `guardModel`'s test, not by a startServer test (that needs Chromium; `server/test/e2e.ts` is the only suite that boots it).
 - Not run: `launcher:test`, e2e, gate, knip.
 
 ## Fix round 1 (after breaker-review-1 REJECT)

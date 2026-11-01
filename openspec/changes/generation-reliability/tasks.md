@@ -140,11 +140,11 @@
 
 ## 4. Provider circuit breaker (#66)
 
-- [ ] 4.1 Config (specs/server-admission-control "Admission limits are environment-configurable with public-beta defaults"):
+- [x] 4.1 Config (specs/server-admission-control "Admission limits are environment-configurable with public-beta defaults"):
   - Add `WHIM_PROVIDER_BREAKER_FAILURES` (default 4, non-negative integer, `0` disables), `WHIM_PROVIDER_BREAKER_WINDOW_MS` (180000) and `WHIM_PROVIDER_BREAKER_COOLDOWN_MS` (60000) to `server/src/config.ts`.
   - Regression: `server/test/config.suite.ts` — defaults; `0` loads disabled; `-1` and `lots` throw naming the variable.
   - Red before: the keys are absent.
-- [ ] 4.2 Breaker module (design D8; specs/server-admission-control "The provider breaker counts consecutive upstream failures", "The provider breaker opens for a cooldown and says so in the log"):
+- [x] 4.2 Breaker module (design D8; specs/server-admission-control "The provider breaker counts consecutive upstream failures", "The provider breaker opens for a cooldown and says so in the log"):
   - New `server/src/admission/provider-breaker.ts` with `createProviderBreaker({failures, windowMs, cooldownMs, clock, log, probe})`, `record(outcome)` and `admit()`. It covers the window restart, success-closes, the `0` disable, and the `provider breaker open` / `provider breaker closed` logs.
   - Regression: a new `server/test/provider-breaker.suite.ts`, registered in `server/test/acceptance.ts`, with a fake clock and no sleeps:
     - 4 upstream failures open it, and `admit()` gives `retryAfterSeconds` 60, then 40 after 20 s
@@ -154,7 +154,7 @@
     - `failures: 0` never opens
     - the log lines carry the fields and no content
   - Red before: the module doesn't exist.
-- [ ] 4.3 Lazy shared probe (specs/server-admission-control "A lazy probe decides when the provider breaker closes"):
+- [x] 4.3 Lazy shared probe (specs/server-admission-control "A lazy probe decides when the provider breaker closes"):
   - The first `admit()` after the cooldown runs `probe()` once. Concurrent callers await the same promise.
   - A completed probe closes the breaker and admits. A failure re-opens it for a full cooldown, logs `provider probe failed {errorKind,status}` and refuses.
   - The probe implementation: the inner, undecorated model client with `{model: roster.engineer.model, maxTokens: 1, reasoning: 'off', role: 'probe'}` under `AbortSignal.timeout(10_000)`. Add `'probe'` to `ModelCallLabel`. It writes no ledger row.
@@ -164,12 +164,12 @@
     - rejecting with a 502 refuses all three with `retryAfterSeconds` 60 and logs `provider probe failed`
     - a probe request has `maxTokens:1` and `reasoning:'off'`
   - Red before: no probe.
-- [ ] 4.4 Feed at the model-client seam (design D8):
+- [x] 4.4 Feed at the model-client seam (design D8):
   - Add `withProviderBreaker(inner, breaker)` (a `ModelClient` decorator recording `modelFailureOf(err, signal)` or success when each stream settles).
   - Install it once in the composition root (`server/src/lifecycle.ts` / `server/src/generation/index.ts`) around the client every role uses. Verify the policy check, summary and unary routes take that same client, and wrap any that doesn't.
   - Regression: `provider-breaker.suite.ts` — a `ScriptedModelClient` wrapped by the decorator, failing 4 turns with `OpenRouterNetworkError(…, 503)`, opens the breaker, and a completed turn closes it.
   - Red before: model calls never reach the breaker.
-- [ ] 4.5 Admission wiring (specs/server-admission-control "Admission checks run in a fixed order before any model work", "An open provider breaker refuses admission", "Every refusal is a structured, user-facing ApiError", "The server refuses admission when the operator's provider credit is exhausted"):
+- [x] 4.5 Admission wiring (specs/server-admission-control "Admission checks run in a fixed order before any model work", "An open provider breaker refuses admission", "Every refusal is a structured, user-facing ApiError", "The server refuses admission when the operator's provider credit is exhausted"):
   - `admitGeneration` in `server/src/routes/generate.ts` and the clarify and rewrite admission paths call `breaker.admit()` immediately before `checkCredit`. A refusal gives `providerUnavailableRefusal(retryAfterSeconds)`.
   - Thread the breaker through `server/src/app.ts` deps.
   - Regression: `server/test/admission.suite.ts` with an open breaker:
@@ -177,7 +177,7 @@
     - no daily unit and no slot are used
     - the scripted client and the credit transport record no call
   - Red before: the requests are admitted.
-- [ ] 4.6 Alert and operator docs (specs/server-observability "The owner is alerted by email"):
+- [x] 4.6 Alert and operator docs (specs/server-observability "The owner is alerted by email"):
   - Add `deploy/monitoring/policy-provider-breaker-open.json` with the same shape as `policy-credit-exhausted.json`: one `conditionMatchedLog` on `jsonPayload.msg="provider breaker open"` with the `cloud_run_revision` / `whim-server` / stdout filter, `notificationRateLimit` 3600s, `autoClose`, and `{{CHANNEL}}`/`{{SPEC}}`.
   - Add its paragraph and the three env vars to `docs/deploy.md` "Operating: Alerts".
   - Regression: `server/test/deploy-config.suite.ts` asserts the file exists, its filter matches the log line the breaker emits (import the message constant), and it has one condition and a 3600 s rate limit. The existing every-policy checks must cover it too.
