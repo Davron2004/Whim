@@ -21,7 +21,7 @@ The proposal names three bad endings. Two documents in this folder hold the evid
 - Changing the sandbox runtime (`src/runtime/web/loader.js`), `invariants/`, or the containment verdict's meaning.
 - A fallback model (#66 rules it out explicitly).
 - A first-token timeout for engineer turns.
-- A new device failure kind or new failure UI. The server's sentence carries the message.
+- A new device failure kind or new failure UI. The server's sentence carries the message, and a structured cause (D11) only removes the rewording advice.
 - Persisting breaker state across instances. Production runs `--max-instances 1` (R§Q5).
 
 ## Decisions
@@ -107,7 +107,7 @@ How the server treats a declared level:
 - **Server-first deploy:** level-1 builds get the `{error, hint, compat}` envelope and show the notice, which is the same sentence.
 - **Client-first deploy:** a level-2 build against a level-1 server just never sees the code.
 - Rollback is equally safe.
-- The `failure` event is level 1 and its `reason` is a free string, so every build shows the terminal sentence (R§Q3).
+- The `failure` event is level 1 and its `reason` is a free string, so every build shows the terminal sentence (R§Q3). Its optional `cause` is a level-2 field (D11) that the server strips for level-1 clients.
 
 Device side effects of the bump:
 - `stillNeedsUpdate(record, PROTOCOL_LEVEL)` will clear any stored `min: 2` needs-update record. None exist in the field, because no level-2 message has ever shipped.
@@ -145,6 +145,18 @@ Device side effects of the bump:
 
 `FailurePage.tsx` has no report affordance. The content-report sheet opens only from a running app, History or Settings (R§Q4). A `failure-screen` suite case pins it. The case renders the provider sentence as a terminal failure and asserts it shows verbatim with a retry action and no report control. The red-check is to add a report control temporarily.
 
+### D11 — A structured `cause` on the `failure` event, so a provider failure doesn't advise rewording
+
+Today a terminal `failure` sets `rephraseHelps: input.remedy == null` (`LauncherRoot.tsx` `showStreamFailure` call, and again when a failed run is reopened from its tile), so the page leads with "Change the description". That contradicts "It’s not something you did." The device must not read wording, and D9 forbids a new failure kind, so the fact travels as data.
+
+- **Contract (chain-wire).** `failure` gains `cause: z.enum(['provider_unavailable']).optional()`, introduced at level 2 (the same bump as D7). The server's `FailureCause` is closed; the device's reader is not (below).
+- **Server (chain-upstream).** The terminal built for the `provider_unavailable` code (D6, `endOnThrow`) sets `cause: 'provider_unavailable'`. No other terminal sets it.
+- **Level gating.** Verified in `server/src/wire-level.ts`: the registry is per event type or error code. `forLevel` sends a message unchanged when `entry.level <= clientLevel`, and `downgrade`/the envelope exist only for a whole message above the level. `failure` stays level 1, so today nothing strips a field from it. Chain-wire therefore adds one optional member to `WireEntry`, `fields?: Readonly<Record<string, number>>` (field name to the level it was introduced at). `forLevel` drops every listed field whose level is above `clientLevel` from the message it returns, after the level check and before `withCompat`. `EVENT_LEVELS.failure` becomes `{ level: 1, fields: { cause: 2 } }`. `eventForLevel` is already the single exit of `routes/generate.ts` (`forClient`), so the gating reaches the stream with no route change. A level-1 client sees the exact event it saw before.
+- **Device reader (chain-wire).** The failure guard in `generation-client.ts` (`EVENT_GUARDS.failure`) checks only the fields it knows and `knownEventOf` keeps the rest, so an unknown field never fails parsing. `EVENT_OPTIONAL.failure` gains `cause: true` (a `null` reads as absent). `knownEventOf` keeps `cause` only when it is a member of the build's own closed set and otherwise deletes it, so an unknown future value reads as "no cause" and never reaches a screen.
+- **Device behaviour (chain-wire).** `PendingFailureCause` (`pending-builds.ts`) gains `'provider_unavailable'`, stored on the failed record beside `'connection'`, so the same run reopened from its tile reads alike. `rephraseHelps` becomes `remedy == null && cause !== 'provider_unavailable'` at both sites, so `failureActions` already gives `[Try again]` and no "Change the description". `failureKindOf` is unchanged: the kind is `other` and the sentence is the server's, and the cause is read from the stored field, never from wording. There is no new kind or page, and the report action stays absent (D9's pin).
+
+*Alternative rejected:* leaving the advice as is and parking the question. It shipped a sentence ("not something you did") next to an action that says the opposite.
+
 ### D10 — Out of scope
 
 No fallback model and no first-token timeout for engineer turns (see Parked).
@@ -169,13 +181,12 @@ No fallback model and no first-token timeout for engineer turns (see Parked).
 
 ## Open Questions
 
-- **Rewording advice on a provider failure.** A terminal `failure` sets `rephraseHelps: input.remedy == null` (`LauncherRoot.tsx`), so the Failure page leads with "Change the description" and then "Try again as it is". That contradicts "It’s not something you did." D9 forbids a new failure kind, and the device must not derive anything from wording. Fixing it needs a structured cause on the `failure` event, which would be a level-2 field. For now it is listed under Parked for the owner's decision. The spec scenario only promises a retry action and no report action.
+None.
 
 ## Parked (filed as `ai-proposed` issues at closure)
 
 1. `src/runtime/web/loader.js` `try { … } finally { __whimAfterBundle() }`, so the trusted probes run even when the bundle fails to evaluate or mount. A module-scope escape that ends in a throw would then be caught as `containment_failed` (RC§fix 3). This is the sandbox runtime area: it needs its own change with `npm run invariants` and `bridge:invariants`.
 2. The `awaitMount` race: a pre-paint diagnostic settles mount early, so `sweepApp` starts before mount (RC§side note).
 3. A first-token timeout for engineer turns. None exists, so a stalled provider holds a turn until `WHIM_GENERATION_MAX_MS` (R§Q1).
-4. A structured cause on `failure`, so a provider failure doesn't advise rewording (Open Questions).
-5. Flowbench (`server/src/flowbench/drive.ts`) handling `provider_unavailable`: wait out `Retry-After` and record it apart from model faults.
-6. A fallback model behind the breaker (#66 "Out of scope"). The breaker's open state is where it would plug in.
+4. Flowbench (`server/src/flowbench/drive.ts`) handling `provider_unavailable`: wait out `Retry-After` and record it apart from model faults.
+5. A fallback model behind the breaker (#66 "Out of scope"). The breaker's open state is where it would plug in.

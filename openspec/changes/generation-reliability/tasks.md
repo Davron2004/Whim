@@ -89,6 +89,16 @@
 - [ ] 2.5 Pin "no report prompt" (design D9; specs/prompt-flow "Failure is shown by kind, honestly, never as a crash"):
   - Regression: `failure-screen` suite renders a terminal `failure` whose reason is the provider sentence. It asserts the sentence shows verbatim, a retry action exists, and no report control or `ReportScreen` entry is reachable from the page.
   - This is a standing-invariant pin. It passes before the fix. The red-check is to temporarily add a report action to `FailurePage.tsx` and see the case fail, then revert.
+- [ ] 2.6 Structured `cause` on `failure`: contract, level gating, device (design D11; specs/generation-contract "The failure event gains an optional structured cause at level 2"; specs/prompt-flow "Failure is shown by kind, honestly, never as a crash"):
+  - `contract/src/index.ts`: add the closed `FailureCause` (`provider_unavailable`) and `cause: FailureCause.optional()` on the `failure` arm, with a doc line saying level 2.
+  - `server/src/wire-level.ts`: add `fields?: Readonly<Record<string, number>>` to `WireEntry`. `forLevel` drops each listed field whose level is above `clientLevel`. `EVENT_LEVELS.failure = { level: 1, fields: { cause: 2 } }`. Update the module doc.
+  - Device `generation-client.ts`: `EVENT_OPTIONAL.failure` gains `cause: true`. `knownEventOf` keeps `cause` only when it is a member of the build's own set, else deletes it.
+  - Device `pending-builds.ts`/`failure-kind.ts`/`LauncherRoot.tsx`: `PendingFailureCause` gains `'provider_unavailable'`. The terminal `failure` handler passes `cause` into `showStreamFailure`/`settleFailed`. `rephraseHelps` is `remedy == null && cause !== 'provider_unavailable'` at both sites (live failure, and reopened from the tile via `failureCauseOf`). The kind stays derived from facts, with no new kind and no wording read.
+  - Regression, server: `wire-level.suite.ts` — `eventForLevel` on a `failure` with `cause` at level 1 gives the event without `cause` and every other field intact, at level 2 and 3 keeps it, and a `failure` without `cause` is unchanged at every level. `contract.suite.ts` — `cause: 'provider_unavailable'` validates, `cause: 'other'` fails.
+  - Regression, device: `failure-screen` suite (and `generation-client` suite for the reader):
+    - a terminal `failure` with `cause: 'provider_unavailable'` shows the sentence verbatim, the first action is "Try again", "Change the description" is absent, and no report control is reachable; the same after reopening the failed run from its tile
+    - a `failure` with no cause, and one with `cause: 'some_future_cause'` (parses, cause dropped), both still lead with "Change the description" and "Try again as it is"
+  - Red before: the provider-cause failure leads with "Change the description".
 
 ## 3. Upstream failures: classify, resend plan, name the outage (#57, #66)
 
@@ -124,6 +134,9 @@
     - a rewrite 401 gives `502`
     - the stalled-rewrite timeout case now expects `503 provider_unavailable` with the unary slot released (rewrite this assertion, don't drop it)
   - Red before: `502` everywhere.
+- [ ] 3.6 Set the cause on the provider terminal (design D11; specs/generation-pipeline "A run whose provider stays down ends with its own reason"): in `machine.ts` `endOnThrow`, the terminal for the `provider_unavailable` code carries `cause: 'provider_unavailable'`, and no other terminal sets `cause`. Needs 2.6's contract field and `eventForLevel` gating.
+  - Regression: `server/test/routes-generate.suite.ts` — a generate failing upstream twice, requested with `x-whim-protocol: 2`, ends in a `failure` that carries `cause: 'provider_unavailable'`. The same run requested at level 1 ends in the same `reason` with no `cause` key. `internal_error` and `credit_exhausted` endings carry no `cause` at either level.
+  - Red before: the field is never set.
 
 ## 4. Provider circuit breaker (#66)
 

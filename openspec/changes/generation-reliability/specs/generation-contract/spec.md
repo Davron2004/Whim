@@ -21,3 +21,18 @@ The contract's `PROTOCOL_LEVEL` SHALL become `2`. The server SHALL register `pro
 #### Scenario: A client above the server's level is served
 - **WHEN** a request declares `x-whim-protocol: 3` to a level-2 server
 - **THEN** it is admitted, and no message above level 2 is sent
+
+### Requirement: The failure event gains an optional structured cause at level 2
+The `failure` event SHALL gain an optional `cause` from the closed vocabulary `provider_unavailable`, introduced at protocol level 2. The server SHALL set it on the terminal failure of a run that ends with the `provider_unavailable` code, and SHALL omit it for a client declaring level 1. A client SHALL ignore a `cause` value it does not know.
+
+#### Scenario: A level-2 stream carries the cause
+- **WHEN** a run ends with the provider-unavailable terminal and the request declared `x-whim-protocol: 2`
+- **THEN** the `failure` event validates against the contract and carries `cause: 'provider_unavailable'`
+
+#### Scenario: A level-1 stream does not
+- **WHEN** the same run's request declared level `1`
+- **THEN** the `failure` event has the same `reason` and no `cause` field
+
+#### Scenario: An unknown cause is ignored
+- **WHEN** the device receives a `failure` whose `cause` is a value it does not know
+- **THEN** the event is read as a failure with no cause, and the Failure page behaves as it does for any other failure

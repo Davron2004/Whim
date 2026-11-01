@@ -140,11 +140,15 @@ Every `terminal failure` line SHALL carry `phase`, one of `module-eval | bundle 
 ## ADDED Requirements
 
 ### Requirement: A run whose provider stays down ends with its own reason
-When a plan, generate or repair turn still fails upstream after its one resend, the pipeline SHALL end the run, with no further repair, in exactly one `failure` terminal event whose `reason` is the `provider_unavailable` refusal hint, and SHALL record the terminal failure code `provider_unavailable`. A resend that fails for a reason that is not upstream SHALL end as that reason ends today.
+When a plan, generate or repair turn still fails upstream after its one resend, the pipeline SHALL end the run, with no further repair, in exactly one `failure` terminal event whose `reason` is the `provider_unavailable` refusal hint, and SHALL record the terminal failure code `provider_unavailable`. That `failure` SHALL carry `cause: 'provider_unavailable'` for a client at protocol level 2 or above. A resend that fails for a reason that is not upstream SHALL end as that reason ends today.
 
 #### Scenario: A generate turn that fails twice upstream
 - **WHEN** the scripted model client fails the generate turn with a `502` stream error twice
 - **THEN** the stream ends with one `failure` whose reason is "The AI service Whim uses is having trouble right now. It’s not something you did. Please try again in a little while." (no provider, model, status code or stage named), no repair stage runs, and the ledger row's failure reason is `provider_unavailable`
+
+#### Scenario: The provider terminal carries its cause by level
+- **WHEN** a generate turn fails upstream twice, once for a stream declaring level `2` and once for level `1`
+- **THEN** the level-2 `failure` carries `cause: 'provider_unavailable'`, the level-1 `failure` has the same reason and no `cause`, and a run ending as `internal_error` or `credit_exhausted` carries no `cause`
 
 #### Scenario: A plan turn that fails twice upstream
 - **WHEN** the plan turn fails with a network error and its resend fails with a `429`
