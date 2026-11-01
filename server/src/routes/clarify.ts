@@ -8,7 +8,8 @@
  *
  * Zero questions is a first-class success (`200` with an empty list), never an error and never a
  * degraded mode: most prompts need nothing clarified. What is NOT dressed up as zero questions is
- * a broken model call — that stays an honest `502`, mirroring `/v1/rewrite`.
+ * a broken model call: an honest `502`, mirroring `/v1/rewrite`, or `503 provider_unavailable`
+ * when the provider failed upstream (#66, `../model-failure.ts`).
  *
  * Admission (design D6a/D8; specs/server-admission-control "Admission checks run in a fixed
  * order"): raw body cap, body validation, prompt byte cap, operator credit, drain state, the
@@ -21,6 +22,7 @@
  */
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { ClarifyRequest, ClarifyResponse, type ApiError, type ClarifyLimit, type Usage } from '@whim/contract';
 import { isCreditExhaustedError, type ModelClient, type ModelRoster } from '../generation/model';
 import type { FailureReason, UsageStore, RequestKind, RequestOutcome } from '../usage-store';
@@ -33,11 +35,13 @@ import {
   dailyLimitRefusal,
   payloadTooLargeRefusal,
   policyUnavailableRefusal,
+  providerUnavailableRefusal,
   serverBusyCeilingRefusal,
   slotRefusal,
   type ServiceRefusal,
 } from '../admission/refusals';
 import { PolicyUnavailableError, policyMetering, type ContentPolicy, type PolicyMetering, type PolicyRoute } from '../policy';
+import { modelFailureOf } from '../model-failure';
 import { buildClarifyPolicyInput } from '../policy/input';
 import {
   resolveRequestUsage,
@@ -501,7 +505,8 @@ export function makeClarifyRoute(
       };
 
       try {
-        return await runClarifyWork(model, roster, parsed.data, config, c.req.raw.signal, deviceId, usageStore, finish, options.stub, requestLog);
+        const work = await runClarifyWork(model, roster, parsed.data, config, c.req.raw.signal, deviceId, usageStore, finish, options.stub, requestLog);
+        return c.json(work.body, work.status, work.headers);
       } catch (err) {
         await settleFailedUnaryRequest(usageStore, requestId, clock, err, requestLog, settlementUsage);
         throw err;
@@ -522,10 +527,19 @@ type FinishFn = (
   failureReason?: FailureReason,
 ) => Promise<void>;
 
+/** What the route answers with: the handler sends it through `c.json`, the one door that gates an
+ *  error body by the client's declared protocol level and puts its code on the request log line. */
+interface ClarifyWork {
+  readonly body: ClarifyResponse | ApiError;
+  readonly status: ContentfulStatusCode;
+  readonly headers?: Readonly<Record<string, string>>;
+}
+
 /**
  * The route's actual work, once admission has allowed it through: the stub short-circuit, the
  * unconfigured-server refusal, or a real bounded model call — extracted so `makeClarifyRoute`'s
- * handler only orchestrates admission, never the model-call branching too.
+ * handler only orchestrates admission, never the model-call branching too. It returns the answer
+ * rather than building a `Response`, so no branch can bypass `c.json`.
  */
 async function runClarifyWork(
   model: ModelClient | undefined,
@@ -538,16 +552,16 @@ async function runClarifyWork(
   finish: FinishFn,
   stub: boolean | undefined,
   requestLog: ServerLogger,
-): Promise<Response> {
+): Promise<ClarifyWork> {
   if (stub) {
     const stubbed = stubClarifyResponse(parsed.prompt);
     await finish('ok', undefined, [], true);
-    return Response.json(stubbed satisfies ClarifyResponse, { status: 200 });
+    return { body: stubbed satisfies ClarifyResponse, status: 200 };
   }
 
   if (!model || !roster) {
     await finish('error', undefined, [], true, 'internal_error');
-    return Response.json(NOT_CONFIGURED, { status: 502 });
+    return { body: NOT_CONFIGURED, status: 502 };
   }
 
   const timeoutSignal = AbortSignal.timeout(config.unaryModelTimeoutMs);
@@ -584,10 +598,15 @@ async function runClarifyWork(
       invalidateCreditCache();
       await finish('error', undefined, ids, false, 'budget_exhausted');
       const r = budgetExhaustedRefusal();
-      return Response.json(r.body, { status: r.status, headers: r.headers });
+      return r;
+    }
+    if (modelFailureOf(err, combined).upstream) {
+      await finish('error', undefined, ids, false, 'provider_unavailable');
+      const r = providerUnavailableRefusal();
+      return r;
     }
     await finish('error', undefined, ids, false, 'model_failure');
-    return Response.json(MODEL_FAILURE, { status: 502 });
+    return { body: MODEL_FAILURE, status: 502 };
   }
 
   // Store failures must reach the app's 500 handler, not be retried as model failures.
@@ -596,8 +615,8 @@ async function runClarifyWork(
   const shaped = shapeClarify(raw, requestLog);
   if (!shaped) {
     await finish('error', usage, ids, true, 'model_failure');
-    return Response.json(MODEL_FAILURE, { status: 502 });
+    return { body: MODEL_FAILURE, status: 502 };
   }
   await finish('ok', usage, ids, true);
-  return Response.json(shaped satisfies ClarifyResponse, { status: 200 });
+  return { body: shaped satisfies ClarifyResponse, status: 200 };
 }

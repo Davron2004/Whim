@@ -32,6 +32,8 @@ import { CLASSIFIER_SYSTEM_MARKER, cachedPolicy, ModelContentPolicy, StubContent
 import { defaultModelRoster, type ModelClient, type ModelDelta, type ModelRoster, type ModelStream } from '../src/generation/model';
 import { ResolveTracker, type GenerationStats, type UsageAndCostTransport } from '../src/usage/resolve';
 import { ScriptedModelClient } from './scripted-model';
+import { REFUSAL_HINTS } from '../src/admission/refusals';
+import { OpenRouterAuthError, OpenRouterNetworkError, OpenRouterRateLimitError } from '../src/openrouter';
 import { PROTOCOL_HEADERS } from './route-doubles';
 import { ApiError, ServiceRefusalCode, type Usage } from '@whim/contract';
 
@@ -831,9 +833,10 @@ async function testStalledRewriteTimesOut(): Promise<void> {
   const started = Date.now();
   const res = await withRequestDeadline(post(app, '/v1/rewrite', { prompt: 'hi' }, DEVICE_HEADER));
   const elapsedMs = Date.now() - started;
-  eq('a stalled rewrite times out honestly → 502', res.status, 502);
+  eq('a stalled rewrite times out as the provider being unavailable → 503', res.status, 503);
   const body = (await res.json()) as ApiError;
-  check('the failure body has a non-empty hint', body.hint.length > 0);
+  eq('the timeout body is provider_unavailable with the shared hint', [body.error, body.hint], ['provider_unavailable', REFUSAL_HINTS.provider_unavailable]);
+  eq('the timeout answer carries no Retry-After', res.headers.get('retry-after'), null);
   check('the transport observed the abort', observed.aborted);
   check('the global unary in-flight count is back to its prior value', slots.counts().unary === 0);
   check('the timeout bounded the response (well under 2s)', elapsedMs < 2000, `took ${elapsedMs}ms`);
@@ -1154,7 +1157,7 @@ async function testClassifierCreditedOnceOnUnaryEndings(): Promise<void> {
         config: { unaryModelTimeoutMs: 40 },
       });
       const res = await withRequestDeadline(post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER));
-      eq(`${route} timeout → 502`, res.status, 502);
+      eq(`${route} timeout → 503`, res.status, 503);
       await assertResolvedOnce(`${route} timeout`, usageStore, tracker, CLASSIFIER_USAGE, CLASSIFIER_COST);
     }
 
@@ -1206,6 +1209,93 @@ async function testUnaryFailuresNameTheirCode(): Promise<void> {
     eq(`${name} → 502`, res.status, 502);
     const ledger = (await usageStore.deviceRecords(DEVICE_ID)).ledger;
     eq(`  ... and its row settles as an error naming ${code}`, ledger.map((row) => [row.outcome, row.failureReason]), [['error', code]]);
+  }
+}
+
+/** specs/generation-server "Clarify endpoint" / "Rewrite endpoint over the real rewrite model":
+ *  an upstream failure (server, rate limit, network; the per-call timeout is in
+ *  `testStalledRewriteTimesOut`) is `503 provider_unavailable` with no Retry-After and its own
+ *  ledger code; a failure that is not the provider's stays `502 model_failure`. */
+async function testUpstreamFailureIsProviderUnavailable(): Promise<void> {
+  section('Clarify and rewrite: an upstream failure answers 503 provider_unavailable (#66)');
+  const upstream503 = (): OpenRouterNetworkError => new OpenRouterNetworkError('OpenRouter: stream error (503)', undefined, 503);
+  const cases: ReadonlyArray<{ name: string; route: 'clarify' | 'rewrite'; model: ModelClient; status: number; code: FailureReason }> = [
+    { name: 'clarify: a 503 stream error', route: 'clarify', model: new ScriptedModelClient(ROSTER, [{ role: 'clarify', deltas: [], error: upstream503() }]), status: 503, code: 'provider_unavailable' },
+    { name: 'clarify: a 429', route: 'clarify', model: new ScriptedModelClient(ROSTER, [{ role: 'clarify', deltas: [], error: new OpenRouterRateLimitError('rate limit') }]), status: 503, code: 'provider_unavailable' },
+    { name: 'clarify: a 401', route: 'clarify', model: new ScriptedModelClient(ROSTER, [{ role: 'clarify', deltas: [], error: new OpenRouterAuthError('unauthorized') }]), status: 502, code: 'model_failure' },
+    {
+      name: 'rewrite: a transport failure on the first attempt',
+      route: 'rewrite',
+      model: new ScriptedModelClient(ROSTER, [{ role: 'rewrite', deltas: [], error: new OpenRouterNetworkError('fetch failed') }]),
+      status: 503,
+      code: 'provider_unavailable',
+    },
+    {
+      name: 'rewrite: a transport failure on the retry after an unusable reply',
+      route: 'rewrite',
+      model: new ScriptedModelClient(ROSTER, [
+        { role: 'rewrite', deltas: ['A counter'] },
+        { role: 'rewrite', deltas: [], error: upstream503() },
+      ]),
+      status: 503,
+      code: 'provider_unavailable',
+    },
+    { name: 'rewrite: a 401', route: 'rewrite', model: new ScriptedModelClient(ROSTER, [{ role: 'rewrite', deltas: [], error: new OpenRouterAuthError('unauthorized') }]), status: 502, code: 'model_failure' },
+  ];
+  for (const { name, route, model, status, code } of cases) {
+    invalidateCreditCache();
+    const usageStore = new InMemoryUsageStore();
+    const slots = createSlotController({ maxConcurrentGenerations: 1, maxConcurrentUnary: 1 });
+    const { app } = testApp({ model, usageStore, slots });
+    const res = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, DEVICE_HEADER);
+    eq(`${name} → ${status}`, res.status, status);
+    const body = (await res.json()) as ApiError;
+    if (code === 'provider_unavailable') {
+      eq(`${name}: the body is provider_unavailable with the shared hint`, [body.error, body.hint], ['provider_unavailable', REFUSAL_HINTS.provider_unavailable]);
+    } else {
+      eq(`${name}: the body is model_failure`, body.error, 'model_failure');
+    }
+    eq(`${name}: no Retry-After`, res.headers.get('retry-after'), null);
+    const ledger = (await usageStore.deviceRecords(DEVICE_ID)).ledger;
+    eq(`${name}: the row settles as an error naming ${code}`, ledger.map((row) => [row.outcome, row.failureReason]), [['error', code]]);
+    eq(`${name}: the unary slot is released`, slots.counts().unary, 0);
+  }
+}
+
+/** generation-contract "A level-1 client gets the compat envelope" / "A level-2 client gets the
+ *  refusal itself", end to end on the two unary routes: the wrapped `c.json` is what gates an
+ *  error body by the client's declared level, so a route that answers around it leaks a code a
+ *  level-1 build has never heard of. */
+async function testProviderUnavailableByProtocolLevel(): Promise<void> {
+  section('Clarify and rewrite: provider_unavailable is gated by the declared protocol level (#66)');
+  const routes: ReadonlyArray<{ route: 'clarify' | 'rewrite'; model: () => ModelClient }> = [
+    {
+      route: 'clarify',
+      model: () => new ScriptedModelClient(ROSTER, [{ role: 'clarify', deltas: [], error: new OpenRouterNetworkError('OpenRouter: stream error (503)', undefined, 503) }]),
+    },
+    { route: 'rewrite', model: () => new ScriptedModelClient(ROSTER, [{ role: 'rewrite', deltas: [], error: new OpenRouterNetworkError('fetch failed') }]) },
+  ];
+  for (const { route, model } of routes) {
+    invalidateCreditCache();
+    const { app } = testApp({ model: model() });
+    const level1 = await post(app, `/v1/${route}`, { prompt: 'a habit tracker' }, { 'x-whim-device': DEVICE_ID, 'x-whim-protocol': '1' });
+    eq(`${route}: a level-1 request → 503`, level1.status, 503);
+    eq(
+      `${route}: a level-1 request gets the compat envelope with the hint as the notice`,
+      await level1.json(),
+      {
+        error: 'provider_unavailable',
+        hint: REFUSAL_HINTS.provider_unavailable,
+        compat: { min: 2, fallback: 'fail', notice: REFUSAL_HINTS.provider_unavailable },
+      },
+    );
+
+    invalidateCreditCache();
+    const { app: app2 } = testApp({ model: model() });
+    const level2 = await post(app2, `/v1/${route}`, { prompt: 'a habit tracker' }, { 'x-whim-device': DEVICE_ID, 'x-whim-protocol': '2' });
+    eq(`${route}: a level-2 request → 503`, level2.status, 503);
+    const body = (await level2.json()) as ApiError;
+    eq(`${route}: a level-2 request gets the refusal itself`, [body.error, body.hint], ['provider_unavailable', REFUSAL_HINTS.provider_unavailable]);
   }
 }
 
@@ -1480,6 +1570,8 @@ export async function runRoutesUnaryTests(): Promise<void> {
   await testClassifierCreditedOnceOnUnaryEndings();
   await testBudgetExhaustedMidCall();
   await testUnaryFailuresNameTheirCode();
+  await testUpstreamFailureIsProviderUnavailable();
+  await testProviderUnavailableByProtocolLevel();
   await testReportRoute();
   await testHealthzSse();
 }

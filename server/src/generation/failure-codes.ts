@@ -12,6 +12,7 @@ export const TERMINAL_FAILURE_CODES = [
   'run_unverified',
   'expired',
   'credit_exhausted',
+  'provider_unavailable',
   'internal_error',
 ] as const;
 export type TerminalFailureCode = (typeof TERMINAL_FAILURE_CODES)[number];

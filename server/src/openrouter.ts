@@ -13,6 +13,7 @@
 import { Usage } from '@whim/contract';
 import type { ModelCallLabel, ModelDelta, ReasoningSetting } from './generation/model';
 import { log, type ServerLogger } from './logger';
+import { modelFailureOf } from './model-failure';
 export { Usage };
 
 const routerLog = log.child({ scope: 'openrouter' });
@@ -35,6 +36,7 @@ export interface ProviderRouting {
 /** Authentication failure (HTTP 401). */
 export class OpenRouterAuthError extends Error {
   readonly kind = 'auth' as const;
+  readonly status = 401 as const;
   constructor(message: string) {
     super(message);
     this.name = 'OpenRouterAuthError';
@@ -44,6 +46,7 @@ export class OpenRouterAuthError extends Error {
 /** Rate-limit exceeded (HTTP 429). */
 export class OpenRouterRateLimitError extends Error {
   readonly kind = 'rate_limit' as const;
+  readonly status = 429 as const;
   constructor(message: string) {
     super(message);
     this.name = 'OpenRouterRateLimitError';
@@ -365,7 +368,8 @@ export class OpenRouterClient {
    *
    * Whenever the stream settles — completed, failed, or aborted — logs exactly one `model call`
    * info line (design D4): `role`/`model`, `provider` and token-detail fields when present,
-   * `ttftMs`/`durationMs`, prompt/completion tokens, `generationId`, `outcome`. No message content.
+   * `ttftMs`/`durationMs`, prompt/completion tokens, `generationId`, `outcome`, and on a failed or aborted call
+   * `errorKind` (plus `status` when the error carried one). No message content.
    */
   stream(options: OpenRouterOptions): StreamResult {
     const { fetchFn, routing } = this;
@@ -405,7 +409,10 @@ export class OpenRouterClient {
     function outcomeFor(): 'failed' | 'aborted' {
       return options.signal?.aborted === true ? 'aborted' : 'failed';
     }
-    function logSettle(outcome: 'completed' | 'failed' | 'aborted', usage: Usage | undefined): void {
+    function logSettle(outcome: 'completed' | 'failed' | 'aborted', usage: Usage | undefined, failure?: unknown): void {
+      // A failed or aborted line names why, by closed kind and status only (`modelFailureOf`): never
+      // the error's message, which can quote the provider's body.
+      const why = outcome === 'completed' ? undefined : modelFailureOf(failure, options.signal);
       callLog.info(
         {
           ...(options.role !== undefined ? { role: options.role } : {}),
@@ -419,6 +426,8 @@ export class OpenRouterClient {
           ...(capturedTokenDetails?.cachedTokens !== undefined ? { cachedTokens: capturedTokenDetails.cachedTokens } : {}),
           ...(capturedGenerationId !== undefined ? { generationId: capturedGenerationId } : {}),
           outcome,
+          ...(why !== undefined ? { errorKind: why.errorKind } : {}),
+          ...(why?.status !== undefined ? { status: why.status } : {}),
         },
         'model call',
       );
@@ -439,7 +448,7 @@ export class OpenRouterClient {
       } catch (err) {
         const netErr = new OpenRouterNetworkError('fetch failed', err);
         captureId(undefined);
-        logSettle(outcomeFor(), undefined);
+        logSettle(outcomeFor(), undefined, netErr);
         rejectUsage(netErr);
         throw netErr;
       }
@@ -447,7 +456,7 @@ export class OpenRouterClient {
       const validationError = responseError(response);
       if (validationError) {
         captureId(undefined);
-        logSettle(outcomeFor(), undefined);
+        logSettle(outcomeFor(), undefined, validationError);
         rejectUsage(validationError);
         throw validationError;
       }
@@ -459,7 +468,7 @@ export class OpenRouterClient {
       if (!body) {
         const netErr = new OpenRouterNetworkError('OpenRouter: response body is null');
         captureId(undefined);
-        logSettle(outcomeFor(), undefined);
+        logSettle(outcomeFor(), undefined, netErr);
         rejectUsage(netErr);
         throw netErr;
       }
@@ -513,7 +522,7 @@ export class OpenRouterClient {
         // status; anything else (a genuine read failure) is wrapped as a transport error.
         const err = isTypedOpenRouterError(streamErr) ? streamErr : new OpenRouterNetworkError('stream read failed', streamErr);
         captureId(undefined);
-        logSettle(outcomeFor(), capturedUsage);
+        logSettle(outcomeFor(), capturedUsage, err);
         rejectUsage(err);
         throw err;
       }

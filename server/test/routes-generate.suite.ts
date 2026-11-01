@@ -39,11 +39,11 @@ import {
 import { invalidateCreditCache, type CreditLookupResponse, type CreditTransport } from '../src/admission/credit';
 import { cachedPolicy, ModelContentPolicy, type ContentPolicy } from '../src/policy';
 import { InFlightGenerations, type LineClock } from '../src/routes/generate';
-import { serverBusyCeilingRefusal, serverBusyRefusal } from '../src/admission/refusals';
+import { REFUSAL_HINTS, serverBusyCeilingRefusal, serverBusyRefusal } from '../src/admission/refusals';
 import { captureLogs, withMessage } from './log-capture';
 import { ResolveTracker, type GenerationStats, type UsageAndCostTransport } from '../src/usage/resolve';
-import { CREDIT_EXHAUSTED_REASON, EXPIRED_REASON, GenerationMachine, type Clock, type RunTrace } from '../src/generation/machine';
-import { OpenRouterNetworkError } from '../src/openrouter';
+import { CREDIT_EXHAUSTED_REASON, EXPIRED_REASON, GENERIC_INTERNAL_ERROR_REASON, GenerationMachine, PROVIDER_UNAVAILABLE_REASON, type Clock, type RunTrace } from '../src/generation/machine';
+import { OpenRouterAuthError, OpenRouterCreditError, OpenRouterNetworkError, OpenRouterRateLimitError } from '../src/openrouter';
 import { defaultModelRoster, type ModelClient, type ModelRoster } from '../src/generation/model';
 import {
   ControlledModelClient,
@@ -59,6 +59,7 @@ import {
   ApiError,
   GenerationEvent,
   MAX_DECLARED_FIELDS,
+  PROTOCOL_HEADER,
   REQUEST_ID_HEADER,
   ServiceRefusalCode,
   type GenerateRequest,
@@ -1599,6 +1600,142 @@ async function testProviderDropIsResentAndMetered(): Promise<void> {
   check('provider drop: all three calls are costed', cost?.state === 'resolved' && Math.abs((cost.costUsd ?? 0) - 0.007) < 1e-9, JSON.stringify(cost));
 }
 
+const PLAN_TEXT = JSON.stringify({ screens: [{ name: 'Home', purpose: 'the only screen' }], initial: 'Home', state: [], capabilities: [], storageKeys: [] });
+/** The `OpenRouter*Error` the client raises for a provider 503, as a stream frame or HTTP status. */
+const upstream503 = (): OpenRouterNetworkError => new OpenRouterNetworkError('OpenRouter: HTTP 503', undefined, 503);
+
+/** POST /v1/generate declaring `level` as the client's protocol level. */
+async function postGenerateAtLevel(app: Harness['app'], level: number): Promise<Response> {
+  const res = await within(
+    Promise.resolve(
+      app.request('/v1/generate', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-whim-device': DEVICE_A, [PROTOCOL_HEADER]: String(level) },
+        body: JSON.stringify(PROMPT),
+      }),
+    ),
+  );
+  if (res === TIMED_OUT) throw new Error('POST /v1/generate did not answer');
+  return res;
+}
+
+function failureOf(events: readonly GenerationEvent[]): Extract<GenerationEvent, { type: 'failure' }> | undefined {
+  const last = events.at(-1);
+  return last?.type === 'failure' ? last : undefined;
+}
+
+async function testPlanTurnIsResent(): Promise<void> {
+  section('Generate: a plan turn that fails upstream is sent once more, with no restart (#57, D4)');
+
+  const model = new ScriptedModelClient(ROSTER, [
+    { role: 'plan', deltas: [], error: upstream503(), id: 'gen-plan-1' },
+    { role: 'plan', deltas: [PLAN_TEXT], id: 'gen-plan-2' },
+    { role: 'engineer', deltas: [RESULT_APP.source] },
+  ]);
+  const h = harness({ pipeline: deliveringMachinePipeline(model) });
+  const capture = captureLogs();
+  let events: GenerationEvent[];
+  let retried: Record<string, unknown>[];
+  try {
+    events = await readEvents('plan resend', await postGenerate(h.app, PROMPT, DEVICE_A));
+    retried = withMessage(capture, 'model turn retried');
+  } finally {
+    capture.stop();
+  }
+  eq('plan resend: the run delivers', events.at(-1)?.type, 'result');
+  check('plan resend: no restart event (a plan streams no tokens)', !events.some((e) => e.type === 'restart'));
+  eq('plan resend: the plan was asked for twice, then the engineer once', model.requests.map((r) => r.role), ['plan', 'plan', 'engineer']);
+  eq('plan resend: one model turn retried line, for the plan', retried.map((r) => r.role), ['plan']);
+  await expectTornDown('plan resend', h, 'delivered');
+}
+
+async function testProviderUnavailableTerminal(): Promise<void> {
+  section('Generate: a turn that fails upstream twice ends as provider_unavailable, and nothing else does (#66, D6)');
+
+  // An engineer turn failing upstream twice: one failure with the sentence, no repair, the code on the ledger row.
+  {
+    const model = new ScriptedModelClient(ROSTER, [
+      { role: 'plan', deltas: [PLAN_TEXT] },
+      { role: 'engineer', deltas: [], error: upstream503() },
+      { role: 'engineer', deltas: [], error: upstream503() },
+    ]);
+    const h = harness({ pipeline: deliveringMachinePipeline(model) });
+    const events = await readEvents('engineer 503 twice', await postGenerate(h.app, PROMPT, DEVICE_A));
+    eq('engineer 503 twice: exactly one terminal', events.filter((e) => e.type === 'result' || e.type === 'failure').length, 1);
+    eq('engineer 503 twice: the failure carries the provider sentence', failureOf(events)?.reason, REFUSAL_HINTS.provider_unavailable);
+    eq('engineer 503 twice: the machine constant is that sentence', PROVIDER_UNAVAILABLE_REASON, REFUSAL_HINTS.provider_unavailable);
+    check('engineer 503 twice: the sentence names no vendor', !/openrouter|deepseek|qwen|openai/i.test(PROVIDER_UNAVAILABLE_REASON));
+    check('engineer 503 twice: no repair stage ran', !events.some((e) => e.type === 'stage' && e.stage === 'repair'));
+    eq('engineer 503 twice: the engineer was asked twice and no more', model.requests.map((r) => r.role), ['plan', 'engineer', 'engineer']);
+    await expectTornDown('engineer 503 twice', h, 'failed');
+    eq('engineer 503 twice: the ledger row names provider_unavailable', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.failureReason), ['provider_unavailable']);
+  }
+
+  // A plan turn failing a network error and then a 429.
+  {
+    const model = new ScriptedModelClient(ROSTER, [
+      { role: 'plan', deltas: [], error: new OpenRouterNetworkError('fetch failed') },
+      { role: 'plan', deltas: [], error: new OpenRouterRateLimitError('OpenRouter: rate limit exceeded (429)') },
+    ]);
+    const h = harness({ pipeline: deliveringMachinePipeline(model) });
+    const events = await readEvents('plan network then 429', await postGenerate(h.app, PROMPT, DEVICE_A));
+    eq('plan network then 429: the same sentence', failureOf(events)?.reason, REFUSAL_HINTS.provider_unavailable);
+    eq('plan network then 429: the ledger row names provider_unavailable', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.failureReason), ['provider_unavailable']);
+  }
+
+  // The discriminating pair: the resend's own failure decides, and only an upstream one is the provider's.
+  {
+    const model = new ScriptedModelClient(ROSTER, [
+      { role: 'plan', deltas: [], error: upstream503() },
+      { role: 'plan', deltas: [], error: new OpenRouterAuthError('OpenRouter: unauthorized (401)') },
+    ]);
+    const h = harness({ pipeline: deliveringMachinePipeline(model) });
+    const events = await readEvents('503 then 401', await postGenerate(h.app, PROMPT, DEVICE_A));
+    eq('503 then 401: the generic sentence', failureOf(events)?.reason, GENERIC_INTERNAL_ERROR_REASON);
+    eq('503 then 401: the ledger row names internal_error', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.failureReason), ['internal_error']);
+  }
+  {
+    invalidateCreditCache();
+    const model = new ScriptedModelClient(ROSTER, [
+      { role: 'plan', deltas: [], error: upstream503() },
+      { role: 'plan', deltas: [], error: new OpenRouterCreditError('OpenRouter: payment required (402)') },
+    ]);
+    const h = harness({ pipeline: deliveringMachinePipeline(model) });
+    const events = await readEvents('503 then 402', await postGenerate(h.app, PROMPT, DEVICE_A));
+    eq('503 then 402: the budget sentence', failureOf(events)?.reason, CREDIT_EXHAUSTED_REASON);
+    eq('503 then 402: the ledger row names credit_exhausted', h.usageStore.settlesFor(h.usageStore.admitted[0]).map((s) => s.failureReason), ['credit_exhausted']);
+  }
+}
+
+async function testProviderUnavailableCauseIsLevelGated(): Promise<void> {
+  section('Generate: only the provider_unavailable terminal carries cause, and a level-1 client never receives it (#66, D11)');
+
+  const endings: { label: string; errors: unknown[]; reason: string; cause: 'provider_unavailable' | undefined }[] = [
+    { label: 'provider_unavailable', errors: [upstream503(), upstream503()], reason: REFUSAL_HINTS.provider_unavailable, cause: 'provider_unavailable' },
+    { label: 'internal_error', errors: [upstream503(), new OpenRouterAuthError('OpenRouter: unauthorized (401)')], reason: GENERIC_INTERNAL_ERROR_REASON, cause: undefined },
+    { label: 'credit_exhausted', errors: [upstream503(), new OpenRouterCreditError('OpenRouter: payment required (402)')], reason: CREDIT_EXHAUSTED_REASON, cause: undefined },
+  ];
+  for (const ending of endings) {
+    for (const level of [1, 2]) {
+      invalidateCreditCache();
+      const label = `${ending.label} at level ${level}`;
+      const model = new ScriptedModelClient(
+        ROSTER,
+        ending.errors.map((error) => ({ role: 'plan' as const, deltas: [], error })),
+      );
+      const h = harness({ pipeline: deliveringMachinePipeline(model) });
+      const failure = failureOf(await readEvents(label, await postGenerateAtLevel(h.app, level)));
+      eq(`${label}: the reason is the same at every level`, failure?.reason, ending.reason);
+      const expectCause = level >= 2 ? ending.cause : undefined;
+      check(
+        `${label}: ${expectCause ? 'carries cause provider_unavailable' : 'carries no cause key'}`,
+        expectCause ? failure?.cause === expectCause : failure !== undefined && !('cause' in failure),
+        JSON.stringify(failure),
+      );
+    }
+  }
+}
+
 // ─── Server state ────────────────────────────────────────────────────────────
 
 function fileContains(filePath: string, marker: string): boolean {
@@ -1759,6 +1896,9 @@ export async function runRoutesGenerateTests(): Promise<void> {
   await testCostAndReconciliation();
   await testFailedInStreamCredit();
   await testProviderDropIsResentAndMetered();
+  await testPlanTurnIsResent();
+  await testProviderUnavailableTerminal();
+  await testProviderUnavailableCauseIsLevelGated();
   await testThrowingStoreSettlesTheLedgerRow();
   await testDataDirectoryHoldsOnlyTheTwoStores();
 }
