@@ -1,0 +1,20 @@
+**VERDICT: ACCEPT** (fix round cd308d9b..4df6c107, worktree `/Users/davrondjabborov/Work/other/Whim/.claude/worktrees/generation-reliability-upstream`). I only read code and ran git; I ran no suites, so the red results below come from reading the code.
+
+**Report honesty:** the report matches the diff. The commit 4df6c107 message has no Co-Authored-By or attribution lines.
+
+**Per finding**
+1. **HIGH, clarify bypassed the level gate: RESOLVED.** `runClarifyWork` now returns `ClarifyWork {body,status,headers?}`, and the handler answers through `c.json(work.body, work.status, work.headers)` (`server/src/routes/clarify.ts:508-509`). None of the six `Response.json` sites remain. The only `new Response` left in `server/src` is the two SSE success streams (`app.ts:304`, `generate.ts:257`), so the fixer's bypass audit is accurate.
+   - **Nothing else changed:** status codes are the same (200/502/503/502/502/200). Headers are the same: `providerUnavailableRefusal()` is called with no argument, so it still sends no `Retry-After`, and budget refusals still pass `r.headers` through. `release()` is still in `finally`, and the catch settlement is still there.
+2. **MED, no level-1 test: RESOLVED.** `testProviderUnavailableByProtocolLevel` (`server/test/routes-unary.suite.ts:1269-1300`) checks the whole level-1 body with deepEqual on both routes. Against cd308d9b the clarify case gets `{error,hint}` with no `compat`, so the test fails there. The rewrite case passes either way, which is fine: it covers the route.
+3. **LOW, implied status: RESOLVED.** `modelFailureOf` no longer adds `?? 429/401/402` (`server/src/model-failure.ts:58-61`). The new table rows (`server/test/openrouter.suite.ts:611-613`) expect no `status`, and they would fail against cd308d9b, where the status was invented.
+4. **Diagnostic, `AbortSignal.reason` (TS2339 in the tests project): RESOLVED.** It now reads `const { reason } = signal as { reason?: unknown }` (`model-failure.ts:44`). This is a narrow read-only cast that works around a gap in the tests project's lib setting. It loosens no checker and edits no config. The fixer says the count is back to the base's 2; I did not run it.
+
+**Fixer choice (a), 401/429 on the error classes: correct.** `statusError` (`server/src/openrouter.ts:217-221`) builds `OpenRouterAuthError` and `OpenRouterRateLimitError` only for status 401 or 429. A stream error with no status becomes `OpenRouterNetworkError`, so the class now records a status the response actually had. This matches `OpenRouterCreditError`, which already carries `status = 402`. It satisfies the generation-server delta's requirement ("the HTTP status when there was one") and its scenario "Auth and credit failures carry their status". Nothing else in `server/src` reads `err.status`, so adding the field changes no other behaviour.
+
+**Fixer choice (b), `compat` at level 2: the fixer and handoff/wire.md are right; my first review was wrong.** At a level at or above the entry's own, `forLevel` returns `withCompat(...)` (`server/src/wire-level.ts:130`), so `provider_unavailable` carries `compat` at every level. The live generation-contract spec requires this (`openspec/specs/generation-contract/spec.md:260-261`: "Every error identifier introduced above protocol level 1 SHALL carry `compat`"). The delta's level-2 scenario only asks that the body validates as `ApiError` and that the device decodes it, and `compat.min: 2` does not exceed a level-2 client's level, so it does. No spec change is needed.
+
+**New findings**
+- **LOW, `server/test/routes-unary.suite.ts:1296-1298`:** the level-2 check compares only `[error, hint]`, so a regression that dropped the required `compat` at level 2 would still pass. Done looks like: check the full level-2 body with deepEqual, `{error:'provider_unavailable', hint, compat:{min:2, fallback:'fail', notice: hint}}`. This is not blocking.
+- **LOW, carried over:** tasks.md §3 is still unticked. The orchestrator should tick it at merge.
+
+**Spec conformance:** conforms. The earlier gap on `/v1/clarify` ("A level-1 client gets the compat envelope") is closed.

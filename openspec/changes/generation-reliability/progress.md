@@ -21,3 +21,8 @@
 - dispatched: chain-upstream BASE 6f30bc5729f59fc3693f81a31c9374c64565e64e, .claude/worktrees/generation-reliability-upstream (chain/generation-reliability-upstream); regate runner on staging tip in parallel
 - filed parked issues: #273 (loader probes on load failure; incl. run-verdict review finding 6), #274 (awaitMount race), #275 (engineer first-token deadline), #276 (flowbench provider_unavailable). Fallback model stays in #66's out-of-scope note (not filed).
 - regate after run-verdict + wire merges (tip fe4f34b4): gate.sh PASS (exit 0), server:e2e 68/0 PASS.
+- report: chain-upstream complete, tip cd308d9b (class-A: machine.suite.ts edited; typecheck-tests now prints 3 server/contract diagnostics vs 2). runner + Opus reviewer dispatched.
+- review chain-upstream #1 (Opus): REJECT — HIGH: clarify answers via Response.json, bypassing level gating (level-1 gets raw provider_unavailable, no compat); MED: no level-1 test on clarify/rewrite; LOW: implied status doc. handoff/upstream-review-1.md. Fixer waits for the runner to finish.
+- runner chain-upstream #1: PASS (gate 0, e2e 68/0, integrity 0, ratchet 0, redcheck coarse RED + builder mutation reds); new tests-tsconfig diagnostic model-failure.ts(44,34) AbortSignal.reason. Fixer dispatched (review 1-3 + diagnostic).
+- fix round 1 chain-upstream: tip 4df6c107 (clarify answers via c.json; level-1/level-2 tests; typed 401/429 carry status; AbortSignal.reason accessor). Opus re-review + runner #2 dispatched.
+- re-review chain-upstream #2 (Opus): ACCEPT (1-3 + diagnostic resolved; compat at level 2 is correct per live spec). LOW carried to chain-breaker: full level-2 body deepEqual. handoff/upstream-review-2.md
