@@ -22,7 +22,8 @@ import { build } from 'esbuild';
 import { devBundleExternals } from '../build.mjs';
 import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
 import { check, eq, report, section } from './harness';
-import { ScriptedModelClient } from './scripted-model';
+import { ScriptedModelClient, type ScriptedTurn } from './scripted-model';
+import { OpenRouterNetworkError } from '../src/openrouter';
 import { E2E_ROSTER, heldRunTurns, MOUNT_HANG } from './e2e-fixtures';
 import { BootError, runBootSelfTest, startServer, type ServerHandle } from '../src/lifecycle';
 import { createCheckStage } from '../src/generation/stages/check';
@@ -34,6 +35,8 @@ import { createRunCandidate } from '../../synthrun/report';
 import type { RunCandidate, RunReport } from '../../synthrun/contract';
 import type { GenerationEvent, WireAppRecord } from '@whim/contract';
 import { createStubPipeline } from '../src/pipeline';
+import { createGenerationPipeline } from '../src/generation';
+import { PROVIDER_UNAVAILABLE_REASON, UNVERIFIED_RUN_REASON } from '../src/generation/machine';
 import { containedDetail } from './run-stage-fixtures';
 import { PROTOCOL_HEADER_LINE, PROTOCOL_HEADERS } from './route-doubles';
 import { runLoadtestServer, LOADTEST_HEALTHZ_SERVICE } from '../src/loadtest/server';
@@ -125,6 +128,61 @@ async function testHonestCandidateReachesResult(session: SynthRunSession): Promi
     'red-check: normalization does not launder an actual content difference',
     normalizeBuildIdentity(perturbed) !== normalizeBuildIdentity(productionArtifact),
   );
+}
+
+// ── A candidate that throws while its module loads is repaired, not given up on (#58) ──
+
+/** The honest fixture with one module-scope line added: the shape of #58's benchmark failures. */
+function withModuleScopeLine(honest: string, line: string): string {
+  const anchor = "const TIPS = ['10%', '15%', '20%', '25%'];";
+  if (!honest.includes(anchor)) throw new Error('the tip-splitter fixture no longer has the anchor line this test inserts after');
+  return honest.replace(anchor, `${anchor}\n${line}`);
+}
+
+const TIP_SPLITTER_PLAN = JSON.stringify({
+  screens: [{ name: 'Home', purpose: 'the only screen' }],
+  initial: 'Home',
+  state: [],
+  capabilities: [],
+  storageKeys: [],
+});
+
+async function testModuleScopeThrowIsRepaired(session: SynthRunSession): Promise<void> {
+  section('spec: a candidate that throws while its module loads goes to repair and the repaired candidate is delivered (#58)');
+
+  const honest = readFixture('tip-splitter.app.tsx');
+  const broken = withModuleScopeLine(honest, "const fmt = new Intl.NumberFormat('en-US', { style: 'currency' });\nvoid fmt;");
+  const model = new ScriptedModelClient(E2E_ROSTER, [
+    { role: 'plan', deltas: [TIP_SPLITTER_PLAN] },
+    { role: 'engineer', deltas: [broken] },
+    { role: 'repair', deltas: [honest] },
+  ]);
+  const pipeline = createGenerationPipeline({ session, modelDeps: { model, roster: E2E_ROSTER, apiKey: 'x' } });
+  const events: GenerationEvent[] = [];
+  for await (const event of pipeline.run({ prompt: 'a tip splitter' })) events.push(event);
+
+  const terminal = events.at(-1);
+  check(
+    'the run ends in a result, not the "couldn’t verify" failure',
+    terminal?.type === 'result',
+    terminal?.type === 'failure' ? `failure: ${terminal.reason} (attempts ${terminal.attempts})` : undefined,
+  );
+  check('the failure reason, were there one, is not the unverified sentence', !(terminal?.type === 'failure' && terminal.reason === UNVERIFIED_RUN_REASON));
+  eq(
+    'a repair stage ran, once',
+    events.filter((e) => e.type === 'stage' && e.stage === 'repair' && e.status === 'start').length,
+    1,
+  );
+  check(
+    'the run stage streamed the harness\'s runtime_throw as a diagnostic',
+    events.some((e) => e.type === 'diagnostic' && e.diagnostic.kind === 'runtime_throw' && /Currency code is required/.test(e.diagnostic.message ?? '')),
+  );
+  eq('the model was asked for plan, generate and exactly one repair', model.requests.map((r) => r.role), ['plan', 'engineer', 'repair']);
+  const repairPrompt = model.requests[2]?.request.messages.map((m) => m.content).join('\n') ?? '';
+  check('the repair request carries the runtime_throw diagnostic', repairPrompt.includes('runtime_throw'));
+  check('the repair request\'s diagnostics line for the throw carries the engine\'s own message', /runtime_throw[^\n]*Currency code is required/.test(repairPrompt));
+  check('the repair request names no containment_unobserved detail', !repairPrompt.includes('containment_unobserved'));
+  if (terminal?.type === 'result') check('the delivered app is the repaired candidate, not the broken one', !terminal.app.source.includes('Intl.NumberFormat'));
 }
 
 // ── The app the stub pipeline delivers runs (beta-1 fix-3) ──
@@ -388,6 +446,83 @@ async function testComposedServerBootAndDisconnect(): Promise<void> {
     check('the server drains closed', closing !== TIMED_OUT);
     handle = undefined;
     check('and no longer accepts connections', !(await accepts(port)));
+  } finally {
+    if (handle) await within(handle.close(), 30_000);
+    if (savedRequest) Object.defineProperty(globalThis, 'Request', savedRequest);
+    if (savedResponse) Object.defineProperty(globalThis, 'Response', savedResponse);
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
+}
+
+// ── The provider breaker on the composed server (generation-reliability D8: the composition root
+//    guards the one shared client and hands the breaker to admission) ──
+
+/** Posts one `/v1/clarify` for a fresh device straight to the composed server. */
+function postClarify(url: string, prompt: string): Promise<Response> {
+  return testFetch(`${url}/v1/clarify`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json', 'x-whim-device': randomUUID(), ...PROTOCOL_HEADERS },
+    body: JSON.stringify({ prompt }),
+  });
+}
+
+async function testProviderBreakerOnComposedServer(): Promise<void> {
+  section('spec: the composed server opens the provider breaker on real engineer-model upstream failures, between completed policy calls, then refuses clarify before any model call');
+
+  const savedRequest = Object.getOwnPropertyDescriptor(globalThis, 'Request');
+  const savedResponse = Object.getOwnPropertyDescriptor(globalThis, 'Response');
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'whim-e2e-breaker-'));
+  // Two generations, each: the policy check completes on the rewrite model, then the plan turn
+  // fails with a 503 and its resend fails too. Four engineer-model failures, the default
+  // threshold, with a completed call to another model between every pair of them. A fifth turn
+  // would let a request that reaches the model through an unwired breaker be recorded instead of
+  // failing the script, so "no further model request" can fail.
+  const outage = (): ScriptedTurn => ({ role: 'plan', deltas: [], error: new OpenRouterNetworkError('provider unavailable', undefined, 503) });
+  const turns: ScriptedTurn[] = [
+    { role: 'rewrite', deltas: ['{"verdict":"allow"}'] },
+    outage(),
+    outage(),
+    { role: 'rewrite', deltas: ['{"verdict":"allow"}'] },
+    outage(),
+    outage(),
+    { role: 'rewrite', deltas: ['{"verdict":"allow"}'] },
+  ];
+  const model = new ScriptedModelClient(E2E_ROSTER, turns);
+  let handle: ServerHandle | undefined;
+  try {
+    const started = await within(
+      startServer({
+        env: { WHIM_DATA_DIR: dataDir, WHIM_SYNTHRUN_CONCURRENCY: '1' },
+        overrides: { model: { client: model, roster: E2E_ROSTER } },
+        listen: { host: '127.0.0.1', port: 0 },
+      }),
+      60_000,
+    );
+    if (started === TIMED_OUT) {
+      check('the composed server booted', false, 'did not boot within 60 s');
+      return;
+    }
+    handle = started;
+
+    const port = Number(new URL(handle.url).port);
+    for (const [i, prompt] of ['a recipe app with a shopping list', 'a tip splitter for dinners'].entries()) {
+      const client = rawGenerate(port, randomUUID(), prompt);
+      const ended = await waitUntil(() => hasTerminalEvent(client.text()), 30_000);
+      check(`generation ${i + 1}: the run ends in one failure naming the provider`, ended && client.text().includes('event: failure') && client.text().includes(PROVIDER_UNAVAILABLE_REASON), client.text().slice(-400));
+      client.socket.destroy();
+    }
+    eq('setup: each generation made a policy call and two failed plan turns', model.requests.map((r) => r.role), ['rewrite', 'plan', 'plan', 'rewrite', 'plan', 'plan']);
+
+    const refused = await postClarify(handle.url, 'a recipe app with a shopping list');
+    const body = (await refused.json()) as { error?: string };
+    eq('the next clarify is refused 503 provider_unavailable by the open breaker', [refused.status, body.error], [503, 'provider_unavailable']);
+    const retryAfter = refused.headers.get('retry-after') ?? '';
+    check('... carrying an integer Retry-After within the 60 s cooldown', /^\d+$/.test(retryAfter) && Number(retryAfter) >= 1 && Number(retryAfter) <= 60, retryAfter);
+    eq('... and made no model request', model.requests.length, 6);
+
+    const closing = await within(handle.close(), 30_000);
+    check('the server drains closed', closing !== TIMED_OUT);
+    handle = undefined;
   } finally {
     if (handle) await within(handle.close(), 30_000);
     if (savedRequest) Object.defineProperty(globalThis, 'Request', savedRequest);
@@ -766,12 +901,14 @@ async function main(): Promise<void> {
     await testHonestCandidateReachesResult(session);
     await testStubAppRuns(session);
     await testHostileCandidateStaysContained(session);
+    await testModuleScopeThrowIsRepaired(session);
     await testBootSelfTest(session);
   } finally {
     await session.close();
   }
 
   await testComposedServerBootAndDisconnect();
+  await testProviderBreakerOnComposedServer();
   await testRealPipelineSigtermDrain();
   await testDrainWaitsForProbes();
   await testLoadtestServerCapacityAndNoSpend();

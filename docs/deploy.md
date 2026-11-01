@@ -408,6 +408,8 @@ naming the secret and this section, and builds, uploads or restarts nothing.
 | `WHIM_PROVIDER_QUANTIZATIONS` | no | the quantizations OpenRouter may route to, comma-separated from `int4`, `int8`, `fp4`, `fp6`, `fp8`, `fp16`, `bf16`, `fp32`, `unknown`; unset sends no preference. Set it only after a flowbench comparison |
 | `WHIM_QUEUE_MAX` | no | how many generations may wait in line for a slot; unset is `50`. `0` turns the line off: a generation that finds every slot busy is refused `server_busy` at once, as before the line (see "Rolling back and rotating the key") |
 | `WHIM_QUEUE_MAX_WAIT_MS` | no | how long a generation may wait in line before its stream ends in a `failure` saying Whim is busy; unset is `180000` |
+| `WHIM_PROVIDER_BREAKER_FAILURES` | no | consecutive upstream model failures (a 5xx, a rate limit, a network error or a timeout) that open the provider breaker; unset is `4`. `0` turns the breaker off, the lever if it ever opens wrongly (see Operating → Alerts) |
+| `WHIM_PROVIDER_BREAKER_WINDOW_MS`, `WHIM_PROVIDER_BREAKER_COOLDOWN_MS` | no | how close together those failures must fall (unset is `180000`) and how long an open breaker refuses before the next admission probes the provider (unset is `60000`) |
 | `WHIM_MIN_BUILD_IOS`, `WHIM_MIN_BUILD_ANDROID` | no | the oldest build each platform may use the AI features with; unset is `0` (off). See "Minimum supported build" |
 | `WHIM_USAGE_IDLE_DAYS` | no | days a phone ID's lifetime usage totals are kept after its last request; unset is `365`, and the server refuses a value above the usage-records maximum the disclosure manifest publishes |
 | `WHIM_BETA_LIMIT_PER_CLIENT_HOUR`, `WHIM_BETA_LIMIT_PER_DAY` | no | the `/beta` signup limits: signups one client address may make per hour (unset is `10`) and signups the whole list takes per day (unset is `2000`). See Operating → Beta waitlist |
@@ -578,11 +580,20 @@ string the deploy scripts use, from `deploy/lib.sh`).
   | --- | --- | --- | --- |
   | Whim: API down | `https://<WHIM_API_HOST>/health` (checked every 5 min from 3 regions) failed its last two checks in at least two regions | while it lasts | `deploy/cloudrun/smoke.sh --no-live` from a laptop: it names the failing layer |
   | Whim: new report | a user sent a report; the email names its id and reason only | at most 1 per 5 min | `node server/admin.mjs reports show <id>` (then `reports list` for any the rate limit folded in) |
-  | Whim: generation failures | more than 5 `terminal failure` lines in an hour (log metric `whim-terminal-failures`) | while it lasts | `node server/admin.mjs usage --days 1` for counts by reason, then the "Terminal failures" query above |
+  | Whim: generation failures | more than 5 `terminal failure` lines in an hour (log metric `whim-terminal-failures`) | while it lasts | `node server/admin.mjs usage --days 1` for counts by reason, then the "Terminal failures" query above. A provider outage ends runs as `provider_unavailable` terminals, so it can fire this alert too, next to "AI provider unavailable" |
   | Whim: credit exhausted | a `budget_exhausted` refusal (`jsonPayload.msg="request" jsonPayload.error="budget_exhausted"`), or a mid-generation provider `402` (`jsonPayload.scope="run" jsonPayload.msg="provider credit exhausted"`) | at most 1 per hour | check the OpenRouter credit balance at https://openrouter.ai/credits and top it up |
+  | Whim: AI provider unavailable | the provider breaker opened: `jsonPayload.msg="provider breaker open"`, after 4 consecutive upstream model failures (a 5xx, a rate limit, a network error or a timeout) within 3 minutes | at most 1 per hour | read `errorKind` and `status` on that line, check https://status.openrouter.ai; the first admission after the cooldown probes the provider: a completed probe closes the breaker itself, a probe that fails upstream re-opens it and logs the line again (`reopened: true`), and a probe that fails with a `401`, `402` or `400` closes it so the credit check can answer. Only engineer-model calls count (plan or repair under a `WHIM_PLAN_MODEL`/`WHIM_REPAIR_MODEL` override do not); a refusal by the open breaker has `jsonPayload.refusedBy="breaker"` on its `request` line, a mid-call `provider_unavailable` does not |
   | Whim: device error | a phone sent a diagnostic at `ERROR` or above | at most 1 per hour | the "Device errors" query above, plus `severity>=ERROR` |
   | Whim: purge job failed | the Cloud Run Job `whim-purge` logged at `ERROR` or above | at most 1 per hour | `gcloud run jobs executions list --job whim-purge --region us-east4 --limit 5` (section "Firestore stores") |
   | Whim monthly spend (budget) | GCP spend on `WHIM_BILLING_ACCOUNT` for this project passes 50, 90 or 100 % of `WHIM_MONTHLY_BUDGET` | once per threshold per month | the Billing reports page for the project, by service |
+
+  While the provider breaker is open, generate, clarify and rewrite refuse at once with
+  `provider_unavailable` and a `Retry-After` of the seconds left in the cooldown, using no daily unit
+  and no slot. The server reads three settings, which the deploy scripts forward from the operator values
+  file (see the table above): `WHIM_PROVIDER_BREAKER_FAILURES` (default `4`; `0` turns the breaker
+  off), `WHIM_PROVIDER_BREAKER_WINDOW_MS` (`180000`, how close together the failures must fall) and
+  `WHIM_PROVIDER_BREAKER_COOLDOWN_MS` (`60000`, how long it refuses before the next admission
+  probes the provider). The breaker's state is in memory, so a restart closes it.
 
   "While it lasts" means one email when the condition starts and one when it clears. The budget
   (created by `provision.sh`) also emails the billing account's admins.

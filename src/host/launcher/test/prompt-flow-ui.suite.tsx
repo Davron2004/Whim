@@ -25,6 +25,9 @@ import { Share, emitAccessibility, holdModalDismissals, modalPresentations } fro
 import { cancelled, elapse, holdAnimations } from './native-reanimated';
 import type { FlickerPulse } from '../home-live';
 import { chooseRow, longPress, pressToastAction, toastOf } from './home-rig';
+import { breakerRefusal } from '../../../../server/src/admission/refusals';
+import { errorForLevel } from '../../../../server/src/wire-level';
+import { PROTOCOL_LEVEL } from '../wire-headers';
 import { streamResponse } from './client-fixtures';
 import { androidBack, button, isHost, press, textOf } from './react-screen';
 import { buildIt, composeAndContinue, failureTryAgain, hasInstalled, json, makingSheetOpen, onHome, planLoaded, questionsLanded, resultEvent, settle, sseStream, tap, waitFor, wasSent, withLauncher, type SentRequest, type Tree } from './rendered-launcher';
@@ -717,6 +720,53 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
       h.eq(tree.root.findByType(DescribePage).props.notice?.tone, 'danger', 'as a notice about the words');
       await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('A different dice roller'));
       h.ok(!textOf(tree.root).includes('That is not something Whim makes.'), 'retyping clears it');
+    });
+  });
+
+  await h.test('flow: a generation refused during a provider outage lands on the plan page with the server’s hint, the rows and a held Make it, and never the failure page', async () => {
+    const refusal = breakerRefusal(45);
+    const onWire = errorForLevel(refusal.body, PROTOCOL_LEVEL);
+    const rows = [{ label: 'Timer', text: 'Counts down.' }, { label: 'Alert', text: 'Buzzes.' }];
+    await withLauncher({
+      server: (r) => {
+        if (r.path === '/v1/clarify') return json({ questions: [] });
+        if (r.path === '/v1/rewrite') return json({ rewrittenPrompt: 'A tea timer', plan: rows });
+        return new Response(JSON.stringify(onWire), { status: refusal.status, headers: { 'Content-Type': 'application/json', ...refusal.headers } });
+      },
+    }, async ({ tree, kv, clock }) => {
+      await composeToPlan(tree, 'A tea timer');
+      const before = Date.now();
+      await buildIt(tree);
+      await waitFor(() => on(tree, PlanPage) && plan(tree).notice != null, 'the refusal to land on the plan page');
+      const { notice } = plan(tree);
+      h.eq([notice.hint, notice.tone], [refusal.body.hint, 'neutral'], 'the server’s own hint, as a neutral notice');
+      h.ok(notice.retryAt >= before + 45_000 && notice.retryAt <= Date.now() + 45_000, 'held for the 45 seconds the server named');
+      h.eq(plan(tree).rows.map((row: { label: string; text: string }) => ({ label: row.label, text: row.text })), rows, 'the plan’s rows are kept');
+      h.eq(button(tree, COPY.planBuild).props.disabled, true, 'Make it waits for the window');
+      h.eq(tree.root.findAllByType(FailurePage).length, 0, 'no failure page');
+      h.eq(new PendingBuildStore(kv).list(), [], 'and no tile for a request that was never taken');
+      const realNow = Date.now;
+      try {
+        Date.now = () => realNow() + 46_000;
+        await TestRenderer.act(async () => { clock.fireWithin(45_000); });
+        h.ok(button(tree, COPY.planBuild).props.disabled !== true, 'Make it is enabled again once the 45 seconds have passed');
+      } finally {
+        Date.now = realNow;
+      }
+    });
+  });
+
+  await h.test('flow: a clarify refused during a provider outage lands back on Describe with the words and the hint', async () => {
+    const refusal = breakerRefusal(45);
+    await withLauncher({
+      server: () => new Response(JSON.stringify(errorForLevel(refusal.body, PROTOCOL_LEVEL)), { status: refusal.status, headers: { 'Content-Type': 'application/json', ...refusal.headers } }),
+    }, async ({ tree }) => {
+      await composeAndContinue(tree, 'A dice roller');
+      await waitFor(() => on(tree, DescribePage) && textOf(tree.root).includes(refusal.body.hint), 'the refusal to land');
+      h.eq(tree.root.findAllByType(PlanPage).length, 0, 'not on a page that did not send it');
+      h.eq(tree.root.findByType(DescribePage).props.text, 'A dice roller', 'the words are kept');
+      h.eq(tree.root.findByType(DescribePage).props.notice?.tone, 'neutral', 'as a neutral notice');
+      h.eq(tree.root.findAllByType(FailurePage).length, 0, 'never the failure page');
     });
   });
 

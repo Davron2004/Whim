@@ -20,6 +20,7 @@ import {
   DeviceIdError,
   GenerateRequest,
   GenerationEvent,
+  PROTOCOL_LEVEL,
   ReportResponse,
   RewriteRequest,
   RewriteResponse,
@@ -416,6 +417,15 @@ export function runContractTests(): void {
     'ServiceRefusalCode rejects a code outside the closed set',
     !ServiceRefusalCode.safeParse('rate_limited').success,
   );
+  check('ServiceRefusalCode accepts provider_unavailable', ServiceRefusalCode.safeParse('provider_unavailable').success);
+  eq('the contract’s protocol level is 2, the level provider_unavailable and failure.cause were introduced at', PROTOCOL_LEVEL, 2);
+
+  // The failure event's optional structured cause (generation-contract, introduced at level 2).
+  const failureWith = (extra: object): unknown => ({ type: 'failure', reason: 'r', attempts: 1, diagnostics: [], ...extra });
+  const causeRead = GenerationEvent.safeParse(failureWith({ cause: 'provider_unavailable' }));
+  eq('a failure with cause provider_unavailable validates and keeps the cause', causeRead.success ? causeRead.data : causeRead.error.issues, failureWith({ cause: 'provider_unavailable' }));
+  check('a failure with a cause outside the closed set is refused', !GenerationEvent.safeParse(failureWith({ cause: 'other' })).success);
+  check('a failure without a cause still validates', GenerationEvent.safeParse(failureWith({})).success);
   check(
     'ApiError stays untouched: an arbitrary open error string still validates',
     ApiError.safeParse({ error: 'invalid_request', hint: 'fix the request and try again' }).success,

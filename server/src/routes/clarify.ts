@@ -8,36 +8,42 @@
  *
  * Zero questions is a first-class success (`200` with an empty list), never an error and never a
  * degraded mode: most prompts need nothing clarified. What is NOT dressed up as zero questions is
- * a broken model call — that stays an honest `502`, mirroring `/v1/rewrite`.
+ * a broken model call: an honest `502`, mirroring `/v1/rewrite`, or `503 provider_unavailable`
+ * when the provider failed upstream (#66, `../model-failure.ts`).
  *
  * Admission (design D6a/D8; specs/server-admission-control "Admission checks run in a fixed
- * order"): raw body cap, body validation, prompt byte cap, operator credit, drain state, the
+ * order"): raw body cap, body validation, prompt byte cap, provider breaker, operator credit, drain state, the
  * global unary concurrency cap, the device's daily clarify allowance and the clarify+rewrite
  * global daily ceiling, then the content policy check — all before any model call.
- * `admitUnaryRequest` below is the ONE place that orders credit → slot → daily-unit → policy for
+ * `admitUnaryRequest` below is the ONE place that orders breaker → credit → slot → daily-unit → policy for
  * both `/v1/clarify` and `/v1/rewrite`, so the two routes cannot drift apart on ordering;
  * `routes/rewrite.ts` imports it from here rather than duplicating it (design D8 shares this exact
  * ordering across every unary route).
  */
 import { Hono } from 'hono';
 import { bodyLimit } from 'hono/body-limit';
+import type { ContentfulStatusCode } from 'hono/utils/http-status';
 import { ClarifyRequest, ClarifyResponse, type ApiError, type ClarifyLimit, type Usage } from '@whim/contract';
 import { isCreditExhaustedError, type ModelClient, type ModelRoster } from '../generation/model';
 import type { FailureReason, UsageStore, RequestKind, RequestOutcome } from '../usage-store';
 import type { ServerConfig } from '../config';
 import type { SlotController, SlotHandle } from '../admission/slots';
 import { checkCredit, invalidateCreditCache, type CreditTransport } from '../admission/credit';
+import type { ProviderBreaker } from '../admission/provider-breaker';
 import {
+  breakerRefusal,
   budgetExhaustedRefusal,
   contentPolicyRefusal,
   dailyLimitRefusal,
   payloadTooLargeRefusal,
   policyUnavailableRefusal,
+  providerUnavailableRefusal,
   serverBusyCeilingRefusal,
   slotRefusal,
   type ServiceRefusal,
 } from '../admission/refusals';
 import { PolicyUnavailableError, policyMetering, type ContentPolicy, type PolicyMetering, type PolicyRoute } from '../policy';
+import { modelFailureOf } from '../model-failure';
 import { buildClarifyPolicyInput } from '../policy/input';
 import {
   resolveRequestUsage,
@@ -181,6 +187,8 @@ export interface UnaryAdmissionDeps {
   usageStore: UsageStore;
   clock: () => number;
   slots: SlotController;
+  /** Absent ⇒ no provider breaker check (generation-reliability D8). */
+  providerBreaker?: ProviderBreaker;
   creditTransport: CreditTransport | undefined;
   creditTtlMs: number;
   creditFloorUsd: number;
@@ -231,7 +239,7 @@ export function resolveUnaryUsage(
 /**
  * The fixed admission order shared by `/v1/clarify` and `/v1/rewrite`, AFTER the raw body cap,
  * body validation and prompt byte cap the caller already ran (specs/server-admission-control
- * "Admission checks run in a fixed order"): operator credit → drain/global-unary-cap (one slot
+ * "Admission checks run in a fixed order"): provider breaker → operator credit → drain/global-unary-cap (one slot
  * acquire) → the device's daily allowance and the clarify+rewrite global daily ceiling → content
  * policy. Every refusal after a resource was taken (a slot, a daily unit) releases/refunds it
  * before returning, and so does anything thrown past the acquire.
@@ -244,7 +252,12 @@ export function resolveUnaryUsage(
  * usage and its cost is resolved immediately, the same way the route's own `finish()` would.
  */
 export async function admitUnaryRequest(deps: UnaryAdmissionDeps): Promise<UnaryAdmissionOutcome> {
-  const { deviceId, clock, slots, creditTransport, creditTtlMs, creditFloorUsd, policyRoute } = deps;
+  const { deviceId, clock, slots, providerBreaker, creditTransport, creditTtlMs, creditFloorUsd, policyRoute } = deps;
+
+  if (providerBreaker) {
+    const breaker = await providerBreaker.admit();
+    if (!breaker.ok) return { ok: false, refusal: breakerRefusal(breaker.retryAfterSeconds) };
+  }
 
   if (creditTransport) {
     const credit = await checkCredit({ transport: creditTransport, clock, ttlMs: creditTtlMs, floorUsd: creditFloorUsd });
@@ -411,6 +424,7 @@ export interface ClarifyRouteOptions {
   slots: SlotController;
   policy: ContentPolicy;
   creditTransport: CreditTransport | undefined;
+  providerBreaker?: ProviderBreaker;
   resolveTracker: ResolveTracker;
   resolveTransport: UsageAndCostTransport;
   resolveBounds: Partial<ResolveBounds> | undefined;
@@ -427,7 +441,7 @@ export function makeClarifyRoute(
   options: ClarifyRouteOptions,
 ): Hono<V1Env> {
   const app = new Hono<V1Env>();
-  const { config, clock, slots, policy, creditTransport, resolveTracker, resolveTransport, resolveBounds } = options;
+  const { config, clock, slots, policy, creditTransport, providerBreaker, resolveTracker, resolveTransport, resolveBounds } = options;
 
   app.post(
     '/',
@@ -466,6 +480,7 @@ export function makeClarifyRoute(
         usageStore,
         clock,
         slots,
+        providerBreaker,
         creditTransport,
         creditTtlMs: config.creditCacheTtlMs,
         creditFloorUsd: config.minCreditUsd,
@@ -479,6 +494,7 @@ export function makeClarifyRoute(
       });
       if (!admission.ok) {
         const r = admission.refusal;
+        if (r.refusedBy) c.set('refusedBy', r.refusedBy);
         return c.json(r.body, r.status, r.headers);
       }
       const { requestId, release, policy: policyCalls } = admission;
@@ -501,7 +517,8 @@ export function makeClarifyRoute(
       };
 
       try {
-        return await runClarifyWork(model, roster, parsed.data, config, c.req.raw.signal, deviceId, usageStore, finish, options.stub, requestLog);
+        const work = await runClarifyWork(model, roster, parsed.data, config, c.req.raw.signal, deviceId, usageStore, finish, options.stub, requestLog);
+        return c.json(work.body, work.status, work.headers);
       } catch (err) {
         await settleFailedUnaryRequest(usageStore, requestId, clock, err, requestLog, settlementUsage);
         throw err;
@@ -522,10 +539,19 @@ type FinishFn = (
   failureReason?: FailureReason,
 ) => Promise<void>;
 
+/** What the route answers with: the handler sends it through `c.json`, the one door that gates an
+ *  error body by the client's declared protocol level and puts its code on the request log line. */
+interface ClarifyWork {
+  readonly body: ClarifyResponse | ApiError;
+  readonly status: ContentfulStatusCode;
+  readonly headers?: Readonly<Record<string, string>>;
+}
+
 /**
  * The route's actual work, once admission has allowed it through: the stub short-circuit, the
  * unconfigured-server refusal, or a real bounded model call — extracted so `makeClarifyRoute`'s
- * handler only orchestrates admission, never the model-call branching too.
+ * handler only orchestrates admission, never the model-call branching too. It returns the answer
+ * rather than building a `Response`, so no branch can bypass `c.json`.
  */
 async function runClarifyWork(
   model: ModelClient | undefined,
@@ -538,16 +564,16 @@ async function runClarifyWork(
   finish: FinishFn,
   stub: boolean | undefined,
   requestLog: ServerLogger,
-): Promise<Response> {
+): Promise<ClarifyWork> {
   if (stub) {
     const stubbed = stubClarifyResponse(parsed.prompt);
     await finish('ok', undefined, [], true);
-    return Response.json(stubbed satisfies ClarifyResponse, { status: 200 });
+    return { body: stubbed satisfies ClarifyResponse, status: 200 };
   }
 
   if (!model || !roster) {
     await finish('error', undefined, [], true, 'internal_error');
-    return Response.json(NOT_CONFIGURED, { status: 502 });
+    return { body: NOT_CONFIGURED, status: 502 };
   }
 
   const timeoutSignal = AbortSignal.timeout(config.unaryModelTimeoutMs);
@@ -584,10 +610,15 @@ async function runClarifyWork(
       invalidateCreditCache();
       await finish('error', undefined, ids, false, 'budget_exhausted');
       const r = budgetExhaustedRefusal();
-      return Response.json(r.body, { status: r.status, headers: r.headers });
+      return r;
+    }
+    if (modelFailureOf(err, combined).upstream) {
+      await finish('error', undefined, ids, false, 'provider_unavailable');
+      const r = providerUnavailableRefusal();
+      return r;
     }
     await finish('error', undefined, ids, false, 'model_failure');
-    return Response.json(MODEL_FAILURE, { status: 502 });
+    return { body: MODEL_FAILURE, status: 502 };
   }
 
   // Store failures must reach the app's 500 handler, not be retried as model failures.
@@ -596,8 +627,8 @@ async function runClarifyWork(
   const shaped = shapeClarify(raw, requestLog);
   if (!shaped) {
     await finish('error', usage, ids, true, 'model_failure');
-    return Response.json(MODEL_FAILURE, { status: 502 });
+    return { body: MODEL_FAILURE, status: 502 };
   }
   await finish('ok', usage, ids, true);
-  return Response.json(shaped satisfies ClarifyResponse, { status: 200 });
+  return { body: shaped satisfies ClarifyResponse, status: 200 };
 }

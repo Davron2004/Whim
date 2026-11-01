@@ -1,0 +1,27 @@
+VERDICT: REJECT
+
+The chain covers 2.1–2.6, and the level gating, Metro safety, mirrors, landing, persisted cause and the sentence all check out. I'm rejecting on two test-quality findings (1 and 2). Neither is a code bug.
+
+What checks out:
+- **Level-1 builds:** a `provider_unavailable` error reaches them only as `{error, hint, compat:{min:2,fallback:'fail',notice}}`. The notice is the hint, at most 200 chars, with no vendor, model or status in it. `failure.cause` is stripped below level 2 by `withoutNewerFields` inside `forLevel` (`server/src/wire-level.ts:111-130`).
+- **Level-2 device against an older or level-1 server:** it's admitted, because the header has no upper bound. `request-edge.suite.ts` now serves levels 1, 2 and 3, and BASE already served 2 against a level-1 server. That device just never sees the new code.
+- **Metro safety:** `FailureCause` is a type-only import in `generation-client.ts`. The mirrors (`PROTOCOL_LEVEL = 2` and the known error codes) match the contract.
+- **Failure page:** `rephraseHelps` excludes `provider_unavailable` at both the live site and the reopen site. The cause is stored on the record and survives reopening from the tile, and an unknown cause is dropped by the reader.
+- **Sentence:** matches design.md and tasks 2.2 exactly.
+- **Commits:** none of the 3 carries a Co-Authored-By or attribution line.
+- **Counts:** no test or assertion count dropped.
+
+FINDINGS:
+1. **med** — `src/host/launcher/test/wire-future-frames.suite.ts:306` — the corpus entry `{ min: 2 ** 53 }` was renamed to `{ min: FUTURE ** 53 }`. The original `2 ** 53` was never a protocol level. It is `Number.MAX_SAFE_INTEGER + 1`, the edge case that sits right after the `MAX_SAFE_INTEGER` entry. `3 ** 53` (about 1.9e25) is nowhere near that edge, so the boundary test is quietly weaker even though the assertion count is unchanged. This is the exact kind of weakening the brief asked me to check for. Done: restore `2 ** 53`. Also re-check the other literals that were swept up but aren't about levels.
+2. **med** — `prompt-flow-ui.suite.tsx:731,751` and `service-refusal.suite.ts:64` — the device fixtures send the raw `providerUnavailableRefusal(45).body`. A real server sends `errorForLevel(body, 2)`, which adds `compat:{min:2,…}`. The spec scenario "the device decodes it rather than applying the fallback" is therefore never tested against the real wire form. The code path looks right (`wire-compat.ts:121` decodes when `min <= PROTOCOL_LEVEL`), but CLAUDE.md asks for fixtures from the real producer. Done: build the body with `errorForLevel(refusal.body, PROTOCOL_LEVEL)` in at least the service-refusal case and one landing case.
+3. **low** — `server/src/wire-level.ts:131-134` — the downgrade branch returns `withCompat(lower, lowerEntry)` without `withoutNewerFields`. That makes the `fields` gating less general than claimed: a downgraded message of a type that has gated fields would still send them. No current entry hits this. Done: apply `withoutNewerFields(lower, lowerEntry, clientLevel)` there too, with a synthetic-registry case.
+4. **low** — `server/test/wire-level.suite.ts:119` — the `&& cause === 'provider_unavailable'` conjunct is always true, since `cause` is destructured from a literal. It only exists to use the variable. Done: drop it, e.g. destructure as `cause: _`.
+5. **low** — `prompt-flow-ui.suite.tsx:742` — task 2.4 says "Make it disabled until the window passes". The test only checks that it's disabled, never that it re-enables after 45 s. Done: advance time past `retryAt` and assert it's enabled again.
+6. **low** — `failure-kind.ts:52`, outside the diff. A provider-caused failure with 3 or more observed repairs (`REPAIR_ATTEMPT_LIMIT = 3`) gets the kind `couldnt-run` and shows the "couldn't run" line instead of the server's sentence. The spec scenario requires the server's sentence. D11 assumed "the kind is other", which isn't always true. Done: have the cause outrank the repair count, or record the gap as accepted in design.md.
+7. **info** — the 2.5 red-check (temporarily adding a report action to `FailurePage.tsx`) was not run by the builder, and the report says so honestly. The runner has to do it before this pin counts.
+
+REPORT HONESTY: matches the diff. The edits outside the chain's file list (`admission.suite.ts`, `prompt-flow-ui`, `flow-messages-ui`) are declared and justified. "Every future-level fixture moved" is accurate, but the sweep also moved a literal that wasn't a level (finding 1). The 2 typecheck diagnostics the report mentions were never compared against BASE.
+
+SPEC CONFORMANCE: gaps — the "level-2 client decodes the refusal" scenario isn't tested against the real body (finding 2); the server's sentence can be replaced on a failure with 3 or more repairs (finding 6).
+
+Files: `/Users/davrondjabborov/Work/other/Whim/.claude/worktrees/generation-reliability-wire/src/host/launcher/test/wire-future-frames.suite.ts`, `/Users/davrondjabborov/Work/other/Whim/.claude/worktrees/generation-reliability-wire/server/src/wire-level.ts`, `/Users/davrondjabborov/Work/other/Whim/.claude/worktrees/generation-reliability-wire/src/host/launcher/test/prompt-flow-ui.suite.tsx`, `/Users/davrondjabborov/Work/other/Whim/.claude/worktrees/generation-reliability-wire/src/host/launcher/test/service-refusal.suite.ts`, `/Users/davrondjabborov/Work/other/Whim/.claude/worktrees/generation-reliability-wire/src/host/launcher/failure-kind.ts`

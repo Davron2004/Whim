@@ -17,6 +17,7 @@ import {
 import { isCreditExhaustedError, isUpstreamModelFailure, type ReasoningSetting } from '../src/generation/model';
 import type { FetchFn, ProviderSort } from '../src/openrouter';
 import { loadServerConfig, providerRouting } from '../src/config';
+import { modelFailureOf, type ModelFailure } from '../src/model-failure';
 
 // ─── Fake fetch helpers ───────────────────────────────────────────────────────
 
@@ -477,6 +478,7 @@ export async function runOpenRouterTests(): Promise<void> {
 
   await testMidStreamErrorFrames();
   await testUpstreamFailureClassification();
+  await testModelFailureClassification();
   await testModelCallLogLine();
 }
 
@@ -545,6 +547,96 @@ function makeRejectingOnAbortSseFetch(frames: string[]): FetchFn {
   };
 }
 
+/** A fetch double whose body streams one frame and then stays open until `signal` aborts, when the
+ *  read rejects: a provider that goes quiet mid-stream, which only a timeout or a caller ends. */
+function makeHeldOpenSseFetch(): FetchFn {
+  return async (_input, init) => {
+    const signal = init?.signal ?? undefined;
+    const encoder = new TextEncoder();
+    const body = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(encoder.encode(SUCCESS_FRAMES[0]!));
+        signal?.addEventListener('abort', () => controller.error(new Error('aborted')), { once: true });
+      },
+    });
+    return new Response(body, { status: 200, headers: { 'content-type': 'text/event-stream' } });
+  };
+}
+
+/** A real `AbortSignal.timeout`, plus a referenced timer that keeps the event loop alive until it
+ *  fires (Node does not reference the signal's own timer, so a test awaiting only it would exit). */
+function timeoutSignal(ms: number): AbortSignal {
+  const signal = AbortSignal.timeout(ms);
+  const hold = setTimeout(() => undefined, ms + 1000);
+  signal.addEventListener('abort', () => clearTimeout(hold), { once: true });
+  return signal;
+}
+
+/** Resolves once `signal` has aborted (event-driven: no fixed wait). */
+function aborted(signal: AbortSignal): Promise<void> {
+  return signal.aborted ? Promise.resolve() : new Promise((resolve) => signal.addEventListener('abort', () => resolve(), { once: true }));
+}
+
+/**
+ * generation-reliability D5 — the one classifier. Real errors from the client, read with and without
+ * the signal the call ran under: a status decides when no abort did, and an abort decides first,
+ * because it surfaces from the client as a status-less network error that reads as upstream.
+ */
+async function testModelFailureClassification(): Promise<void> {
+  section('OpenRouter wrapper — modelFailureOf: every failure has one closed kind, and only server/rate_limit/network/timeout are upstream (#66)');
+
+  const frames = (errorFrame: string): string[] => [
+    'data: {"id":"chatcmpl-k1","choices":[{"index":0,"delta":{"content":"export "}}]}\n\n',
+    errorFrame,
+  ];
+  const errorOf = async (fetchFn: FetchFn, signal?: AbortSignal): Promise<unknown> => {
+    const { deltas, usage } = new OpenRouterClient(fetchFn).stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }], signal });
+    usage.catch(() => undefined);
+    return caught(async () => { await drain(deltas); });
+  };
+  const cases: { label: string; fetchFn: FetchFn; expected: ModelFailure }[] = [
+    { label: 'a mid-stream 503 frame', fetchFn: makeSseFetch(frames('data: {"error":{"code":503,"message":"down"}}\n\n')), expected: { errorKind: 'server', status: 503, upstream: true } },
+    { label: 'HTTP 502', fetchFn: makeSseFetch([], 502), expected: { errorKind: 'server', status: 502, upstream: true } },
+    { label: 'HTTP 429', fetchFn: makeSseFetch([], 429), expected: { errorKind: 'rate_limit', status: 429, upstream: true } },
+    { label: 'the fetch throwing', fetchFn: makeThrowingFetch(new TypeError('socket hang up')), expected: { errorKind: 'network', upstream: true } },
+    { label: 'HTTP 401', fetchFn: makeSseFetch([], 401), expected: { errorKind: 'auth', status: 401, upstream: false } },
+    { label: 'HTTP 402', fetchFn: makeSseFetch([], 402), expected: { errorKind: 'credit', status: 402, upstream: false } },
+    { label: 'HTTP 400', fetchFn: makeSseFetch([], 400), expected: { errorKind: 'client', status: 400, upstream: false } },
+  ];
+  for (const c of cases) {
+    eq(`${c.label}: classified`, modelFailureOf(await errorOf(c.fetchFn)), c.expected);
+  }
+  eq('a value that is not an error is other', modelFailureOf('boom'), { errorKind: 'other', upstream: false });
+  eq('a plain Error is other', modelFailureOf(new Error('x')), { errorKind: 'other', upstream: false });
+  for (const [kind, errorKind, upstream] of [['rate_limit', 'rate_limit', true], ['auth', 'auth', false], ['credit', 'credit', false]] as const) {
+    eq(`a ${kind} error that carries no status is classified without inventing one`, modelFailureOf({ kind }), { errorKind, upstream });
+  }
+
+  // The abort cases use the status-less network error a real aborted fetch produces.
+  const abortedFetchError = await errorOf(makeThrowingFetch(new DOMException('This operation was aborted', 'AbortError')));
+  eq('the error an aborted fetch raises is, on its own, a network failure', modelFailureOf(abortedFetchError).errorKind, 'network');
+
+  const timeout = timeoutSignal(1);
+  await aborted(timeout);
+  eq('an AbortSignal.timeout that fired is a timeout, and upstream', modelFailureOf(abortedFetchError, timeout), { errorKind: 'timeout', upstream: true });
+
+  const caller = new AbortController();
+  caller.abort();
+  eq('a plain abort is cancelled, and not upstream', modelFailureOf(abortedFetchError, caller.signal), { errorKind: 'cancelled', upstream: false });
+
+  const either = new AbortController();
+  const combined = AbortSignal.any([either.signal, timeout]);
+  eq('a signal combined with a fired timeout reads as the timeout', modelFailureOf(abortedFetchError, combined).errorKind, 'timeout');
+  const disconnected = new AbortController();
+  const combinedDisconnect = AbortSignal.any([disconnected.signal, AbortSignal.timeout(60_000)]);
+  disconnected.abort();
+  eq('a signal combined with a client disconnect reads as cancelled', modelFailureOf(abortedFetchError, combinedDisconnect).errorKind, 'cancelled');
+
+  const live = new AbortController();
+  eq('a signal that has not aborted does not change the verdict', modelFailureOf(await errorOf(makeSseFetch([], 503)), live.signal).errorKind, 'server');
+  eq('isUpstreamModelFailure follows the classifier', isUpstreamModelFailure(await errorOf(makeSseFetch([], 429))), true);
+}
+
 /**
  * §D4 — exactly one `model call` log line per completion, whatever its outcome, with no message
  * content. Covers all three settle shapes: completed (provider/tokens/generationId present),
@@ -605,6 +697,8 @@ async function testModelCallLogLine(): Promise<void> {
     eq('failed: exactly one model call log line', records.length, 1);
     eq('failed: role', records[0]?.role, 'rewrite');
     eq('failed: outcome', records[0]?.outcome, 'failed');
+    eq('failed: errorKind', records[0]?.errorKind, 'auth');
+    eq('failed: status', records[0]?.status, 401);
     check('failed: no generationId (the stream never produced a chunk)', records[0]?.generationId === undefined);
     check('the log carries no message content anywhere', capture.raw.every((line) => !line.includes(PROMPT_MARKER)));
   }
@@ -637,7 +731,62 @@ async function testModelCallLogLine(): Promise<void> {
     eq('aborted: exactly one model call log line', records.length, 1);
     eq('aborted: role', records[0]?.role, 'plan');
     eq('aborted: outcome', records[0]?.outcome, 'aborted');
+    eq('aborted: a caller abort is cancelled', records[0]?.errorKind, 'cancelled');
+    check('aborted: no status', records[0]?.status === undefined);
     check('the log carries no message content anywhere', capture.raw.every((line) => !line.includes(PROMPT_MARKER)));
+  }
+
+  // Failed mid-stream: a provider error frame names its status and kind, never its message.
+  {
+    const PROVIDER_TEXT = 'DISTINCTIVE-PROVIDER-ERROR-BODY-41ad';
+    const capture = captureLogs();
+    let records: Record<string, unknown>[];
+    try {
+      const frames = [SUCCESS_FRAMES[0]!, `data: {"error":{"code":503,"message":"${PROVIDER_TEXT}"}}\n\n`];
+      const { deltas, usage } = new OpenRouterClient(makeSseFetch(frames)).stream({ model: MODEL_ID, messages: [{ role: 'user', content: PROMPT_MARKER }], role: 'generate' });
+      usage.catch(() => undefined);
+      await caught(async () => { await drain(deltas); });
+      records = withMessage(capture, 'model call');
+    } finally {
+      capture.stop();
+    }
+    eq('mid-stream 503: exactly one model call log line', records.length, 1);
+    eq('mid-stream 503: outcome', records[0]?.outcome, 'failed');
+    eq('mid-stream 503: errorKind', records[0]?.errorKind, 'server');
+    eq('mid-stream 503: status', records[0]?.status, 503);
+    check('mid-stream 503: the provider message is not logged', capture.raw.every((line) => !line.includes(PROVIDER_TEXT)));
+  }
+
+  // Aborted by its own timeout: the line says timeout, not a cancellation.
+  {
+    const capture = captureLogs();
+    let records: Record<string, unknown>[];
+    try {
+      const signal = timeoutSignal(20);
+      const { deltas, usage } = new OpenRouterClient(makeHeldOpenSseFetch()).stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }], role: 'clarify', signal });
+      usage.catch(() => undefined);
+      await caught(async () => { await drain(deltas); });
+      records = withMessage(capture, 'model call');
+    } finally {
+      capture.stop();
+    }
+    eq('timeout: exactly one model call log line', records.length, 1);
+    eq('timeout: outcome', records[0]?.outcome, 'aborted');
+    eq('timeout: errorKind', records[0]?.errorKind, 'timeout');
+  }
+
+  // Completed: a successful call carries neither field.
+  {
+    const capture = captureLogs();
+    let records: Record<string, unknown>[];
+    try {
+      const { deltas } = new OpenRouterClient(makeSseFetch(SUCCESS_FRAMES)).stream({ model: MODEL_ID, messages: [{ role: 'user', content: 'hi' }] });
+      await drain(deltas);
+      records = withMessage(capture, 'model call');
+    } finally {
+      capture.stop();
+    }
+    check('completed: no errorKind and no status', records[0]?.errorKind === undefined && records[0]?.status === undefined);
   }
 }
 

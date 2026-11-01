@@ -72,6 +72,13 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
     h.eq(failureSentence('other', FACTS), FACTS.reason, 'an unknown reason shows the server’s text');
   });
 
+  await h.test('kind: a provider outage keeps the server’s sentence even when every repair try was used, and a refused Try again still outranks it', () => {
+    const outage = { ...FACTS, cause: 'provider_unavailable' as const, rephraseHelps: false };
+    h.eq(failureKindOf({ ...outage, repairs: REPAIR_ATTEMPT_LIMIT }), 'other', 'the cause is not a repair count');
+    h.eq(failureSentence('other', outage), outage.reason, 'so the server’s sentence is the one shown');
+    h.eq(failureKindOf({ ...outage, refused: true, repairs: REPAIR_ATTEMPT_LIMIT }), 'refused', 'a refusal of the retry is still its own ending');
+  });
+
   await h.test('kind: a refusal, an interruption and a dropped connection are each their own kind', () => {
     h.eq(failureKindOf({ ...FACTS, refused: true, repairs: REPAIR_ATTEMPT_LIMIT }), 'refused', 'a refused Try again is a refusal, whatever came before');
     h.eq(failureSentence('refused', FACTS), null, 'whose notice carries the reason');
@@ -140,6 +147,19 @@ export async function runFailureScreenTests(h: Harness): Promise<void> {
       h.ok(!shown().includes(COPY.failureOfflineNotice), 'back online, the notice goes');
       await press(button(tree, COPY.actionTryAgain));
       h.eq(calls.retry, 1, 'and Try again runs it again');
+    });
+  });
+
+  await h.test('page: a provider outage shows the server’s sentence verbatim with Try again, and offers no report from the page', async () => {
+    const sentence = 'The AI service Whim uses is having trouble right now. It’s not something you did. Please try again in a little while.';
+    const reportable = /report/i;
+    await withFailurePage({ kind: 'other', reason: sentence, rephraseHelps: false, diagnostics: [], onDismiss: () => {} }, async (shown, calls, tree) => {
+      h.ok(shown().includes(sentence), 'the sentence reads verbatim');
+      h.eq(buttonLabels(tree).filter((label) => reportable.test(label)), [], 'no control on the page names a report');
+      h.ok(!reportable.test(shown()), 'and no text invites one');
+      h.eq(Object.keys(tree.root.findByType(FailurePage).props).filter((prop) => /report/i.test(prop)), [], 'nor does the page take a report handler');
+      await press(button(tree, COPY.actionTryAgain));
+      h.eq([calls.retry, calls.change], [1, 0], 'Try again runs it again');
     });
   });
 

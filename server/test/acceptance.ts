@@ -41,6 +41,7 @@ import { runBetaSiteTests } from './beta-site.suite';
 import { runWireLevelTests } from './wire-level.suite';
 import { runStoreConformanceTests } from './store-conformance.suite';
 import { runDeviceTextTests } from './device-text.suite';
+import { runProviderBreakerTests } from './provider-breaker.suite';
 
 runContractTests();
 await runServerCoreTests();
@@ -78,5 +79,6 @@ await runBetaSiteTests();
 await runWireLevelTests();
 await runStoreConformanceTests();
 await runDeviceTextTests();
+await runProviderBreakerTests();
 
 report();

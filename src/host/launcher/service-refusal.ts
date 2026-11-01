@@ -45,6 +45,7 @@ export const REFUSAL_RULES: { readonly [K in ServiceRefusalCode]: RefusalRule } 
   daily_limit: { landing: 'sender', tone: 'neutral' },
   device_busy: { landing: 'sender', tone: 'neutral' },
   server_busy: { landing: 'sender', tone: 'neutral' },
+  provider_unavailable: { landing: 'sender', tone: 'neutral' },
   update_required: { landing: 'sender', tone: 'neutral', opens: 'update', text: COPY.updateRequiredLine },
   consent_required: { landing: 'sender', tone: 'neutral', opens: 'consent', text: COPY.permissionRequiredLine },
 };

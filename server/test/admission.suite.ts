@@ -10,11 +10,23 @@
  * refuses admission when the operator's provider credit is exhausted"). Route wiring is tested by
  * the route suites.
  */
-import { ApiError, DeviceIdError, ServiceRefusalCode } from '@whim/contract';
+import { ApiError, DeviceIdError, ServiceRefusalCode, type GenerationEvent } from '@whim/contract';
 import { caught, check, eq, section } from './harness';
+import { createApp } from '../src/app';
+import { loadServerConfig } from '../src/config';
+import type { Pipeline } from '../src/pipeline';
+import { createProviderBreaker, type ProviderBreaker } from '../src/admission/provider-breaker';
+import { modelFailureOf } from '../src/model-failure';
+import { OpenRouterCreditError, OpenRouterNetworkError } from '../src/openrouter';
+import { defaultModelRoster } from '../src/generation/model';
+import { ScriptedModelClient, type ScriptedTurn } from './scripted-model';
+import { captureLogs, withMessage } from './log-capture';
+import { PROTOCOL_HEADERS, RecordingUsageStore, TIMED_OUT, within } from './route-doubles';
+import { log } from '../src/logger';
 import {
   createSlotController,
   DEFAULT_MAX_CONCURRENT_PROBES,
+  type AcquireResult,
   type LineEntry,
   type LineOutcome,
   type LineTicket,
@@ -24,7 +36,9 @@ import {
   type SlotRefusalReason,
 } from '../src/admission/slots';
 import {
+  REFUSAL_HINTS,
   budgetExhaustedRefusal,
+  breakerRefusal,
   consentRequiredRefusal,
   contentPolicyRefusal,
   dailyLimitRefusal,
@@ -33,6 +47,7 @@ import {
   policyUnavailableRefusal,
   serverBusyCeilingRefusal,
   serverBusyRefusal,
+  providerUnavailableRefusal,
   slotRefusal,
   updateRequiredRefusal,
   type ServiceRefusal,
@@ -394,6 +409,7 @@ function runRefusals(): void {
     { name: 'content_policy', refusal: contentPolicyRefusal(), status: 422, code: 'content_policy' },
     { name: 'policy_unavailable', refusal: policyUnavailableRefusal(), status: 503, code: 'policy_unavailable' },
     { name: 'budget_exhausted', refusal: budgetExhaustedRefusal(), status: 503, code: 'budget_exhausted' },
+    { name: 'provider_unavailable', refusal: providerUnavailableRefusal(), status: 503, code: 'provider_unavailable' },
     { name: 'update_required', refusal: updateRequiredRefusal(), status: 426, code: 'update_required' },
     { name: 'consent_required', refusal: consentRequiredRefusal(), status: 403, code: 'consent_required' },
   ];
@@ -412,6 +428,8 @@ function runRefusals(): void {
 
   const covered = new Set(cases.map((c) => c.code));
   check('every ServiceRefusalCode has a builder', ServiceRefusalCode.options.every((code) => covered.has(code)));
+
+  eq('provider_unavailable carries Retry-After exactly when given a window, in whole seconds', [breakerRefusal(45).headers, providerUnavailableRefusal().headers], [{ 'Retry-After': '45' }, {}]);
 
   const onlyKnowable = [deviceBusyRefusal(), serverBusyRefusal(), dailyLimitRefusal(clock)].map((r) => 'Retry-After' in r.headers);
   eq('of device_busy, concurrency server_busy and daily_limit, only daily_limit carries Retry-After', onlyKnowable, [false, false, true]);
@@ -698,4 +716,247 @@ export async function runAdmissionTests(): Promise<void> {
   await runCreditFailOpen();
   await runCreditConcurrency();
   await runCreditTransport();
+
+  section('  provider breaker at admission');
+  await runBreakerAdmission();
+}
+
+// ---------------------------------------------------------------------------------------------
+// The provider breaker at admission (generation-reliability D8, specs/server-admission-control
+// "An open provider breaker refuses admission", "Admission checks run in a fixed order...")
+// ---------------------------------------------------------------------------------------------
+
+const BREAKER_DEVICE = 'e5e5e5e5-e5e5-4e5e-8e5e-e5e5e5e5e5e5';
+const BREAKER_BODY = { prompt: 'a tip splitter' };
+const BREAKER_ROSTER = defaultModelRoster('vendor/rewrite-a', 'vendor/engineer-a');
+
+interface BreakerRig {
+  app: ReturnType<typeof createApp>;
+  usage: RecordingUsageStore;
+  model: ScriptedModelClient;
+  slots: SlotController;
+  slotAcquires: () => number;
+  creditLookups: () => number;
+  pipelineRuns: () => number;
+  breaker: ProviderBreaker;
+  advance(ms: number): void;
+}
+
+/** The real app on the real routes, with a breaker the test opens by feeding it four real
+ *  upstream failures. Every resource a wrongly admitted request would touch is observable: the
+ *  ledger, the slot controller, the credit endpoint, the scripted model and the pipeline. */
+function breakerRig(open: boolean, probe: () => Promise<void> = () => Promise.reject(new Error('the admission rig expects no probe')), turns: ScriptedTurn[] = []): BreakerRig {
+  let now = Date.UTC(2026, 0, 15, 12, 0, 0);
+  const breaker = createProviderBreaker({
+    failures: 4,
+    windowMs: 180_000,
+    cooldownMs: 60_000,
+    clock: () => now,
+    log: log.child({ scope: 'admission-test-breaker' }),
+    probe,
+  });
+  if (open) {
+    for (let i = 0; i < 4; i++) breaker.record(modelFailureOf(new OpenRouterNetworkError('provider down', undefined, 503)));
+    now += 20_000;
+  }
+  const usage = new RecordingUsageStore();
+  const model = new ScriptedModelClient(BREAKER_ROSTER, turns);
+  const inner = createSlotController({ maxConcurrentGenerations: 3, maxConcurrentUnary: 3 });
+  let slotAcquires = 0;
+  const slots: SlotController = {
+    acquire: (kind, deviceId): AcquireResult => {
+      slotAcquires++;
+      return inner.acquire(kind, deviceId);
+    },
+    acquireInLine: (deviceId): LineEntry => {
+      slotAcquires++;
+      return inner.acquireInLine(deviceId);
+    },
+    startDraining: () => inner.startDraining(),
+    isDraining: () => inner.isDraining(),
+    counts: () => inner.counts(),
+  };
+  let creditLookups = 0;
+  const creditTransport: CreditTransport = {
+    lookupKey: async () => {
+      creditLookups++;
+      return { status: 200, bodyText: keyBody(5) };
+    },
+  };
+  let pipelineRuns = 0;
+  const pipeline: Pipeline = {
+    run(): AsyncIterable<GenerationEvent> {
+      pipelineRuns++;
+      return { [Symbol.asyncIterator]: () => ({ next: () => Promise.resolve({ done: true, value: undefined }) }) };
+    },
+  };
+  invalidateCreditCache();
+  const app = createApp({
+    pipeline,
+    usageStore: usage,
+    model,
+    roster: BREAKER_ROSTER,
+    config: { ...loadServerConfig({}), now: () => now },
+    slots,
+    creditTransport,
+    providerBreaker: breaker,
+  });
+  return {
+    app,
+    usage,
+    model,
+    slots,
+    slotAcquires: () => slotAcquires,
+    creditLookups: () => creditLookups,
+    pipelineRuns: () => pipelineRuns,
+    breaker,
+    advance: (ms) => {
+      now += ms;
+    },
+  };
+}
+
+function postBreaker(rig: BreakerRig, route: string, body: unknown): Promise<Response | typeof TIMED_OUT> {
+  return within(
+    Promise.resolve(
+      rig.app.request(route, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-whim-device': BREAKER_DEVICE, ...PROTOCOL_HEADERS },
+        body: JSON.stringify(body),
+      }),
+    ),
+  );
+}
+
+async function runBreakerAdmission(): Promise<void> {
+  for (const route of ['/v1/generate', '/v1/clarify', '/v1/rewrite']) {
+    const rig = breakerRig(true);
+    const res = await postBreaker(rig, route, BREAKER_BODY);
+    if (res === TIMED_OUT) {
+      check(`${route}: an open breaker answers`, false, 'no response');
+      continue;
+    }
+    const body = ApiError.safeParse(await res.json());
+    eq(`${route}: an open breaker refuses 503`, res.status, 503);
+    eq(
+      `${route}: ... with provider_unavailable and the provider hint, a valid ApiError`,
+      body.success ? [body.data.error, body.data.hint] : body.error.message,
+      ['provider_unavailable', REFUSAL_HINTS.provider_unavailable],
+    );
+    eq(`${route}: ... and Retry-After the 40 s left of a 60 s cooldown opened 20 s ago`, res.headers.get('retry-after'), '40');
+    eq(`${route}: no daily unit consumed and no ledger row admitted`, rig.usage.admitted.length, 0);
+    eq(`${route}: no slot acquired, none held`, [rig.slotAcquires(), rig.slots.counts().generations, rig.slots.counts().unary], [0, 0, 0]);
+    eq(`${route}: the credit endpoint was not queried although the credit cache is empty`, rig.creditLookups(), 0);
+    eq(`${route}: no model call, no pipeline run`, [rig.model.requests.length, rig.pipelineRuns()], [0, 0]);
+  }
+
+  {
+    const rig = breakerRig(true);
+    rig.slots.startDraining();
+    const res = await postBreaker(rig, '/v1/clarify', BREAKER_BODY);
+    eq('an open breaker is checked before drain state: provider_unavailable, not server_busy', res === TIMED_OUT ? res : ((await res.json()) as ApiError).error, 'provider_unavailable');
+  }
+
+  {
+    const rig = breakerRig(true);
+    const res = await postBreaker(rig, '/v1/clarify', { notAPrompt: true });
+    eq('body validation comes before the breaker: a malformed body is still a 400', res === TIMED_OUT ? res : res.status, 400);
+  }
+
+  {
+    const rig = breakerRig(true);
+    rig.advance(15_000);
+    const res = await postBreaker(rig, '/v1/rewrite', BREAKER_BODY);
+    eq('the Retry-After counts down with the clock: 15 s later it reads 25', res === TIMED_OUT ? res : res.headers.get('retry-after'), '25');
+  }
+
+  {
+    let probes = 0;
+    const rig = breakerRig(true, () => {
+      probes++;
+      return Promise.resolve();
+    });
+    rig.advance(40_000);
+    const res = await postBreaker(rig, '/v1/generate', BREAKER_BODY);
+    if (res === TIMED_OUT) {
+      check('a request after the cooldown is answered', false, 'no response');
+    } else {
+      await res.body?.cancel();
+      eq('the first request after the cooldown probes once, and a completed probe lets it through', [res.status, probes, rig.usage.admitted.length], [200, 1, 1]);
+    }
+  }
+
+  {
+    let probes = 0;
+    const rig = breakerRig(true, () => {
+      probes++;
+      return Promise.reject(new OpenRouterNetworkError('bad gateway', undefined, 502));
+    });
+    rig.advance(40_000);
+    const res = await postBreaker(rig, '/v1/clarify', BREAKER_BODY);
+    eq('a probe that fails refuses the request with the full cooldown as Retry-After', res === TIMED_OUT ? res : [res.status, res.headers.get('retry-after')], [503, '60']);
+    eq('... having probed once and admitted nothing', [probes, rig.usage.admitted.length, rig.slotAcquires(), rig.creditLookups()], [1, 0, 0, 0]);
+  }
+
+  {
+    const rig = breakerRig(false);
+    const res = await postBreaker(rig, '/v1/generate', BREAKER_BODY);
+    if (res === TIMED_OUT) {
+      check('a closed breaker lets generate through', false, 'no response');
+    } else {
+      await res.body?.cancel();
+      eq('a closed breaker admits: a ledger row, and the credit check still made', [res.status, rig.usage.admitted.length, rig.creditLookups()], [200, 1, 1]);
+    }
+  }
+  await runBreakerNonUpstreamProbe();
+  await runBreakerRequestLine();
+}
+
+async function runBreakerNonUpstreamProbe(): Promise<void> {
+  let probes = 0;
+  const rig = breakerRig(true, () => {
+    probes++;
+    return Promise.reject(new OpenRouterCreditError('out of credit'));
+  });
+  rig.advance(40_000);
+  const res = await postBreaker(rig, '/v1/generate', BREAKER_BODY);
+  if (res === TIMED_OUT) {
+    check('a request after a 402 probe is answered', false, 'no response');
+  } else {
+    await res.body?.cancel();
+    eq('a probe the provider answered 402 closes the breaker: the request goes on to the credit check and is admitted', [res.status, probes, rig.creditLookups(), rig.usage.admitted.length], [200, 1, 1, 1]);
+    const next = await postBreaker(rig, '/v1/generate', BREAKER_BODY);
+    if (next !== TIMED_OUT) await next.body?.cancel();
+    eq('... and the next request needs no probe', [next === TIMED_OUT ? next : next.status, probes], [200, 1]);
+  }
+}
+
+async function runBreakerRequestLine(): Promise<void> {
+  section('  the request line tells a breaker refusal from a mid-call provider_unavailable');
+
+  for (const route of ['/v1/generate', '/v1/clarify', '/v1/rewrite']) {
+    const rig = breakerRig(true);
+    const capture = captureLogs();
+    const res = await postBreaker(rig, route, BREAKER_BODY);
+    capture.stop();
+    if (res !== TIMED_OUT) await res.body?.cancel();
+    eq(
+      `${route}: an open-breaker refusal's request line carries refusedBy breaker, with the 503 and the code`,
+      withMessage(capture, 'request').map((l) => [l.status, l.error, l.refusedBy]),
+      [[503, 'provider_unavailable', 'breaker']],
+    );
+  }
+
+  {
+    const rig = breakerRig(false, undefined, [{ role: 'clarify', deltas: [], error: new OpenRouterNetworkError('provider down', undefined, 503) }]);
+    const capture = captureLogs();
+    const res = await postBreaker(rig, '/v1/clarify', BREAKER_BODY);
+    capture.stop();
+    if (res !== TIMED_OUT) await res.body?.cancel();
+    eq(
+      'a clarify call that failed upstream mid-call: the same 503 and code on the request line, no refusedBy',
+      withMessage(capture, 'request').map((l) => [l.status, l.error, 'refusedBy' in l]),
+      [[503, 'provider_unavailable', false]],
+    );
+  }
 }

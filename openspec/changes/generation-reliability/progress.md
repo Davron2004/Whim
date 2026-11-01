@@ -1,0 +1,47 @@
+# progress: generation-reliability (ledger)
+
+- run-start: staging `integration/beta-2-fixes` cut from main 899a2bbc (MAIN_TIP). Issues #57, #58, #66.
+- research: research.md (researcher, Sonnet) and rc-58.md (#58 root cause, Opus): module-scope candidate throw → no paint → no probes → `run_unverified`; reproduced with real Chromium (probe/rc-58 58b8df82). #57 generate/repair resend already live since beta-1 D10; residual = plan turn. Production: 17 generations, 0 terminal failures, 0 upstream failures since 2026-10-07.
+- proposal: 37b76676 (Opus proposer), amended b6a3b2d6 (structured `failure.cause`, D11). openspec 1.4.1 --strict + 1.14.1: exit 0.
+- dispatched: chain-run-verdict BASE b6a3b2d6, .claude/worktrees/generation-reliability-run-verdict (chain/generation-reliability-run-verdict)
+- dispatched: chain-wire BASE b6a3b2d6, .claude/worktrees/generation-reliability-wire (chain/generation-reliability-wire)
+- report: chain-wire complete, tip 1abfe2b6 (class-A deviations: 3 extra test files). runner + Opus reviewer dispatched.
+- review chain-wire #1 (Opus): REJECT, 2 med (weakened 2**53 boundary literal; device fixtures not from errorForLevel) + 4 low (downgrade path skips field strip; tautological conjunct; re-enable after Retry-After untested; cause must outrank repair-count kind). handoff/wire-review-1.md
+- report: chain-run-verdict complete, tip 47c44fdd (class-A: RunOutcome null split by repairable; synthrun/report.ts touched). Opus reviewer dispatched.
+- review chain-run-verdict #1 (Opus): REJECT — safety core holds; 2 med (rerun missing on contained:false log; tautological e2e currency assertion) + 5 low. Fixer dispatched for 1-5,7; 6 accepted → parked loader issue. handoff/run-verdict-review-1.md
+- runner chain-wire #1: FAIL — gate red: deploy-config smoke envelope (smoke.sh/lib.sh hardcode protocol 1 vs bench-envelope level 2); integrity 0, ratchet 0, device redcheck RED, server redcheck coarse RED. handoff/wire-runner-1.md. Wire fixer dispatched (review #1 findings 1-6 + gate).
+- fix round 1 chain-run-verdict: tip 2a6bcf18 (findings 1-5,7 fixed; 3 used post-paint timer, effect-body race recorded out of scope). Runner #1 + Opus re-review dispatched.
+- re-review chain-run-verdict #2 (Opus): ACCEPT (findings 1-5,7 resolved). Spec scenario wording tightened on staging aa2e11b4. handoff/run-verdict-review-2.md
+- fix round 1 chain-wire: tip e718ffdd (gate: WHIM_SMOKE_PROTOCOL_LEVEL in deploy/lib.sh pinned to PROTOCOL_LEVEL; review findings 1-6). Opus re-review dispatched; runner #2 queued behind run-verdict runner.
+- re-review chain-wire #2 (Opus): ACCEPT (findings 1-6 + gate resolved). handoff/wire-review-2.md
+- runner chain-run-verdict #1: PASS (gate 0, e2e 0, integrity 0, ratchet 0, redchecks RED: server coarse/type-kept mutation reds in report, synthrun + e2e assertion RED). handoff/run-verdict-runner.md
+- merged: chain-run-verdict at ba91fad7 (tasks 1.1–1.5 ticked). Regate deferred to after the chain-wire merge (one gate at a time; the post-wire regate covers both merges).
+- runner chain-wire #2: PASS (gate 0, ratchet 0, redchecks device/deploy RED, 2.5 pin RED by scratch mutation, typecheck-tests diagnostics count equal to BASE). integrity exit 4 = design.md (change folder planning artifact, D11 precedence edit) — adjudicated: accepted, same change. handoff/wire-runner-2.md
+- merged: chain-wire (tasks 2.1–2.6 ticked). Post-merge regate (covers run-verdict + wire) next.
+- dispatched: chain-upstream BASE 6f30bc5729f59fc3693f81a31c9374c64565e64e, .claude/worktrees/generation-reliability-upstream (chain/generation-reliability-upstream); regate runner on staging tip in parallel
+- filed parked issues: #273 (loader probes on load failure; incl. run-verdict review finding 6), #274 (awaitMount race), #275 (engineer first-token deadline), #276 (flowbench provider_unavailable). Fallback model stays in #66's out-of-scope note (not filed).
+- regate after run-verdict + wire merges (tip fe4f34b4): gate.sh PASS (exit 0), server:e2e 68/0 PASS.
+- report: chain-upstream complete, tip cd308d9b (class-A: machine.suite.ts edited; typecheck-tests now prints 3 server/contract diagnostics vs 2). runner + Opus reviewer dispatched.
+- review chain-upstream #1 (Opus): REJECT — HIGH: clarify answers via Response.json, bypassing level gating (level-1 gets raw provider_unavailable, no compat); MED: no level-1 test on clarify/rewrite; LOW: implied status doc. handoff/upstream-review-1.md. Fixer waits for the runner to finish.
+- runner chain-upstream #1: PASS (gate 0, e2e 68/0, integrity 0, ratchet 0, redcheck coarse RED + builder mutation reds); new tests-tsconfig diagnostic model-failure.ts(44,34) AbortSignal.reason. Fixer dispatched (review 1-3 + diagnostic).
+- fix round 1 chain-upstream: tip 4df6c107 (clarify answers via c.json; level-1/level-2 tests; typed 401/429 carry status; AbortSignal.reason accessor). Opus re-review + runner #2 dispatched.
+- re-review chain-upstream #2 (Opus): ACCEPT (1-3 + diagnostic resolved; compat at level 2 is correct per live spec). LOW carried to chain-breaker: full level-2 body deepEqual. handoff/upstream-review-2.md
+- runner chain-upstream #2: PASS (gate 0, integrity 0, ratchet 0, redcheck assertion RED, typecheck-tests 2). handoff/upstream-runner-2.md
+- merged: chain-upstream at a3bd8756fa89e0f78bed7d9ffd08840f29b1fd8b (tasks 3.1–3.6 ticked). Regate deferred: chain-breaker follows; gate-full on the final tip is the last regate.
+- dispatched: chain-breaker BASE 612c9de5, .claude/worktrees/generation-reliability-breaker (chain/generation-reliability-breaker)
+- report: chain-breaker complete, tip d1c7b99d (gaps: lifecycle guardModel wiring untested; new env vars not forwarded by deploy scripts). runner + Opus reviewer dispatched.
+- review chain-breaker #1 (Opus): REJECT — MED: lifecycle wiring untested (e2e case needed); MED: env vars not forwarded (kill switch unreachable) → land now; LOW 3-6 (stale probe acts on newer cycle; probe timeout not enforced/tested; sync-throw probe; deploy.md wording). handoff/breaker-review-1.md
+- runner chain-breaker #1: PASS (gate 0, e2e 0, integrity 0, ratchet 0, redcheck coarse RED + builder mutation reds, typecheck-tests 2). Fixer dispatched for review findings 1-6.
+- fix round 1 chain-breaker: tip 88670066 (e2e wiring case; env forwarding in 5 places + docs; stale-probe guard; enforced probe timeout; sync-throw probe; docs wording). Opus re-review + runner #2 dispatched.
+- re-review chain-breaker #2 (Opus): ACCEPT (1-6 resolved; 2 LOW: stale Gap lines in report, stale probe's deadline cancel runs late — harmless, accepted). handoff/breaker-review-2.md
+- runner chain-breaker #2: PASS (gate 0, e2e 0, integrity 0, ratchet 0, wiring e2e redcheck assertion RED). handoff/breaker-runner-2.md
+- merged: chain-breaker (tasks 4.1–4.6 ticked). Next: gate-full on the staging tip (final regate) + whole-change Opus review in parallel.
+- gate-full on cae360d2 (all four chains): FULL GATE PASSED, exit 0.
+- whole-change review #1 (Opus): REJECT — MED: breaker can stay open forever on a non-upstream probe failure; MED: any-model success resets the count (engineer-only outage never opens). LOW 3-8. Decisions: probe non-upstream failure closes; count/reset on engineer model only; policy upstream stays policy_unavailable (documented); provider_unavailable origin tagged at model-turn; breaker refusals marked on the request line; run re-run line in delta; alert doc note; 8 accepted. Fix chain fix1 dispatched (BASE cae360d2, .claude/worktrees/generation-reliability-fix1). handoff/whole-review-1.md
+- fix1 complete: tip 500567e3 (findings 1-7). Live probe-shaped call (orchestrator, key via env-scoped gcloud, 2 calls): deepseek/deepseek-v4.1-flash maxTokens 1 reasoning off → completed, 306 ms. Runner + Opus re-review dispatched.
+- re-review whole change #2 (Opus): ACCEPT (findings 1-7 resolved; L1-L3 applied by orchestrator: probe-closing wording, override Risks line + deploy.md note, probe-live.md record). handoff/whole-review-2.md
+- runner fix1: PASS (gate 0, e2e 0, integrity 0, ratchet 0, redcheck coarse RED (signature change; builder mutation reds in fix1-report), openspec both 0). handoff/fix1-runner.md
+- merged: fix1. Final gate-full on the tip next; PR opened in parallel.
+- closure: pushed integration/beta-2-fixes, draft PR #277 → main. Final gate-full running locally in parallel.
+- local final gate-full on dffaaf66: FULL GATE PASSED (exit 0). PR #277 checks: SETTLED PASS (SonarCloud, isolation-suite, quality-gate). STOP at PR green per brief: no merge, no deploy, no /git-cleanup.
+- closing: chains run 4 + fix1; every chain REJECTED once by Opus review and fixed (one fix round each); whole-change review REJECT → fix1 → ACCEPT. Class-A deviations only; integrity exit 4 once (design.md, accepted). Parked issues #273-#276.

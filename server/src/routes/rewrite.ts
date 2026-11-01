@@ -2,8 +2,10 @@
  * POST /v1/rewrite — validates RewriteRequest and returns a RewriteResponse produced by a real
  * call to the configured rewrite model (task 7.2, spec "Rewrite endpoint over the real rewrite
  * model"). Metered through the same `UsageStore` as generation. A model failure is a `502` with
- * an `ApiError` body — this route NEVER falls back to returning the input prompt disguised as a
- * rewrite (design D5: "a model failure can no longer be papered over").
+ * an `ApiError` body, except an upstream one (`../model-failure.ts`: a server, rate-limit, network
+ * or timeout failure, the route's own per-call timeout included), which is a `503` with
+ * `provider_unavailable` and no `Retry-After` (#66). This route NEVER falls back to returning the
+ * input prompt disguised as a rewrite (design D5: "a model failure can no longer be papered over").
  *
  * It is also the plan screen's endpoint (design D10): the request may carry the clarify exchange's
  * answers, and the response may carry the labelled `plan` rows the device renders as its approval
@@ -15,7 +17,7 @@
  * builder is the one place that decides how an edit is stated to the model.
  *
  * Admission runs the same ordered sequence `/v1/clarify` does — raw body cap, body validation,
- * prompt byte cap, then `admitUnaryRequest` (`./clarify`): operator credit, drain/global-unary-cap,
+ * prompt byte cap, then `admitUnaryRequest` (`./clarify`): provider breaker, operator credit, drain/global-unary-cap,
  * the device's daily rewrite allowance, content policy — all before any rewrite model call.
  */
 import { Hono } from 'hono';
@@ -26,8 +28,10 @@ import type { FailureReason, UsageStore, RequestOutcome } from '../usage-store';
 import type { ServerConfig } from '../config';
 import type { SlotController } from '../admission/slots';
 import type { CreditTransport } from '../admission/credit';
+import type { ProviderBreaker } from '../admission/provider-breaker';
 import { invalidateCreditCache } from '../admission/credit';
-import { budgetExhaustedRefusal, payloadTooLargeRefusal } from '../admission/refusals';
+import { budgetExhaustedRefusal, payloadTooLargeRefusal, providerUnavailableRefusal } from '../admission/refusals';
+import { modelFailureOf } from '../model-failure';
 import type { ContentPolicy } from '../policy';
 import { buildRewritePolicyInput } from '../policy/input';
 import { resolveRequestUsage, type ResolveBounds, type UsageAndCostTransport, type ResolveTracker } from '../usage/resolve';
@@ -110,7 +114,7 @@ type RewriteAttemptOutcome = {
 } & (
   | { outcome: 'ok'; response: RewriteResponse }
   | { outcome: 'budget_exhausted' }
-  | { outcome: 'failed' }
+  | { outcome: 'failed'; upstream: boolean }
 );
 
 /** The pieces of `rewriteWithRetry`'s call that stay fixed across both attempts — grouped so the
@@ -150,7 +154,7 @@ async function rewriteWithRetry(
   const usage: Usage = { promptTokens: 0, completionTokens: 0, totalTokens: 0 };
 
   for (let attempt = 0; attempt < 2; attempt++) {
-    if (signal?.aborted) return { outcome: 'failed', generationIds, creditedGenerationIds, usage };
+    if (signal?.aborted) return { outcome: 'failed', upstream: false, generationIds, creditedGenerationIds, usage };
 
     const timeoutSignal = AbortSignal.timeout(timeoutMs);
     const combined = signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal;
@@ -166,7 +170,7 @@ async function rewriteWithRetry(
 
 type RewriteAttempt =
   | { ok: true; shaped: RewriteResponse; usage: Usage; generationId?: string }
-  | { ok: false; budgetExhausted: boolean; generationId?: string };
+  | { ok: false; budgetExhausted: boolean; upstream: boolean; generationId?: string };
 
 type RewriteAttemptStep =
   | { outcome: RewriteAttemptOutcome; stop?: never; best?: never }
@@ -196,7 +200,10 @@ async function applyRewriteAttempt(
   if (result.generationId) generationIds.push(result.generationId);
 
   if (!result.ok) {
-    return { outcome: { outcome: result.budgetExhausted ? 'budget_exhausted' : 'failed', generationIds, creditedGenerationIds, usage } };
+    const ending = result.budgetExhausted
+      ? { outcome: 'budget_exhausted' as const }
+      : { outcome: 'failed' as const, upstream: result.upstream };
+    return { outcome: { ...ending, generationIds, creditedGenerationIds, usage } };
   }
 
   await usageStore.credit(deviceId, result.usage);
@@ -234,7 +241,7 @@ async function runRewriteAttempt(
     return { ok: true, shaped: shapeRewrite(raw), usage, generationId };
   } catch (err) {
     const generationId = await stream.id.catch(() => undefined);
-    return { ok: false, budgetExhausted: isCreditExhaustedError(err), generationId };
+    return { ok: false, budgetExhausted: isCreditExhaustedError(err), upstream: modelFailureOf(err, signal).upstream, generationId };
   }
 }
 
@@ -249,6 +256,7 @@ export interface RewriteRouteOptions {
   slots: SlotController;
   policy: ContentPolicy;
   creditTransport: CreditTransport | undefined;
+  providerBreaker?: ProviderBreaker;
   resolveTracker: ResolveTracker;
   resolveTransport: UsageAndCostTransport;
   resolveBounds: Partial<ResolveBounds> | undefined;
@@ -266,7 +274,7 @@ export function makeRewriteRoute(
   options: RewriteRouteOptions,
 ): Hono<V1Env> {
   const app = new Hono<V1Env>();
-  const { config, clock, slots, policy, creditTransport, resolveTracker, resolveTransport, resolveBounds } = options;
+  const { config, clock, slots, policy, creditTransport, providerBreaker, resolveTracker, resolveTransport, resolveBounds } = options;
 
   app.post(
     '/',
@@ -305,6 +313,7 @@ export function makeRewriteRoute(
         usageStore,
         clock,
         slots,
+        providerBreaker,
         creditTransport,
         creditTtlMs: config.creditCacheTtlMs,
         creditFloorUsd: config.minCreditUsd,
@@ -318,6 +327,7 @@ export function makeRewriteRoute(
       });
       if (!admission.ok) {
         const r = admission.refusal;
+        if (r.refusedBy) c.set('refusedBy', r.refusedBy);
         return c.json(r.body, r.status, r.headers);
       }
       const { requestId, release, policy: policyCalls } = admission;
@@ -365,6 +375,11 @@ export function makeRewriteRoute(
           invalidateCreditCache();
           await finish('error', result.generationIds, result.creditedGenerationIds, result.usage, 'budget_exhausted');
           const r = budgetExhaustedRefusal();
+          return c.json(r.body, r.status, r.headers);
+        }
+        if (result.outcome === 'failed' && result.upstream) {
+          await finish('error', result.generationIds, result.creditedGenerationIds, result.usage, 'provider_unavailable');
+          const r = providerUnavailableRefusal();
           return c.json(r.body, r.status, r.headers);
         }
         if (result.outcome === 'failed') {

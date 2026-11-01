@@ -48,6 +48,7 @@ export const KNOWN_ERROR_CODES: readonly string[] = [
   'budget_exhausted',
   'update_required',
   'consent_required',
+  'provider_unavailable',
   'missing_device_id',
   'invalid_device_id',
   'invalid_envelope',

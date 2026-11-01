@@ -42,7 +42,7 @@ export type { WideningId } from './disclosure-manifest';
  *  the wire gains a message, field meaning or refusal code a client at the previous level would not
  *  understand. Every `/v1` request declares the level its client understands in `PROTOCOL_HEADER`;
  *  a server never sends a client anything introduced above that level. */
-export const PROTOCOL_LEVEL = 1;
+export const PROTOCOL_LEVEL = 2;
 
 /** The closed vocabulary a client applies to a message it cannot use: `skip` ignores it and
  *  carries on, `fail` ends the flow on the failure screen, `update` ends it on the update screen.
@@ -378,6 +378,13 @@ export const RunSummary = z.object({
 });
 export type RunSummary = z.infer<typeof RunSummary>;
 
+/** The closed vocabulary of structured causes a terminal `failure` may carry (protocol level 2).
+ *  `provider_unavailable`: the AI provider the server depends on failed, not the user's request,
+ *  so a client must not advise rewording. Grows only additively; a client ignores a value it does
+ *  not know. */
+export const FailureCause = z.enum(['provider_unavailable']);
+export type FailureCause = z.infer<typeof FailureCause>;
+
 /** The SSE payload — a discriminated union on `type`. `GenerationEvent.parse` rejects an unknown
  *  `type`; a CLIENT never gets that far with one, because it reads every frame through
  *  `WireEnvelope` first and applies the frame's `compat` fallback instead (design D16). `usage` is
@@ -416,6 +423,9 @@ export const GenerationEvent = z.discriminatedUnion('type', [
     reason: z.string(),
     attempts: z.number(),
     diagnostics: z.array(Diagnostic),
+    /** Why the run failed, as data a client may act on without reading `reason`. Introduced at
+     *  protocol level 2: the server omits it for a client declaring level 1. */
+    cause: FailureCause.optional(),
     ...compatField,
   }),
 ]);
@@ -497,6 +507,9 @@ export const ProtocolLevelHeader = PositiveIntegerText;
  *  SHALL say generation is unavailable for now without naming the provider or a dollar amount.
  *  `update_required` (`426`) refuses a build below its platform's minimum; `consent_required`
  *  (`403`) refuses a request whose consent version does not cover the route's data practice.
+ *  `provider_unavailable` (`503`, protocol level 2) means the AI provider the server depends on is
+ *  failing — distinct from `budget_exhausted` (the operator's credit) and `policy_unavailable`
+ *  (the content classifier); its `hint` names no provider, model or status code.
  *  Grows only additively — no refusal introduces a second error shape. */
 export const ServiceRefusalCode = z.enum([
   'payload_too_large',
@@ -508,6 +521,7 @@ export const ServiceRefusalCode = z.enum([
   'budget_exhausted',
   'update_required',
   'consent_required',
+  'provider_unavailable',
 ]);
 export type ServiceRefusalCode = z.infer<typeof ServiceRefusalCode>;
 

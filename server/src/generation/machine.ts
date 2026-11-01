@@ -22,6 +22,7 @@ import type {
 import { burnedSchema, scanStorageSurface } from '../../../checks/index';
 import type { DeclaredField, StorageSurface } from '../../../checks/index';
 import type { DiagnosticKind } from '../../../checks/contract';
+import type { UnobservedPhase } from '../../../synthrun/contract';
 import { burnedIdFloor } from '../../../src/host/storage-engine/schema';
 import type { AppliedSchema } from '../../../src/host/storage-engine/schema';
 import {
@@ -40,6 +41,7 @@ import { unwrapSourceFence } from './source-block';
 import { claimsNoChange, neutralSummary, type SourceChange, type Summariser, type SummariserInput } from './summarise';
 import type { TerminalFailureCode } from './failure-codes';
 import { invalidateCreditCache } from '../admission/credit';
+import { REFUSAL_HINTS } from '../admission/refusals';
 import { log, type ServerLogger } from '../logger';
 
 /** Per-run pipeline breadcrumbs — run start, stage transitions, model-call failures, repair
@@ -126,26 +128,36 @@ export interface RunInput {
   build: BuildResult;
 }
 
+/** The unobserved phases that mean the candidate itself never mounted: it threw while its module
+ *  was evaluated, left no app to mount, or hung before its first paint (#58, design D1). */
+export type NeverMountedPhase = Extract<UnobservedPhase, 'module-eval' | 'bundle' | 'mount-timeout'>;
+
 /** `contained: false` is TERMINAL (design D7): `diagnostics` and any assembled record are ignored
  *  entirely by the machine, no repair attempt is consumed, and nothing about the escape is fed back
- *  to the model.
+ *  to the model. `rerun` says whether the stage had re-run the candidate after an unobserved first
+ *  run: a candidate that hid its verdict once and then breached is the case forensics cares about.
  *
- *  `contained: null` — the harness observed no authenticated containment verdict at all — is its
- *  own THIRD ARM (design D8-local), not a flag hung off either of the others: an arm makes every
- *  non-exhaustive consumer a compile error, whereas a discriminant field would let a consumer that
- *  handles both original arms keep compiling while silently mishandling the new state. It is
- *  terminal on the same terms as `false` (no repair attempt, nothing fed back) but is a DISTINCT
- *  outcome carrying its own user-facing reason, and is never re-run (design D3): it is NOT a
- *  containment failure, and must never be reported as one — never heard back is not evidence of a
- *  breach, and it is not evidence of containment either.
+ *  `contained: null` — the harness observed no authenticated containment verdict at all — is never
+ *  a containment failure and never a pass: never heard back is not evidence of a breach, and it is
+ *  not evidence of containment either. It has two arms, told apart by `repairable`:
+ *  - `repairable: false` is the TERMINAL unobserved ending (design D8-local): a harness fault the
+ *    stage already re-ran once (`rerun`). No repair attempt, nothing fed back, a DISTINCT outcome
+ *    with its own user-facing reason. `phase` is the harness's unobserved phase of the run that
+ *    ended it.
+ *  - `repairable: true` means the candidate never mounted by its own fault (#58, design D1): the
+ *    stage carries the harness's candidate diagnostics, minus every `containment_*` kind, and the
+ *    machine sends the candidate to repair like a build failure. It is never delivered.
+ *  Each is its own arm, so a consumer that forgets one fails to compile.
  *
  *  When `contained` is `true`, `record` is ALWAYS present (the harness-validated `WireAppRecord`,
  *  design D12) — the machine, not the stage, decides whether to deliver it or keep repairing, based
- *  on `diagnostics[].severity` (design D6). */
+ *  on `diagnostics[].severity` (design D6). `rerunOf` is present when the stage re-ran the candidate
+ *  after an unobserved first run, naming that first run's phase; the machine logs it. */
 export type RunOutcome =
-  | { contained: false; diagnostics: Diagnostic[]; verdict: RunVerdict<'breach'> }
-  | { contained: null; diagnostics: Diagnostic[]; verdict: RunVerdict<'unobserved'> }
-  | { contained: true; diagnostics: Diagnostic[]; record: WireAppRecord };
+  | { contained: false; diagnostics: Diagnostic[]; verdict: RunVerdict<'breach'>; rerun: boolean }
+  | { contained: null; repairable: false; diagnostics: Diagnostic[]; verdict: RunVerdict<'unobserved'>; phase: UnobservedPhase; rerun: boolean }
+  | { contained: null; repairable: true; diagnostics: Diagnostic[]; phase: NeverMountedPhase }
+  | { contained: true; diagnostics: Diagnostic[]; record: WireAppRecord; rerunOf?: UnobservedPhase };
 
 /** A non-affirmative verdict, content-free (beta-1 D11): which one, and the closed diagnostic kind
  *  of the check that tripped it. Logged once with the run's terminal failure, never fed back to
@@ -237,9 +249,11 @@ export const CONTAINMENT_FAILURE_REASON = 'This app could not be safely run and 
 /** The unobserved-verdict reason (design D6, settled copy — verbatim). Deliberately NOT
  *  `CONTAINMENT_FAILURE_REASON`: that sentence asserts a breach we did not observe. This one says
  *  only that we could not verify the run, and points at the device's existing one-tap "Try again"
- *  rather than promising an automatic retry: an unverified candidate is never re-run (design D3).
- *  The run's one automatic retry is a generate or repair turn resent once after a provider failure
- *  (`runModelTurn`, beta-1 D10), which voids that turn's partial output and re-runs no candidate. */
+ *  rather than promising an automatic retry. It is reached only by a harness fault: a candidate that
+ *  never mounted by its own fault goes to repair instead, and a harness-fault verdict was already
+ *  re-run once by the run stage, with no repair attempt spent, before this ends the run (#58,
+ *  design D1). A turn resent after a provider failure (`runModelTurn`, beta-1 D10) re-runs no
+ *  candidate. */
 export const UNVERIFIED_RUN_REASON = 'We couldn’t verify this app ran safely. Please try again.';
 export const GENERIC_INTERNAL_ERROR_REASON = 'Something went wrong while I was making this app. Please try again.';
 /** Design D13, in the shell's glossary (system.md §8). */
@@ -247,6 +261,23 @@ export const EXPIRED_REASON = 'This took too long to make. Please try again.';
 /** A provider `402` (design D6b). Same sentence as the `budget_exhausted` admission refusal hint, so
  *  a device sees one wording whether the budget ran out before admission or mid-run. */
 export const CREDIT_EXHAUSTED_REASON = 'Whim has used up its budget for making apps for now. Try again later.';
+/** A turn that failed upstream twice (#66, design D6). The `provider_unavailable` refusal hint
+ *  itself, imported so a run's terminal and a refused request can never drift apart: no vendor or
+ *  model name, and it says the failure is not the user's doing. */
+export const PROVIDER_UNAVAILABLE_REASON = REFUSAL_HINTS.provider_unavailable;
+
+/** The errors a plan, generate or repair turn threw after its resend failed upstream too. Origin
+ *  is decided here, at the turn, and not from the error's shape later: a 5xx-looking error thrown
+ *  by anything else (a stage, an adapter) is an `internal_error`, not a provider outage (#66, D6). */
+const resendFailures = new WeakSet<object>();
+
+function markResendFailure(err: unknown): void {
+  if (typeof err === 'object' && err !== null) resendFailures.add(err);
+}
+
+function isResendFailure(err: unknown): boolean {
+  return typeof err === 'object' && err !== null && resendFailures.has(err);
+}
 
 function sumUsage(a: Usage, b: Usage): Usage {
   return {
@@ -337,7 +368,8 @@ function errorClassOf(error: unknown): string {
   return error instanceof Error ? error.constructor.name : typeof error;
 }
 
-/** How many times a generate or repair turn is resent after an upstream failure (beta-1 D10). */
+/** How many times a plan, generate or repair turn is resent after an upstream failure (beta-1 D10,
+ *  plan added in #57). */
 const MODEL_TURN_RETRIES = 1;
 
 /** One model call's ending: its text, or the error it failed with and whether it had already
@@ -573,37 +605,40 @@ type CandidateOutcome =
   | { kind: 'aborted' }
   | { kind: 'deliver'; record: WireAppRecord }
   | { kind: 'repair'; diagnostics: Diagnostic[]; warningsOnly: boolean }
-  | { kind: 'failed'; reason: string; code: TerminalFailureCode }
-  | { kind: 'contained-failure'; verdict: RunVerdict }
-  | { kind: 'containment-unobserved'; verdict: RunVerdict };
+  | { kind: 'failed'; reason: string; code: TerminalFailureCode; phase?: UnobservedPhase }
+  | { kind: 'contained-failure'; verdict: RunVerdict; rerun: boolean }
+  | { kind: 'containment-unobserved'; verdict: RunVerdict; phase: UnobservedPhase; rerun: boolean };
 
-/** Maps a non-affirmative containment verdict onto its own terminal outcome — the one place the
- *  three-valued verdict is turned into a candidate outcome. An exhaustive `switch` over the
- *  verdict's literal type (design D8-local): `contained` is the discriminant, so a fourth
- *  `RunOutcome` arm makes this a compile error at the call site instead of silently reusing one of
- *  these two. Never collapse the two — `null` is absence of evidence, `false` is evidence. */
-function unverifiedRunOutcome(outcome: Exclude<RunOutcome, { contained: true }>): CandidateOutcome {
+/** Maps a terminal non-affirmative containment verdict onto its own terminal outcome — the one
+ *  place the three-valued verdict is turned into a candidate outcome. An exhaustive `switch` over
+ *  the verdict's literal type (design D8-local): `contained` is the discriminant, so a further
+ *  terminal `RunOutcome` arm makes this a compile error at the call site instead of silently
+ *  reusing one of these two. Never collapse the two — `null` is absence of evidence, `false` is
+ *  evidence. The repairable never-mounted arm is not terminal and is handled before this. */
+function unverifiedRunOutcome(outcome: Exclude<RunOutcome, { contained: true } | { repairable: true }>): CandidateOutcome {
   switch (outcome.contained) {
     case false:
-      return { kind: 'contained-failure', verdict: outcome.verdict };
+      return { kind: 'contained-failure', verdict: outcome.verdict, rerun: outcome.rerun };
     case null:
-      return { kind: 'containment-unobserved', verdict: outcome.verdict };
+      return { kind: 'containment-unobserved', verdict: outcome.verdict, phase: outcome.phase, rerun: outcome.rerun };
   }
 }
 
 type FailureEvent = Extract<GenerationEvent, { type: 'failure' }>;
 
 /** A run's one terminal: a `result`, or a `failure` with the code the ledger records for it and,
- *  for a containment ending, the verdict its log line names. */
+ *  for a containment ending, the verdict its log line names. `phase` and `rerun` are the ending
+ *  run's unobserved phase and whether the candidate was re-run, for the same line. */
 type Completion =
-  | { terminal: Extract<GenerationEvent, { type: 'result' }>; code?: never; verdict?: never }
-  | { terminal: FailureEvent; code: TerminalFailureCode; verdict?: RunVerdict };
+  | { terminal: Extract<GenerationEvent, { type: 'result' }>; code?: never; verdict?: never; phase?: never; rerun?: never }
+  | { terminal: FailureEvent; code: TerminalFailureCode; verdict?: RunVerdict; phase?: UnobservedPhase; rerun?: boolean };
 
 /** The `failure` terminal each run-ending, non-delivering candidate outcome produces — the one
  *  place a `reason` is chosen. An exhaustive `switch`, so a new terminal outcome cannot be added
  *  without deciding what the user is told; and each arm decides its `diagnostics` independently.
  *  Both containment terminals send `[]`: nothing about an escape attempt, and no unobserved-verdict
- *  detail, is ever fed back (spec "The run stage is the synthetic harness…"). */
+ *  detail, is ever fed back (spec "The run stage is the synthetic harness…"). A `failed` outcome
+ *  that ended on a never-mounted candidate keeps that run's phase for the log line. */
 function failureTerminalFor(
   outcome: Extract<CandidateOutcome, { kind: 'failed' | 'contained-failure' | 'containment-unobserved' }>,
   state: RunState,
@@ -615,18 +650,27 @@ function failureTerminalFor(
         terminal: { type: 'failure', reason: CONTAINMENT_FAILURE_REASON, attempts, diagnostics: [] },
         code: 'containment_failed',
         verdict: outcome.verdict,
+        rerun: outcome.rerun,
       };
     // Terminal on the same terms as a containment failure — an unverified run is not a candidate to
-    // iterate on — but with its OWN reason (design D3/D6). No repair attempt is consumed, no repair
-    // prompt is built, and the candidate is never re-run.
+    // iterate on — but with its OWN reason (design D3/D6). It is what is left once a candidate that
+    // never mounted by its own fault has gone to repair and a harness-fault verdict has been re-run
+    // once by the run stage (#58, design D1): still unobserved, so no repair attempt is consumed, no
+    // repair prompt is built, and nothing is re-run again.
     case 'containment-unobserved':
       return {
         terminal: { type: 'failure', reason: UNVERIFIED_RUN_REASON, attempts, diagnostics: [] },
         code: 'run_unverified',
         verdict: outcome.verdict,
+        phase: outcome.phase,
+        rerun: outcome.rerun,
       };
     case 'failed':
-      return { terminal: { type: 'failure', reason: outcome.reason, attempts, diagnostics: state.diagnostics }, code: outcome.code };
+      return {
+        terminal: { type: 'failure', reason: outcome.reason, attempts, diagnostics: state.diagnostics },
+        code: outcome.code,
+        ...(outcome.phase ? { phase: outcome.phase } : {}),
+      };
   }
 }
 
@@ -720,9 +764,12 @@ export class GenerationMachine {
 
   /** A stage or model call threw. Stops quietly when the run was already aborted or expired;
    *  otherwise ends in one failure. A provider `402` gets its own reason and no repair, since a
-   *  repair spends more of a budget that is already gone (design D6b). */
+   *  repair spends more of a budget that is already gone (design D6b). A model turn that is still
+   *  failing upstream after its resend ends as `provider_unavailable`, with the structured `cause`
+   *  so a device does not advise rewording (#66, design D6/D11); no other ending sets `cause`. */
   private async *endOnThrow(err: unknown, signal: AbortSignal, state: RunState): AsyncGenerator<GenerationEvent, void> {
     const creditExhausted = isCreditExhaustedError(err);
+    const providerUnavailable = !creditExhausted && isResendFailure(err);
     // Authoritative even when an abort or the deadline got there first: the next admission must
     // re-query the credit rather than trust the cached value.
     if (creditExhausted) invalidateCreditCache();
@@ -735,6 +782,19 @@ export class GenerationMachine {
       },
       creditExhausted ? 'provider credit exhausted' : 'run failed',
     );
+    if (providerUnavailable) {
+      yield* this.emitCompletion(state, signal, {
+        terminal: {
+          type: 'failure',
+          reason: PROVIDER_UNAVAILABLE_REASON,
+          attempts: state.candidatesProduced,
+          diagnostics: state.diagnostics,
+          cause: 'provider_unavailable',
+        },
+        code: 'provider_unavailable',
+      });
+      return;
+    }
     yield* this.emitCompletion(state, signal, {
       terminal: {
         type: 'failure',
@@ -752,7 +812,7 @@ export class GenerationMachine {
   private async *emitCompletion(
     state: RunState,
     signal: AbortSignal | undefined,
-    { terminal, code, verdict }: Completion,
+    { terminal, code, verdict, phase, rerun }: Completion,
   ): AsyncGenerator<GenerationEvent, void> {
     if (signal?.aborted) return;
     state.budget.beginCompletion();
@@ -764,7 +824,12 @@ export class GenerationMachine {
       // screen names that echo the prompt, and this line ships to Cloud Logging. The field is
       // `reason` because the logger redacts any field named `code`. A containment ending adds its
       // content-free verdict (beta-1 D11): two closed-vocabulary values, nothing the candidate wrote.
-      state.log.info({ reason: code, ...(verdict ? { verdict: verdict.kind, check: verdict.check } : {}) }, 'terminal failure');
+      // `phase` (the harness's unobserved phase of the run that ended the attempt, else `none`) and
+      // `rerun` are closed values too (#58, design D2).
+      state.log.info(
+        { reason: code, ...(verdict ? { verdict: verdict.kind, check: verdict.check } : {}), phase: phase ?? 'none', rerun: rerun ?? false },
+        'terminal failure',
+      );
     } else {
       state.log.info('terminal result');
     }
@@ -780,11 +845,13 @@ export class GenerationMachine {
    *  reasoning setting actually streams one: the device needs to know the model is working during
    *  the plan turn just as much as during generate/repair — it is the silent one otherwise.
    *
-   *  A generate or repair turn that fails upstream (`isUpstreamModelFailure`: 5xx, 429, network or
-   *  stream error) is sent once more with the same messages (beta-1 D10). When the failed attempt
-   *  had already streamed `token` events, `restart` goes first, so the device voids them. Any other
-   *  failure, a failure after the run was stopped, and the resend's own failure are thrown to
-   *  `endOnThrow` exactly as before. */
+   *  A plan, generate or repair turn that fails upstream (`isUpstreamModelFailure`: 5xx, 429,
+   *  network or stream error) is sent once more with the same messages (beta-1 D10). When the failed
+   *  attempt had already streamed `token` events (never a plan turn), `restart` goes first, so the
+   *  device voids them. Any other
+   *  failure and a failure after the run was stopped are thrown to `endOnThrow` exactly as before; so is
+   *  the resend's own upstream failure, marked (`markResendFailure`) as the one `provider_unavailable`
+   *  is decided on. */
   private async *runModelTurn(
     messages: ModelMessage[],
     roleSetting: RoleSetting,
@@ -794,11 +861,14 @@ export class GenerationMachine {
     state: RunState,
     emitTokens: boolean,
   ): AsyncGenerator<GenerationEvent, { text: string; aborted: boolean }> {
-    const retries = label === 'generate' || label === 'repair' ? MODEL_TURN_RETRIES : 0;
+    const retries = label === 'plan' || label === 'generate' || label === 'repair' ? MODEL_TURN_RETRIES : 0;
     for (let resends = 0; ; resends++) {
       const turn = yield* this.streamModelTurn(messages, roleSetting, label, signal, trace, state, emitTokens);
       if (turn.ok) return { text: turn.text, aborted: turn.aborted };
-      if (resends >= retries || signal?.aborted || !isUpstreamModelFailure(turn.error)) throw turn.error;
+      if (resends >= retries || signal?.aborted || !isUpstreamModelFailure(turn.error)) {
+        if (resends > 0 && !signal?.aborted && isUpstreamModelFailure(turn.error)) markResendFailure(turn.error);
+        throw turn.error;
+      }
       state.log.info({ role: label, errorClass: errorClassOf(turn.error), restart: turn.yieldedTokens }, 'model turn retried');
       if (turn.yieldedTokens) yield { type: 'restart' };
     }
@@ -1165,6 +1235,26 @@ export class GenerationMachine {
     );
   }
 
+  /** The run stage's repairable arm (#58, design D1): the candidate never mounted by its own fault.
+   *  Its diagnostics stream like a build failure's, then the repair budget decides. */
+  private async *repairNeverMounted(
+    runOutcome: Extract<RunOutcome, { repairable: true }>,
+    signal: AbortSignal | undefined,
+    state: RunState,
+    budgets: RepairBudgetsSnapshot,
+    attemptField: { attempt?: number },
+    roundDiagnostics: Diagnostic[],
+  ): AsyncGenerator<GenerationEvent, CandidateOutcome> {
+    yield* this.emitDiagnosticsAndDone(runOutcome.diagnostics, 'run', attemptField, state, signal);
+    if (signal?.aborted) return { kind: 'aborted' };
+    roundDiagnostics.push(...runOutcome.diagnostics);
+    if (budgets.repairsUsed >= budgets.repairAttempts) {
+      return { kind: 'failed', reason: REPAIR_EXHAUSTED_REASON, code: 'repair_exhausted', phase: runOutcome.phase };
+    }
+    state.log.info({ phase: runOutcome.phase }, 'run never mounted');
+    return { kind: 'repair', diagnostics: errorsFirst(roundDiagnostics), warningsOnly: false };
+  }
+
   private async *buildAndRun(
     source: string,
     checkReport: CheckReport,
@@ -1197,15 +1287,22 @@ export class GenerationMachine {
 
     // Only an affirmative verdict proceeds. `!runOutcome.contained` would be true for BOTH `false`
     // and `null` and would report an unverified run as a containment failure; `=== false` alone
-    // would let `null` fall through to delivery. Both non-`true` verdicts still emit the `run`
-    // stage's `done` half — the bracket the wire opened above always closes — and neither streams a
-    // `diagnostic` event.
+    // would let `null` fall through to delivery. A candidate that never mounted by its own fault is
+    // repaired like a build failure: its diagnostics stream and the repair budget decides. It is
+    // never delivered, and a repaired candidate gets its own fresh run.
+    if (runOutcome.contained === null && runOutcome.repairable) {
+      return yield* this.repairNeverMounted(runOutcome, signal, state, budgets, attemptField, roundDiagnostics);
+    }
+
+    // The terminal non-`true` verdicts still emit the `run` stage's `done` half — the bracket the
+    // wire opened above always closes — and neither streams a `diagnostic` event.
     if (runOutcome.contained !== true) {
       logStage(state, 'run', 'done', attemptField.attempt);
       yield { type: 'stage', stage: 'run', status: 'done', ...attemptField };
       return unverifiedRunOutcome(runOutcome);
     }
 
+    if (runOutcome.rerunOf) state.log.info({ phase: runOutcome.rerunOf }, 'run re-run');
     yield* this.emitDiagnosticsAndDone(runOutcome.diagnostics, 'run', attemptField, state, signal);
     if (signal?.aborted) return { kind: 'aborted' };
 

@@ -12,6 +12,7 @@
 import type { OpenRouterClient } from '../openrouter';
 import type { Usage } from '@whim/contract';
 import type { ServerLogger } from '../logger';
+import { modelFailureOf } from '../model-failure';
 
 // ─── Wire-agnostic message/stream shapes ────────────────────────────────────
 
@@ -29,8 +30,9 @@ export type ReasoningSetting = 'off' | 'on' | 'low' | 'medium' | 'high' | 'defau
 
 /** Attributes a model call for the per-call `model call` log line (design D4) and for test
  *  assertions. Distinct from `ModelRole` (the roster's own keys): the content-policy classifier
- *  labels itself `policy` while still resolving its model from the roster's `rewrite` role. */
-export type ModelCallLabel = 'policy' | 'clarify' | 'rewrite' | 'summary' | 'plan' | 'generate' | 'repair';
+ *  labels itself `policy` while still resolving its model from the roster's `rewrite` role, and the
+ *  provider breaker's `probe` resolves from `engineer`. */
+export type ModelCallLabel = 'policy' | 'clarify' | 'rewrite' | 'summary' | 'plan' | 'generate' | 'repair' | 'probe';
 
 export interface ModelRequest {
   /** The resolved model id for this turn — the caller picks it via a `ModelRoster`; a
@@ -85,14 +87,11 @@ export function isCreditExhaustedError(err: unknown): boolean {
 
 /** True when a model call failed upstream, at the provider or on the way to it, rather than on the
  *  request itself (beta-1 D10): a 5xx, a 429, or a network or stream failure with no status. A
- *  401, a 402, any other 4xx and every non-provider error are not. Structural, like
- *  `isCreditExhaustedError`: an adapter signals it with `kind: 'rate_limit'`, or `kind: 'network'`
- *  and a `status` that is absent or at least 500, as `../openrouter.ts`'s errors do. */
+ *  401, a 402, any other 4xx and every non-provider error are not. The decision is
+ *  `../model-failure.ts`'s `modelFailureOf`, shared with the `model call` log line and the unary
+ *  routes; this form takes no signal, so an abort the caller caused is judged by the error alone. */
 export function isUpstreamModelFailure(err: unknown): boolean {
-  if (typeof err !== 'object' || err === null) return false;
-  const { kind, status } = err as { kind?: unknown; status?: unknown };
-  if (kind === 'rate_limit') return true;
-  return kind === 'network' && (status === undefined || (typeof status === 'number' && status >= 500));
+  return modelFailureOf(err).upstream;
 }
 
 // ─── Roster: per-role model ids and reasoning settings, read from the environment ──

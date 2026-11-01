@@ -224,6 +224,8 @@ export function createRunCandidate(session: SynthRunSession): RunCandidate {
         // harness never collapses `null` onto `false` (or `true`): "we could not hear the guard"
         // is not "the guard said no" (design D2).
         contained: obs.state.contained,
+        // Only an unobserved verdict has a phase; `finalizeContainmentVerdict` stamped it above.
+        ...(obs.state.contained === null && { unobservedPhase: obs.state.unobservedPhase ?? 'none' }),
         // The fact plus a saturating count — never the forged payload (design D5).
         forgeries: { rejected: obs.state.rejectedForgeries > 0, count: obs.state.rejectedForgeries },
         // Either the total budget fired (page hard-killed) OR the sweep itself hit a per-screen

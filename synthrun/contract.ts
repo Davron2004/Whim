@@ -175,6 +175,14 @@ export interface SweepCounts {
   failedActions: number;
 }
 
+/** The phase that kept a containment verdict from being observed, taken from the channel the first
+ *  cause arrived on and never from message text: `module-eval` (the candidate's own script threw
+ *  before any paint), `bundle`/`mount`/`deliver`/`probes` (the runtime loader's caught-error frame
+ *  with that `where`), `mount-timeout` (the mount budget fired with no paint), `none` (no cause
+ *  was recorded). */
+export const UNOBSERVED_PHASES = ['module-eval', 'bundle', 'mount', 'deliver', 'probes', 'mount-timeout', 'none'] as const;
+export type UnobservedPhase = (typeof UNOBSERVED_PHASES)[number];
+
 export interface RunReport {
   /** `true` IFF `diagnostics.length === 0` (the `checks/contract.ts` `CheckReport` precedent). */
   ok: boolean;
@@ -194,6 +202,10 @@ export interface RunReport {
    *  a consumer that ignores the distinction fails to compile rather than silently treating an
    *  unverified run as a breach — or as a pass. */
   contained: boolean | null;
+  /** Present exactly when `contained` is `null`: which phase kept the verdict away. Adds nothing to
+   *  the verdict, the diagnostics list or the `containment_unobserved` diagnostic, and carries no
+   *  message, source or symbol. */
+  unobservedPhase?: UnobservedPhase;
   /** Frames refused as forgeries: the fact plus a count bounded by `REJECTED_FORGERY_CAP`
    *  (design D5). BOTH refusal sites are folded into this one tally — the outer page rejecting a
    *  frame that fails its nonce check, and the HOST refusing a frame that arrived on its relay

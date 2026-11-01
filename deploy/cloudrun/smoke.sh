@@ -33,7 +33,7 @@ readonly SMOKE_PROMPT='smoke: a checklist with one item'
 readonly BUILD_NUMBER_EPOCH_S=1767225600
 readonly SMOKE_APP_VERSION=1.1.0
 readonly SMOKE_CONSENT=2
-readonly SMOKE_PROTOCOL=1
+readonly SMOKE_PROTOCOL=$WHIM_SMOKE_PROTOCOL_LEVEL
 # Reads `gcloud beta run domain-mappings describe --format=json` from the file argv[1]; passes when the
 # mapping routes to the service argv[2] and its Ready condition is True.
 readonly MAPPING_JS='const mapping = JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"));
