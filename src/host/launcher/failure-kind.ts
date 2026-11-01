@@ -49,6 +49,7 @@ export function failureKindOf(facts: FailureFacts): FailureKind {
   if (facts.interrupted) return facts.interrupted;
   if (facts.needsUpdate) return 'needs-update';
   if (facts.cause === 'connection') return 'connection';
+  if (facts.cause === 'provider_unavailable') return 'other';
   return facts.repairs >= REPAIR_ATTEMPT_LIMIT ? 'couldnt-run' : 'other';
 }
 

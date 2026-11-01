@@ -10,15 +10,17 @@
  * is driven through the same registry, to show its routes send nothing past the helper.
  */
 import {
+  ApiError,
+  COMPAT_NOTICE_MAX_CHARS,
   DeviceIdError,
   GenerationEvent,
   PROTOCOL_HEADER,
   PROTOCOL_LEVEL,
   ServiceRefusalCode,
-  type ApiError,
   type Compat,
 } from '@whim/contract';
 import { caught, check, eq, section } from './harness';
+import { REFUSAL_HINTS, providerUnavailableRefusal } from '../src/admission/refusals';
 import { WIRE_REGISTRY, errorForLevel, eventForLevel, type WireEntry, type WireEvent, type WireRegistry } from '../src/wire-level';
 import { createApp } from '../src/app';
 import { InMemoryUsageStore } from '../src/usage-store';
@@ -91,6 +93,49 @@ function testProductionRegistry(): void {
   );
   const aboveServer = Object.entries({ ...WIRE_REGISTRY.events, ...WIRE_REGISTRY.errors }).filter(([, entry]) => entry.level > PROTOCOL_LEVEL);
   eq('no registered message is above the contract’s own level', aboveServer.map(([name]) => name), []);
+}
+
+/** provider_unavailable (level 2) and failure.cause (a level-2 field of a level-1 event), on the
+ *  production registry: the form each declared level receives. */
+function testProviderUnavailable(): void {
+  section('Wire level — provider_unavailable and failure.cause at the production registry');
+  const { body } = providerUnavailableRefusal();
+  const notice = REFUSAL_HINTS.provider_unavailable;
+  check('the notice a level-1 client shows fits the compat notice cap', notice.length <= COMPAT_NOTICE_MAX_CHARS, String(notice.length));
+  const compat: Compat = { min: 2, fallback: 'fail', notice };
+  eq('a level-1 client gets exactly the envelope: error, hint, compat with the hint as the notice', errorForLevel(body, 1), { error: 'provider_unavailable', hint: notice, compat });
+  for (const level of [2, 3]) {
+    const received = errorForLevel(body, level);
+    eq(`a level-${level} client gets the refusal itself, with its compat`, received, { error: 'provider_unavailable', hint: notice, compat });
+    check(`  ... and it validates as ApiError and ServiceRefusalCode at level ${level}`, ApiError.safeParse(received).success && ServiceRefusalCode.safeParse(received.error).success);
+  }
+  check('the level-1 notice carries no provider, model or status', !/openrouter|deepseek|model|\d{3}/i.test(notice));
+
+  const withoutCause = { type: 'failure', reason: notice, attempts: 2, diagnostics: [] };
+  const failure = { ...withoutCause, cause: 'provider_unavailable' };
+  eq('a level-1 client gets the failure without cause, every other field intact', eventForLevel(failure, 1), withoutCause);
+  for (const level of [2, 3]) eq(`a level-${level} client keeps the cause`, eventForLevel(failure, level), failure);
+  for (const level of [1, 2, 3]) eq(`a failure without a cause is unchanged for a level-${level} client`, eventForLevel(withoutCause, level), withoutCause);
+  check('the gated event is still a contract failure', GenerationEvent.safeParse(eventForLevel(failure, 1)).success);
+
+  const gated: WireRegistry = {
+    events: { ...WIRE_REGISTRY.events, token: { level: 1, fields: { text: 3, extra: 2 } } },
+    errors: WIRE_REGISTRY.errors,
+  };
+  const wide = { type: 'token', text: 'x', extra: 1, other: 2 };
+  eq('forLevel drops each listed field above the level and no other', eventForLevel(wide, 2, gated), { type: 'token', extra: 1, other: 2 });
+
+  // A message above the client's level reaches it as its downgrade, which is gated by its own entry.
+  const downgraded: WireRegistry = {
+    events: {
+      ...WIRE_REGISTRY.events,
+      token: { level: 1, fields: { extra: 2 } },
+      long: { level: 3, compat: { min: 3, fallback: 'skip' }, downgrade: () => ({ type: 'token', text: 'x', extra: 1 }) },
+    },
+    errors: WIRE_REGISTRY.errors,
+  };
+  eq('a downgrade drops the fields its own entry introduced above the client’s level', eventForLevel({ type: 'long' }, 1, downgraded), { type: 'token', text: 'x' });
+  eq('  ... and keeps them for a client at their level', eventForLevel({ type: 'long' }, 2, downgraded), { type: 'token', text: 'x', extra: 1 });
 }
 
 async function testAdaptation(): Promise<void> {
@@ -183,6 +228,7 @@ async function testRoutesSendAtTheClientsLevel(): Promise<void> {
 
 export async function runWireLevelTests(): Promise<void> {
   testProductionRegistry();
+  testProviderUnavailable();
   await testAdaptation();
   await testRoutesSendAtTheClientsLevel();
 }

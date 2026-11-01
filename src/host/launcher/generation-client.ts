@@ -33,6 +33,7 @@ import type {
   ClarifyRequest,
   ClarifyResponse,
   Diagnostic,
+  FailureCause,
   GenerateRequest,
   GenerationEvent,
   PlanRow,
@@ -139,7 +140,7 @@ const EVENT_OPTIONAL: { readonly [K in GenerationEvent['type']]: OptionalFields<
   queued: { compat: true },
   restart: { compat: true },
   result: { summary: true, compat: true },
-  failure: { compat: true },
+  failure: { cause: true, compat: true },
 };
 
 /** A clarify body with `null` read as absent on its optional fields and on its questions'. */
@@ -183,6 +184,14 @@ function withoutMalformedOptional<T extends Record<string, unknown>>(
   if (message[field] === undefined || isReadable(message[field])) return message;
   log.warn(CHANNELS.gen, 'malformed optional field dropped', { route, field });
   return Object.fromEntries(Object.entries(message).filter(([key]) => key !== field)) as T;
+}
+
+/** The contract's `FailureCause` values, as a set: a cause added there fails the typecheck until it
+ *  is listed here. A `failure` carrying any other value is read as one with no cause. */
+const FAILURE_CAUSES: Readonly<Record<FailureCause, true>> = { provider_unavailable: true };
+
+function isFailureCause(value: unknown): value is FailureCause {
+  return typeof value === 'string' && Object.hasOwn(FAILURE_CAUSES, value);
 }
 
 /** The contract's `SummaryKind` values, as a set: a kind added there fails the typecheck until it
@@ -332,11 +341,13 @@ function isKnownEventType(type: string): type is GenerationEvent['type'] {
 }
 
 /** A frame of a known type as this build reads it (`null` on an optional field read as absent, a
- *  result's malformed `summary` dropped), or `undefined` when it fails its arm's guard. */
+ *  result's malformed `summary` and a failure's unknown `cause` dropped), or `undefined` when it fails its arm's guard. */
 function knownEventOf(type: GenerationEvent['type'], frame: Record<string, unknown>): GenerationEvent | undefined {
   const event = eventWithoutNullOptionals(type, frame);
   if (!EVENT_GUARDS[type](event)) return undefined;
-  return (type === 'result' ? withoutMalformedOptional(event, 'summary', isRunSummary, '/v1/generate') : event) as GenerationEvent;
+  if (type === 'result') return withoutMalformedOptional(event, 'summary', isRunSummary, '/v1/generate') as GenerationEvent;
+  if (type === 'failure') return withoutMalformedOptional(event, 'cause', isFailureCause, '/v1/generate') as GenerationEvent;
+  return event as GenerationEvent;
 }
 
 function isAbortError(err: unknown): boolean {

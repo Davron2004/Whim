@@ -15,7 +15,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { spawnSync, type SpawnSyncOptionsWithStringEncoding, type SpawnSyncReturns } from 'node:child_process';
-import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER } from '@whim/contract';
+import { APP_VERSION_HEADER, BUILD_HEADER, CONSENT_HEADER, PLATFORM_HEADER, PROTOCOL_HEADER, PROTOCOL_LEVEL } from '@whim/contract';
 import { check, eq, section } from './harness';
 import { captureLogs } from './log-capture';
 import { runWebSiteTests } from './web-site.suite';
@@ -1700,6 +1700,8 @@ async function cloudRunSmokeTests(): Promise<void> {
   const deviceRequests = noLive.curls.filter((line) => / -H x-whim-device: /.test(line)).map(loggedRequest);
   eq('  ... the only request carrying any device id being the pre-protocol probe', deviceRequests.map((request) => [request.path, request.headers['x-whim-build']]), [['/v1/generate', '382511']]);
   eq('  ... which the real server refuses 426 before admitting, crediting or storing anything', await replayAgainstRealServer(deviceRequests[0]!), [426, 0]);
+  const missingDevice = noLive.curls.map(loggedRequest).filter((request) => request.path === '/v1/generate' && request.headers['x-whim-device'] === undefined);
+  eq("  ... and the missing-device probe declaring the contract's protocol level, which the real server answers 400", [missingDevice.map((request) => request.headers[PROTOCOL_HEADER]), await replayAgainstRealServer(missingDevice[0]!)], [[String(PROTOCOL_LEVEL)], [400, 0]]);
 
   const vmFree = cloudRunSmoke([], {}, (sandbox) => {
     const defaultsFile = path.join(sandbox.repo, 'deploy', 'defaults.env');

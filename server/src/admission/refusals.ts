@@ -7,7 +7,8 @@
  * the server-owned user-facing text from design D8's table: no internal identifiers, limit names,
  * environment variable names, model names or policy category names. `Retry-After` is an integer
  * number of seconds and is present exactly where the retry time is knowable — a device daily limit
- * and the global daily ceiling, both of which reset at the next UTC midnight on the injected clock.
+ * and the global daily ceiling, both of which reset at the next UTC midnight on the injected clock,
+ * and a `provider_unavailable` refusal given the seconds left in the provider breaker's cooldown.
  */
 import type { ApiError, ServiceRefusalCode } from '@whim/contract';
 import type { SlotRefusalReason } from './slots';
@@ -15,8 +16,8 @@ import type { SlotRefusalReason } from './slots';
 export interface ServiceRefusal {
   readonly status: 403 | 413 | 422 | 426 | 429 | 503;
   readonly body: ApiError & { error: ServiceRefusalCode };
-  /** `{ 'Retry-After': '<integer seconds>' }` on `daily_limit` and the ceiling `server_busy`;
-   *  empty on every other refusal. Pass straight to the response as headers. */
+  /** `{ 'Retry-After': '<integer seconds>' }` on `daily_limit`, the ceiling `server_busy` and a
+   *  `provider_unavailable` given a window; empty on every other refusal. Pass straight to the response as headers. */
   readonly headers: Readonly<Record<string, string>>;
 }
 
@@ -33,6 +34,7 @@ export const REFUSAL_HINTS = Object.freeze({
   budget_exhausted: 'Whim has used up its budget for making apps for now. Try again later.',
   update_required: 'Update Whim to the latest version to keep using its AI features.',
   consent_required: 'Whim needs your permission to send requests to its AI service.',
+  provider_unavailable: 'The AI service Whim uses is having trouble right now. It’s not something you did. Please try again in a little while.',
 });
 
 const DAY_MS = 86_400_000;
@@ -97,6 +99,14 @@ export function policyUnavailableRefusal(): ServiceRefusal {
  *  mid-call `402`. No `Retry-After`: the refill time is unknowable. */
 export function budgetExhaustedRefusal(): ServiceRefusal {
   return refusal(503, 'budget_exhausted', REFUSAL_HINTS.budget_exhausted);
+}
+
+/** `503` — the AI provider the server depends on is failing. `Retry-After` (whole seconds,
+ *  rounded up by the caller) only when a window is known, as from an open breaker; a run that
+ *  failed mid-call has none. */
+export function providerUnavailableRefusal(retryAfterSeconds?: number): ServiceRefusal {
+  const headers = retryAfterSeconds === undefined ? NO_HEADERS : Object.freeze({ 'Retry-After': String(retryAfterSeconds) });
+  return refusal(503, 'provider_unavailable', REFUSAL_HINTS.provider_unavailable, headers);
 }
 
 /** `426` — the request's build is below its platform's minimum (the `/v1` minimum-build gate).
