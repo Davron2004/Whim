@@ -23,8 +23,12 @@ The harness SHALL derive the phase only from the channel a cause arrived on: `mo
 - **THEN** `unobservedPhase` is `probes`
 
 #### Scenario: A throw after paint does not make the phase module-eval
-- **WHEN** a candidate paints, throws in an effect, and the run then ends without a probes frame
+- **WHEN** a candidate throws after the loader's `paint` frame has been relayed (for example from a timer armed by an effect, or an event handler), and the run then ends without a probes frame
 - **THEN** `unobservedPhase` is `none`
+
+#### Scenario: A throw before the relayed paint may be attributed to module evaluation
+- **WHEN** a candidate throws from a first-render effect body, before the loader's `paint` frame is relayed, and no probes frame arrives
+- **THEN** `unobservedPhase` MAY be `module-eval`, which only routes the candidate to repair and never delivers it
 
 #### Scenario: A malformed verdict payload has phase none
 - **WHEN** a nonce-authenticated probes frame arrives whose containment field is not a boolean

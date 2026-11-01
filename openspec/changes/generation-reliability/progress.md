@@ -5,3 +5,9 @@
 - proposal: 37b76676 (Opus proposer), amended b6a3b2d6 (structured `failure.cause`, D11). openspec 1.4.1 --strict + 1.14.1: exit 0.
 - dispatched: chain-run-verdict BASE b6a3b2d6, .claude/worktrees/generation-reliability-run-verdict (chain/generation-reliability-run-verdict)
 - dispatched: chain-wire BASE b6a3b2d6, .claude/worktrees/generation-reliability-wire (chain/generation-reliability-wire)
+- report: chain-wire complete, tip 1abfe2b6 (class-A deviations: 3 extra test files). runner + Opus reviewer dispatched.
+- review chain-wire #1 (Opus): REJECT, 2 med (weakened 2**53 boundary literal; device fixtures not from errorForLevel) + 4 low (downgrade path skips field strip; tautological conjunct; re-enable after Retry-After untested; cause must outrank repair-count kind). handoff/wire-review-1.md
+- report: chain-run-verdict complete, tip 47c44fdd (class-A: RunOutcome null split by repairable; synthrun/report.ts touched). Opus reviewer dispatched.
+- review chain-run-verdict #1 (Opus): REJECT — safety core holds; 2 med (rerun missing on contained:false log; tautological e2e currency assertion) + 5 low. Fixer dispatched for 1-5,7; 6 accepted → parked loader issue. handoff/run-verdict-review-1.md
+- runner chain-wire #1: FAIL — gate red: deploy-config smoke envelope (smoke.sh/lib.sh hardcode protocol 1 vs bench-envelope level 2); integrity 0, ratchet 0, device redcheck RED, server redcheck coarse RED. handoff/wire-runner-1.md. Wire fixer dispatched (review #1 findings 1-6 + gate).
+- fix round 1 chain-run-verdict: tip 2a6bcf18 (findings 1-5,7 fixed; 3 used post-paint timer, effect-body race recorded out of scope). Runner #1 + Opus re-review dispatched.
