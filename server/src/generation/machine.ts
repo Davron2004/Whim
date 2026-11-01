@@ -1192,6 +1192,26 @@ export class GenerationMachine {
     );
   }
 
+  /** The run stage's repairable arm (#58, design D1): the candidate never mounted by its own fault.
+   *  Its diagnostics stream like a build failure's, then the repair budget decides. */
+  private async *repairNeverMounted(
+    runOutcome: Extract<RunOutcome, { repairable: true }>,
+    signal: AbortSignal | undefined,
+    state: RunState,
+    budgets: RepairBudgetsSnapshot,
+    attemptField: { attempt?: number },
+    roundDiagnostics: Diagnostic[],
+  ): AsyncGenerator<GenerationEvent, CandidateOutcome> {
+    yield* this.emitDiagnosticsAndDone(runOutcome.diagnostics, 'run', attemptField, state, signal);
+    if (signal?.aborted) return { kind: 'aborted' };
+    roundDiagnostics.push(...runOutcome.diagnostics);
+    if (budgets.repairsUsed >= budgets.repairAttempts) {
+      return { kind: 'failed', reason: REPAIR_EXHAUSTED_REASON, code: 'repair_exhausted', phase: runOutcome.phase };
+    }
+    state.log.info({ phase: runOutcome.phase }, 'run never mounted');
+    return { kind: 'repair', diagnostics: errorsFirst(roundDiagnostics), warningsOnly: false };
+  }
+
   private async *buildAndRun(
     source: string,
     checkReport: CheckReport,
@@ -1228,14 +1248,7 @@ export class GenerationMachine {
     // repaired like a build failure: its diagnostics stream and the repair budget decides. It is
     // never delivered, and a repaired candidate gets its own fresh run.
     if (runOutcome.contained === null && runOutcome.repairable) {
-      yield* this.emitDiagnosticsAndDone(runOutcome.diagnostics, 'run', attemptField, state, signal);
-      if (signal?.aborted) return { kind: 'aborted' };
-      roundDiagnostics.push(...runOutcome.diagnostics);
-      if (budgets.repairsUsed >= budgets.repairAttempts) {
-        return { kind: 'failed', reason: REPAIR_EXHAUSTED_REASON, code: 'repair_exhausted', phase: runOutcome.phase };
-      }
-      state.log.info({ phase: runOutcome.phase }, 'run never mounted');
-      return { kind: 'repair', diagnostics: errorsFirst(roundDiagnostics), warningsOnly: false };
+      return yield* this.repairNeverMounted(runOutcome, signal, state, budgets, attemptField, roundDiagnostics);
     }
 
     // The terminal non-`true` verdicts still emit the `run` stage's `done` half — the bracket the

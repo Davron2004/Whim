@@ -34,6 +34,8 @@ import { createRunCandidate } from '../../synthrun/report';
 import type { RunCandidate, RunReport } from '../../synthrun/contract';
 import type { GenerationEvent, WireAppRecord } from '@whim/contract';
 import { createStubPipeline } from '../src/pipeline';
+import { createGenerationPipeline } from '../src/generation';
+import { UNVERIFIED_RUN_REASON } from '../src/generation/machine';
 import { containedDetail } from './run-stage-fixtures';
 import { PROTOCOL_HEADER_LINE, PROTOCOL_HEADERS } from './route-doubles';
 import { runLoadtestServer, LOADTEST_HEALTHZ_SERVICE } from '../src/loadtest/server';
@@ -125,6 +127,61 @@ async function testHonestCandidateReachesResult(session: SynthRunSession): Promi
     'red-check: normalization does not launder an actual content difference',
     normalizeBuildIdentity(perturbed) !== normalizeBuildIdentity(productionArtifact),
   );
+}
+
+// ── A candidate that throws while its module loads is repaired, not given up on (#58) ──
+
+/** The honest fixture with one module-scope line added: the shape of #58's benchmark failures. */
+function withModuleScopeLine(honest: string, line: string): string {
+  const anchor = "const TIPS = ['10%', '15%', '20%', '25%'];";
+  if (!honest.includes(anchor)) throw new Error('the tip-splitter fixture no longer has the anchor line this test inserts after');
+  return honest.replace(anchor, `${anchor}\n${line}`);
+}
+
+const TIP_SPLITTER_PLAN = JSON.stringify({
+  screens: [{ name: 'Home', purpose: 'the only screen' }],
+  initial: 'Home',
+  state: [],
+  capabilities: [],
+  storageKeys: [],
+});
+
+async function testModuleScopeThrowIsRepaired(session: SynthRunSession): Promise<void> {
+  section('spec: a candidate that throws while its module loads goes to repair and the repaired candidate is delivered (#58)');
+
+  const honest = readFixture('tip-splitter.app.tsx');
+  const broken = withModuleScopeLine(honest, "const fmt = new Intl.NumberFormat('en-US', { style: 'currency' });\nvoid fmt;");
+  const model = new ScriptedModelClient(E2E_ROSTER, [
+    { role: 'plan', deltas: [TIP_SPLITTER_PLAN] },
+    { role: 'engineer', deltas: [broken] },
+    { role: 'repair', deltas: [honest] },
+  ]);
+  const pipeline = createGenerationPipeline({ session, modelDeps: { model, roster: E2E_ROSTER, apiKey: 'x' } });
+  const events: GenerationEvent[] = [];
+  for await (const event of pipeline.run({ prompt: 'a tip splitter' })) events.push(event);
+
+  const terminal = events.at(-1);
+  check(
+    'the run ends in a result, not the "couldn’t verify" failure',
+    terminal?.type === 'result',
+    terminal?.type === 'failure' ? `failure: ${terminal.reason} (attempts ${terminal.attempts})` : undefined,
+  );
+  check('the failure reason, were there one, is not the unverified sentence', !(terminal?.type === 'failure' && terminal.reason === UNVERIFIED_RUN_REASON));
+  eq(
+    'a repair stage ran, once',
+    events.filter((e) => e.type === 'stage' && e.stage === 'repair' && e.status === 'start').length,
+    1,
+  );
+  check(
+    'the run stage streamed the harness\'s runtime_throw as a diagnostic',
+    events.some((e) => e.type === 'diagnostic' && e.diagnostic.kind === 'runtime_throw'),
+  );
+  eq('the model was asked for plan, generate and exactly one repair', model.requests.map((r) => r.role), ['plan', 'engineer', 'repair']);
+  const repairPrompt = model.requests[2]?.request.messages.map((m) => m.content).join('\n') ?? '';
+  check('the repair request carries the runtime_throw diagnostic', repairPrompt.includes('runtime_throw'));
+  check('the repair request carries the engine\'s own message for the throw', /currency/i.test(repairPrompt));
+  check('the repair request names no containment_unobserved detail', !repairPrompt.includes('containment_unobserved'));
+  if (terminal?.type === 'result') check('the delivered app is the repaired candidate, not the broken one', !terminal.app.source.includes('Intl.NumberFormat'));
 }
 
 // ── The app the stub pipeline delivers runs (beta-1 fix-3) ──
@@ -766,6 +823,7 @@ async function main(): Promise<void> {
     await testHonestCandidateReachesResult(session);
     await testStubAppRuns(session);
     await testHostileCandidateStaysContained(session);
+    await testModuleScopeThrowIsRepaired(session);
     await testBootSelfTest(session);
   } finally {
     await session.close();
