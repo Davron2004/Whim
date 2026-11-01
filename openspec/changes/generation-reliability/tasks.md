@@ -1,0 +1,171 @@
+## 1. Run verdict: repair never-mounted candidates, re-run harness faults once (#58)
+
+- [ ] 1.1 Harness phase attribution (design D3; specs/synthetic-run "An unobserved verdict names the phase that kept it away", "The unobserved phase comes from the channel, never the message"):
+  - Add `unobservedPhase?: UnobservedPhase` to `RunReport` in `synthrun/contract.ts`, with the closed union exported.
+  - In `synthrun/observe.ts`, record the first cause's phase into `ObservationState`:
+    - `onException`: a top frame with `url === ''` before any paint gives `module-eval`.
+    - `recordMountError`: `where` ∈ `bundle|mount|deliver|probes` gives that phase.
+    - The mount-budget path gives `mount-timeout`.
+  - `finalizeContainmentVerdict` stamps the phase, or `none`, exactly when `contained === null`.
+  - No message text is read.
+  - Regression: `synthrun/test/resilience.ts` (beside the existing `containment_unobserved` / mount-hang cases) asserts:
+    - a module-scope `new Intl.NumberFormat('en-US',{style:'currency'})` candidate gives `module-eval`
+    - the mount-hang fixture gives `mount-timeout`
+    - a paint-then-effect-throw run with no probes frame gives `none`
+    - a contained run has no field
+  - Red before: the field doesn't exist, so every assertion fails.
+- [ ] 1.2 Run-stage split (design D1; specs/generation-pipeline "The run stage is the synthetic harness, and containment failure is terminal"):
+  - In `server/src/generation/stages/run.ts`, `contained === null` with phase `module-eval|bundle|mount-timeout` returns a new repairable `RunOutcome` arm. It carries the report's diagnostics minus every `containment_*` kind, plus `phase`.
+  - Any other phase re-runs the same source once through the bound `runCandidate`. The re-run is skipped when the signal is aborted.
+  - A re-run verdict `true`/`false` is mapped as a first run's would be.
+  - A re-run still `null` returns the terminal unobserved arm with `rerun: true` and `phase`.
+  - Extend `RunOutcome` in `machine.ts` (types only in this task).
+  - Regression: `server/test/run-stage.suite.ts` with `fakeReport`:
+    - `[runtime_throw, containment_unobserved]` + `module-eval` maps to repairable, with no `containment_*` in its diagnostics
+    - `[containment_unobserved]` + `none` calls `runCandidate` exactly twice, then terminal `rerun: true`
+    - a second-call `contained:true` maps to delivery
+    - discriminating red-check: a `[probes]`-phase report is NOT repairable
+  - Red before: every `null` maps to terminal after one call.
+- [ ] 1.3 Machine handling of the repairable arm (design D1):
+  - In `machine.ts`'s run branch, close the `run` stage with the arm's diagnostics streamed as `diagnostic` events (like the build-failure branch).
+  - Return `repair` while repair budget remains, else `failed`/`repair_exhausted`. Never deliver.
+  - Regression: `server/test/machine.suite.ts`, a scripted run stage returning repairable then contained:
+    - asserts a `repair` stage ran, the repair prompt contains the `runtime_throw` message and hint and no `containment_unobserved`, and one repair attempt was spent
+    - with the budget at 0, the terminal is the repair-exhausted reason
+  - Red before: the terminal is `UNVERIFIED_RUN_REASON` with `attempts:1`.
+  - Update the existing machine-suite cases that asserted mount-timeout gives `run_unverified`. Rewrite them, don't delete them (removal ratchet).
+- [ ] 1.4 Logging (design D2; specs/generation-pipeline "An unverified or failed containment verdict is logged without content"):
+  - `emitCompletion`'s `terminal failure` line gains `phase` (the ending run's unobserved phase, else `none`) and `rerun`.
+  - Sending a never-mounted candidate to repair logs info `run never mounted {phase}`.
+  - Update `UNVERIFIED_RUN_REASON`'s and `failureTerminalFor`'s doc comments, which say "never re-run".
+  - Regression: machine suite with `server/test/log-capture.ts`:
+    - a residual run_unverified line has `phase:'none'` (or `'probes'`), `rerun:true`, and no message field
+    - a repaired module-eval run logs `run never mounted` with `phase:'module-eval'`
+  - Red before: the fields are absent.
+- [ ] 1.5 End-to-end regression with real Chromium (specs/generation-pipeline scenario "A candidate that throws while its module loads is repaired"):
+  - In `server/test/e2e.ts`, follow the `fullMachine` pattern in `git show 58b8df82:server/test/rc58-repro.ts`: real check, build and run stages plus `ScriptedModelClient`.
+  - Turns:
+    - a plan
+    - an engineer turn: tip-splitter with a module-scope `new Intl.NumberFormat('en-US',{style:'currency'})`
+    - a repair turn: the honest tip-splitter
+  - Assert:
+    - a `repair` stage happened
+    - the repair request's diagnostics include `runtime_throw`
+    - the terminal is `result`
+  - Red before: `failure` "We couldn’t verify this app ran safely. Please try again." with `attempts:1`, shown in rc-58.md.
+  - Keep the held-run e2e cases working: give `heldRunTurns()` in `server/test/e2e-fixtures.ts` a repair turn (`MOUNT_HANG` again) so a run that hits the mount budget still holds.
+  - Run with `npm run server:e2e`.
+
+## 2. Wire: the provider_unavailable refusal at protocol level 2 (#66)
+
+- [ ] 2.1 Contract (design D7; specs/generation-contract "The refusal vocabulary gains provider_unavailable", "The provider_unavailable code is introduced at protocol level 2"):
+  - Add `provider_unavailable` to `ServiceRefusalCode` in `contract/src/index.ts`, with a doc line.
+  - Set `PROTOCOL_LEVEL = 2`.
+  - Regression: `server/test/contract.suite.ts` asserts `provider_unavailable` parses, `rate_limited` doesn't, and `PROTOCOL_LEVEL === 2`.
+  - Red before: the parse fails.
+- [ ] 2.2 Server registry and refusal builder:
+  - In `server/src/admission/refusals.ts`, add `REFUSAL_HINTS.provider_unavailable` = "The AI service Whim uses is having trouble right now. It’s not something you did. Please try again in a little while."
+  - Add `providerUnavailableRefusal(retryAfterSeconds?: number): ServiceRefusal` (`503`, `Retry-After` only when given) and update the module doc's "Retry-After … exactly where knowable" list.
+  - In `server/src/wire-level.ts`, set `ERROR_LEVELS.provider_unavailable = { level: 2, compat: { min: 2, fallback: 'fail', notice: REFUSAL_HINTS.provider_unavailable } }`.
+  - Regression: `server/test/wire-level.suite.ts`:
+    - `errorForLevel` at level 1 gives exactly `{error, hint, compat}` with the notice equal to the hint (≤200 chars)
+    - at level 2 the full body, validating as `ApiError` + `ServiceRefusalCode`
+    - at level 3 the same as level 2
+  - `server/test/request-edge.suite.ts`: `x-whim-protocol: 3` is admitted.
+  - Red before: "not a registered wire message".
+- [ ] 2.3 Device mirrors (specs/service-refusals "A refusal is recognised by the contract's closed refusal vocabulary"):
+  - `src/host/launcher/wire-headers.ts` `PROTOCOL_LEVEL = 2`
+  - `KNOWN_ERROR_CODES` in `src/host/launcher/wire-compat.ts` gains the code
+  - `REFUSAL_RULES.provider_unavailable = { landing: 'sender', tone: 'neutral' }` (no `text`)
+  - Move every device and server fixture that used level 2 as "the future" (`wire-future-frames.suite.ts` `levelTwo(...)`, `PROTOCOL_LEVEL + 1` cases, `server/test/wire-v2.suite.ts` if affected) to `PROTOCOL_LEVEL + 1`.
+  - Regression: `npm run launcher:test -- --only wire-future-frames` keeps device level == contract level and the mirror == contract codes.
+  - Red before: the typecheck fails on `REFUSAL_RULES`, and the mirror test fails.
+- [ ] 2.4 Device landing (specs/service-refusals "An availability or limit refusal lands on the step whose action sent the request"):
+  - Regression: `service-refusal` suite — `provider_unavailable` with a hint is a refusal, and `Retry-After: 45` parses.
+  - Regression: `refusal-landing` suite:
+    - a generate refused with `provider_unavailable` + `Retry-After: 45` lands on the Plan page with the hint in a neutral notice, rows preserved, `Make it` disabled until the window passes, and no Failure page
+    - a clarify refusal lands on Describe with the words preserved
+  - Red before 2.3: the unknown code is not a refusal, so the Failure page opens.
+- [ ] 2.5 Pin "no report prompt" (design D9; specs/prompt-flow "Failure is shown by kind, honestly, never as a crash"):
+  - Regression: `failure-screen` suite renders a terminal `failure` whose reason is the provider sentence. It asserts the sentence shows verbatim, a retry action exists, and no report control or `ReportScreen` entry is reachable from the page.
+  - This is a standing-invariant pin. It passes before the fix. The red-check is to temporarily add a report action to `FailurePage.tsx` and see the case fail, then revert.
+
+## 3. Upstream failures: classify, resend plan, name the outage (#57, #66)
+
+- [ ] 3.1 Shared classifier (design D5; specs/generation-server "A failed model call is classified and logged with its status and error kind", "An upstream failure is exactly a server, rate-limit, network or timeout failure"):
+  - New leaf module `server/src/model-failure.ts` with `modelFailureOf(err, signal?)` returning `{errorKind, status?, upstream}` and `ModelErrorKind`.
+  - The signal is checked first: `TimeoutError` is `timeout`, any other abort is `cancelled`.
+  - `isUpstreamModelFailure` in `generation/model.ts` delegates to it.
+  - Regression: `server/test/openrouter.suite.ts` covers a table of real `OpenRouter*Error` instances and signals: 503 frame, 502 HTTP, 429, fetch throw, 401, 402, 400, `AbortSignal.timeout`, plain abort.
+  - Red before: a timeout abort and a client abort are indistinguishable (both upstream).
+- [ ] 3.2 `model call` line fields: in `server/src/openrouter.ts`, `logSettle` adds `errorKind` and `status` on failed and aborted outcomes.
+  - Regression: `openrouter.suite.ts`:
+    - a mid-stream `{"error":{"code":503}}` frame logs `errorKind:'server', status:503`
+    - a caller abort logs `cancelled` with no status
+    - no message text
+  - Red before: the fields are absent.
+- [ ] 3.3 Plan resend (design D4; specs/generation-pipeline "A model turn that loses its provider is retried once"): in `machine.ts` `runModelTurn`, `plan` joins generate and repair for `MODEL_TURN_RETRIES`.
+  - Regression: `server/test/routes-generate.suite.ts` (beside the existing D10 retry case) — a plan turn failing with `OpenRouterNetworkError(…, 503)` once then succeeding gives a `result`, no `restart` event, and a `model turn retried {role:'plan'}` line.
+  - Red before: the run ends `internal_error`.
+- [ ] 3.4 Terminal `provider_unavailable` (design D6; specs/generation-pipeline "A run whose provider stays down ends with its own reason"):
+  - Add `provider_unavailable` to `TERMINAL_FAILURE_CODES` in `server/src/generation/failure-codes.ts`.
+  - `PROVIDER_UNAVAILABLE_REASON` in `machine.ts` imports `REFUSAL_HINTS.provider_unavailable`.
+  - In `endOnThrow`, a 402 stays first. Then an upstream engineer-turn error gives `provider_unavailable` (log `run failed` stays at error).
+  - Regression: `routes-generate.suite.ts`:
+    - generate failing upstream twice gives one `failure` with the sentence, no repair stage, and ledger `failure_reason = provider_unavailable`
+    - plan failing network then 429 ends the same way
+    - discriminating red-check: 503 then 401 gives `internal_error`, and 503 then 402 gives `credit_exhausted`
+  - Red before: `internal_error` with the generic sentence.
+- [ ] 3.5 Clarify and rewrite 503 (specs/generation-server "Clarify endpoint", "Rewrite endpoint over the real rewrite model"; specs/server-admission-control "Unary model calls have a bounded lifetime"):
+  - In `server/src/routes/clarify.ts` and `server/src/routes/rewrite.ts`, after the 402 branch (and the rewrite's existing retries), an error that `modelFailureOf(err, combinedSignal)` calls upstream answers `providerUnavailableRefusal()` (no `Retry-After`) and ledgers `provider_unavailable`. A non-upstream failure keeps `502 model_failure`.
+  - Regression: `server/test/routes-unary.suite.ts`:
+    - a clarify 503 stream error gives `503 provider_unavailable`
+    - a rewrite transport failure on every attempt gives `503 provider_unavailable`
+    - a rewrite 401 gives `502`
+    - the stalled-rewrite timeout case now expects `503 provider_unavailable` with the unary slot released (rewrite this assertion, don't drop it)
+  - Red before: `502` everywhere.
+
+## 4. Provider circuit breaker (#66)
+
+- [ ] 4.1 Config (specs/server-admission-control "Admission limits are environment-configurable with public-beta defaults"):
+  - Add `WHIM_PROVIDER_BREAKER_FAILURES` (default 4, non-negative integer, `0` disables), `WHIM_PROVIDER_BREAKER_WINDOW_MS` (180000) and `WHIM_PROVIDER_BREAKER_COOLDOWN_MS` (60000) to `server/src/config.ts`.
+  - Regression: `server/test/config.suite.ts` — defaults; `0` loads disabled; `-1` and `lots` throw naming the variable.
+  - Red before: the keys are absent.
+- [ ] 4.2 Breaker module (design D8; specs/server-admission-control "The provider breaker counts consecutive upstream failures", "The provider breaker opens for a cooldown and says so in the log"):
+  - New `server/src/admission/provider-breaker.ts` with `createProviderBreaker({failures, windowMs, cooldownMs, clock, log, probe})`, `record(outcome)` and `admit()`. It covers the window restart, success-closes, the `0` disable, and the `provider breaker open` / `provider breaker closed` logs.
+  - Regression: a new `server/test/provider-breaker.suite.ts`, registered in `server/test/acceptance.ts`, with a fake clock and no sleeps:
+    - 4 upstream failures open it, and `admit()` gives `retryAfterSeconds` 60, then 40 after 20 s
+    - 3 failures, a success, 3 failures stay closed
+    - 401/402/cancelled/400 don't count
+    - a 4th failure past the window doesn't open it
+    - `failures: 0` never opens
+    - the log lines carry the fields and no content
+  - Red before: the module doesn't exist.
+- [ ] 4.3 Lazy shared probe (specs/server-admission-control "A lazy probe decides when the provider breaker closes"):
+  - The first `admit()` after the cooldown runs `probe()` once. Concurrent callers await the same promise.
+  - A completed probe closes the breaker and admits. A failure re-opens it for a full cooldown, logs `provider probe failed {errorKind,status}` and refuses.
+  - The probe implementation: the inner, undecorated model client with `{model: roster.engineer.model, maxTokens: 1, reasoning: 'off', role: 'probe'}` under `AbortSignal.timeout(10_000)`. Add `'probe'` to `ModelCallLabel`. It writes no ledger row.
+  - Regression: `provider-breaker.suite.ts` uses a held probe promise:
+    - three concurrent `admit()` calls give one probe call
+    - resolving it admits all three
+    - rejecting with a 502 refuses all three with `retryAfterSeconds` 60 and logs `provider probe failed`
+    - a probe request has `maxTokens:1` and `reasoning:'off'`
+  - Red before: no probe.
+- [ ] 4.4 Feed at the model-client seam (design D8):
+  - Add `withProviderBreaker(inner, breaker)` (a `ModelClient` decorator recording `modelFailureOf(err, signal)` or success when each stream settles).
+  - Install it once in the composition root (`server/src/lifecycle.ts` / `server/src/generation/index.ts`) around the client every role uses. Verify the policy check, summary and unary routes take that same client, and wrap any that doesn't.
+  - Regression: `provider-breaker.suite.ts` — a `ScriptedModelClient` wrapped by the decorator, failing 4 turns with `OpenRouterNetworkError(…, 503)`, opens the breaker, and a completed turn closes it.
+  - Red before: model calls never reach the breaker.
+- [ ] 4.5 Admission wiring (specs/server-admission-control "Admission checks run in a fixed order before any model work", "An open provider breaker refuses admission", "Every refusal is a structured, user-facing ApiError", "The server refuses admission when the operator's provider credit is exhausted"):
+  - `admitGeneration` in `server/src/routes/generate.ts` and the clarify and rewrite admission paths call `breaker.admit()` immediately before `checkCredit`. A refusal gives `providerUnavailableRefusal(retryAfterSeconds)`.
+  - Thread the breaker through `server/src/app.ts` deps.
+  - Regression: `server/test/admission.suite.ts` with an open breaker:
+    - generate, clarify and rewrite each get `503 provider_unavailable` with `Retry-After`
+    - no daily unit and no slot are used
+    - the scripted client and the credit transport record no call
+  - Red before: the requests are admitted.
+- [ ] 4.6 Alert and operator docs (specs/server-observability "The owner is alerted by email"):
+  - Add `deploy/monitoring/policy-provider-breaker-open.json` with the same shape as `policy-credit-exhausted.json`: one `conditionMatchedLog` on `jsonPayload.msg="provider breaker open"` with the `cloud_run_revision` / `whim-server` / stdout filter, `notificationRateLimit` 3600s, `autoClose`, and `{{CHANNEL}}`/`{{SPEC}}`.
+  - Add its paragraph and the three env vars to `docs/deploy.md` "Operating: Alerts".
+  - Regression: `server/test/deploy-config.suite.ts` asserts the file exists, its filter matches the log line the breaker emits (import the message constant), and it has one condition and a 3600 s rate limit. The existing every-policy checks must cover it too.
+  - Red before: the file is missing.
