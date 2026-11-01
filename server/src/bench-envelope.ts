@@ -11,7 +11,7 @@ import { highestConsentVersion } from './consent-practices';
 
 /** The installed marketing version the drivers claim: `release/whim-release.xcconfig`'s
  *  `WHIM_MARKETING_VERSION`, which the server suite holds this equal to. */
-export const BENCH_APP_VERSION = '1.0.0';
+export const BENCH_APP_VERSION = '1.1.0';
 
 /** The four envelope headers for a driver request sent at `now`, and the protocol level this
  *  server's own contract describes (every `/v1` request needs one, beta-1 D16). */
