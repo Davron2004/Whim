@@ -29,3 +29,8 @@
 - runner chain-upstream #2: PASS (gate 0, integrity 0, ratchet 0, redcheck assertion RED, typecheck-tests 2). handoff/upstream-runner-2.md
 - merged: chain-upstream at a3bd8756fa89e0f78bed7d9ffd08840f29b1fd8b (tasks 3.1–3.6 ticked). Regate deferred: chain-breaker follows; gate-full on the final tip is the last regate.
 - dispatched: chain-breaker BASE 612c9de5, .claude/worktrees/generation-reliability-breaker (chain/generation-reliability-breaker)
+- report: chain-breaker complete, tip d1c7b99d (gaps: lifecycle guardModel wiring untested; new env vars not forwarded by deploy scripts). runner + Opus reviewer dispatched.
+- review chain-breaker #1 (Opus): REJECT — MED: lifecycle wiring untested (e2e case needed); MED: env vars not forwarded (kill switch unreachable) → land now; LOW 3-6 (stale probe acts on newer cycle; probe timeout not enforced/tested; sync-throw probe; deploy.md wording). handoff/breaker-review-1.md
+- runner chain-breaker #1: PASS (gate 0, e2e 0, integrity 0, ratchet 0, redcheck coarse RED + builder mutation reds, typecheck-tests 2). Fixer dispatched for review findings 1-6.
+- fix round 1 chain-breaker: tip 88670066 (e2e wiring case; env forwarding in 5 places + docs; stale-probe guard; enforced probe timeout; sync-throw probe; docs wording). Opus re-review + runner #2 dispatched.
+- re-review chain-breaker #2 (Opus): ACCEPT (1-6 resolved; 2 LOW: stale Gap lines in report, stale probe's deadline cancel runs late — harmless, accepted). handoff/breaker-review-2.md
