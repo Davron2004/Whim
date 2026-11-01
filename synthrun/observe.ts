@@ -12,7 +12,7 @@
  */
 import type { BrowserContext, CDPSession, Frame, Page } from 'playwright';
 import { REJECTED_FORGERY_CAP } from './contract';
-import type { RunBudgets, RunOptions } from './contract';
+import type { RunBudgets, RunOptions, UnobservedPhase } from './contract';
 import type { RunContext, SynthRunSession } from './session';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -87,6 +87,11 @@ export interface ObservationState {
    *  authenticated verdict was ever observed — either no authenticated probes frame arrived, or
    *  the one that did carried no boolean verdict. */
   contained: boolean | null;
+  /** The phase of the FIRST cause recorded that can keep a verdict away, by the channel it arrived
+   *  on (`recordPhase`) — never message text. `finalizeContainmentVerdict` stamps `none` when the
+   *  verdict is `null` and nothing was recorded; a report carries it only while `contained` is
+   *  `null`. */
+  unobservedPhase?: UnobservedPhase;
   /** How many frame-forgery rejections were observed — the outer page's `rejected-forgery`
    *  events plus the host's own provenance refusals folded into the same tally (see
    *  `hostProvenanceRefusals`), SATURATING at `REJECTED_FORGERY_CAP` — a fixed-size signal no
@@ -329,6 +334,7 @@ function pushContainmentUnobserved(state: ObservationState, message: string): Ob
  */
 export function finalizeContainmentVerdict(state: ObservationState): ObservedDiagnostic | null {
   if (state.contained !== null) return null;
+  state.unobservedPhase ??= 'none';
   return pushContainmentUnobserved(state, 'the run ended with no nonce-authenticated probes frame — containment was never verified');
 }
 
@@ -339,9 +345,18 @@ export function finalizeContainmentVerdict(state: ObservationState): ObservedDia
  *  so recording the frame too would double-count and hand the repair loop a message-free throw. */
 const REALM_LISTENER_WHERES: ReadonlySet<string> = new Set(['runtime', 'rejection', 'render']);
 
+/** The `where` values of `loader.js`'s own caught-error frames that name a phase of the run. */
+const LOADER_PHASES: ReadonlySet<string> = new Set<UnobservedPhase>(['bundle', 'mount', 'deliver', 'probes']);
+
+/** Keeps the first cause only: later ones are consequences of it, or of nothing the candidate did. */
+function recordPhase(state: ObservationState, phase: UnobservedPhase): void {
+  state.unobservedPhase ??= phase;
+}
+
 function recordMountError(state: ObservationState, payload: RelayPayload): void {
   const where = payload && typeof payload.where === 'string' ? payload.where : 'unknown';
   if (REALM_LISTENER_WHERES.has(where)) return;
+  if (LOADER_PHASES.has(where)) recordPhase(state, where as UnobservedPhase);
   const message = payload && typeof payload.message === 'string' ? payload.message : 'runtime error (no message)';
   state.diagnostics.push({
     kind: 'runtime_throw',
@@ -490,7 +505,11 @@ export async function attachObserversEarly(page: Page, context: BrowserContext):
     // "anonymous" script, distinct from the runtime parts' parser-inserted `about:srcdoc`
     // scripts) — resolving anything else would misattribute a host/runtime-internal frame to
     // the candidate's source.
-    if (topFrame?.url === '') anchorOriginalLine(diagnostic, topFrame.lineNumber + 1);
+    if (topFrame?.url === '') {
+      anchorOriginalLine(diagnostic, topFrame.lineNumber + 1);
+      // Thrown by the candidate's own script before anything painted: it never reached mount.
+      if (state.paintAtMs === null) recordPhase(state, 'module-eval');
+    }
   };
   cdp.on('Runtime.exceptionThrown', onException);
 
@@ -655,6 +674,7 @@ export async function awaitMount(obs: AttachedObservers, budgets: RunBudgets, si
     hint: genericHint('mount_timeout'),
   };
   obs.state.diagnostics.push(diagnostic);
+  recordPhase(obs.state, 'mount-timeout');
   return diagnostic;
 }
 

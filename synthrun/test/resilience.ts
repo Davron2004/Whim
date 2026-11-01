@@ -44,6 +44,36 @@ function Slow() { return <Screen><Stack><Heading size="title">Slow</Heading></St
 export default defineApp({ name: 'Slow', initial: 'Slow', screens: { Slow }, capabilities: [] });
 `;
 
+/** Throws while its module is evaluated, so the loader's `__whimAfterBundle()` never runs. */
+const MODULE_EVAL_THROW = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
+const price = new Intl.NumberFormat('en-US', { style: 'currency' });
+function Home() { return <Screen><Stack><Heading size="title">{price.format(1)}</Heading></Stack></Screen>; }
+export default defineApp({ name: 'Eval', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
+/** Paints, then throws when the sweep presses its button, which only happens after the paint frame. */
+const THROW_AFTER_PAINT = `import { defineApp, Screen, Stack, Heading, Button } from 'vc-sdk';
+function Home() {
+  return <Screen><Stack><Heading size="title">Late</Heading><Button label="Boom" onPress={() => { throw new Error('late-throw'); }} /></Stack></Screen>;
+}
+export default defineApp({ name: 'Late', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
+/** Drops the outer page's `probes` frame before it reaches the host relay, standing in for a
+ *  harness that never heard a verdict. Registered after the observers' own transport shim, so it
+ *  wraps the `ReactNativeWebView` that shim defined. */
+async function dropProbesFrames(page: Page): Promise<void> {
+  await page.addInitScript(() => {
+    const g = globalThis as unknown as { top?: unknown; ReactNativeWebView?: { postMessage(s: string): void } };
+    const transport = g.ReactNativeWebView;
+    if (g.top !== g || !transport) return;
+    const post = transport.postMessage.bind(transport);
+    transport.postMessage = (raw: string) => {
+      if (!raw.includes('"kind":"probes"')) post(raw);
+    };
+  });
+}
+
 type Settled<T> = { ok: true; value: T } | { ok: false; error: Error };
 
 /** Never rejects, so a promise can be held while the test awaits something else. */
@@ -162,6 +192,7 @@ async function startHangingRun(runCandidate: ReturnType<typeof createRunCandidat
 }
 
 export async function testResilience(): Promise<void> {
+  await testUnobservedPhase();
   await testSemaphore();
   await testAbortWhileQueued();
   await testAbortDuringMount();
@@ -442,6 +473,40 @@ async function testFailedRelaunch(): Promise<void> {
       assertProductionOptions(launches.calls, 'relaunches');
     } finally {
       await launches.restore();
+      await session.close();
+    }
+  });
+}
+
+async function testUnobservedPhase(): Promise<void> {
+  await test('unobserved phase: each cause is named by the channel it arrived on, and an observed verdict carries none (spec "An unobserved verdict names the phase that kept it away")', async () => {
+    const session = await SynthRunSession.launch({ concurrency: 1 });
+    try {
+      const runCandidate = createRunCandidate(session);
+      const budgets = { mountBudgetMs: 600, actionQuietMs: 40, actionHardCapMs: 250 };
+
+      const evalReport = await within(runCandidate(MODULE_EVAL_THROW, { budgets }), 30000, 'the module-scope throw run');
+      ok(evalReport.contained === null, `precondition: a module-scope throw leaves the verdict unobserved (got ${JSON.stringify(evalReport.contained)})`);
+      ok(evalReport.diagnostics.some((d) => d.kind === 'runtime_throw'), 'precondition: the throw itself is a runtime_throw');
+      ok(evalReport.unobservedPhase === 'module-eval', `a module-scope Intl.NumberFormat throw is attributed to module-eval (got ${evalReport.unobservedPhase})`);
+
+      const hangReport = await within(runCandidate(MOUNT_HANG, { budgets }), 30000, 'the mount-hang run');
+      ok(hangReport.contained === null, `precondition: a hang before paint leaves the verdict unobserved (got ${JSON.stringify(hangReport.contained)})`);
+      ok(hangReport.unobservedPhase === 'mount-timeout', `the mount hang is attributed to mount-timeout (got ${hangReport.unobservedPhase})`);
+
+      const lateReport = await within(
+        runCandidate(THROW_AFTER_PAINT, { budgets: { ...budgets, mountBudgetMs: 5000 }, beforeNavigate: dropProbesFrames }),
+        30000,
+        'the throw-after-paint run with no probes frame',
+      );
+      ok(lateReport.contained === null, `precondition: with the probes frame dropped the verdict is unobserved (got ${JSON.stringify(lateReport.contained)})`);
+      ok(lateReport.diagnostics.some((d) => d.kind === 'runtime_throw' && d.message.includes('late-throw')), 'precondition: the throw happened and was recorded after the paint');
+      ok(lateReport.unobservedPhase === 'none', `a throw after paint is not module-eval; with no loader cause the phase is none (got ${lateReport.unobservedPhase})`);
+
+      const containedReport = await within(runCandidate(HARMLESS, { budgets: { ...budgets, mountBudgetMs: 5000 } }), 30000, 'the contained run');
+      ok(containedReport.contained === true, `precondition: the harmless run is contained (got ${JSON.stringify(containedReport.contained)})`);
+      ok(!('unobservedPhase' in containedReport), 'a contained run has no unobservedPhase field');
+    } finally {
       await session.close();
     }
   });
