@@ -332,6 +332,18 @@ curl -sI https://whim.<domain>/.well-known/assetlinks.json
   or a single-label host that isn't numeric; anything else needs `https://`. Every Android build
   type uses the one network config, which permits cleartext at its base for this, and iOS ATS
   exempts numeric hosts and local networking.
+- **gcloud crashes during the source-map upload with `module 'ssl' has no attribute
+  'PROTOCOL_TLSv1'`.** gcloud picked up a Python it doesn't support (3.15 on this Mac, 2026-10-31).
+  Rerun the lane with `CLOUDSDK_PYTHON=/opt/homebrew/bin/python3.14` (any supported Python), or
+  upload the map alone with `node scripts/release/run.mjs upload-source-map ...` as above.
+- **`bundle exec pod install` fails on missing native extensions (nkf, json, ffi, bigdecimal).** The
+  gems in `vendor/bundle` were built for another Ruby. Run `bundle install` in that checkout, then
+  restore `Gemfile.lock` if it only gained a checksum line.
+- **The upload keystore or an API key is gone.** Back up `~/.config/whim/` to the password manager
+  whenever a file there changes; the 2026-10-10 wipe took every one of them. A lost upload key is
+  replaced through Play Console → App integrity → App signing → Upload key → Request reset (with the
+  new key's PEM from `keytool -export -rfc`); Play accepts uploads with it about two days later. A
+  lost `.p8` or Play JSON key is simply replaced with a new one.
 - **fastlane reports a version below `2.237.0`.** `brew upgrade fastlane`; the Fastfile's
   `min_fastlane_version` refuses to load otherwise.
 - **A lane crashes instead of naming a clean preflight finding.** Every lane calls the preflight
