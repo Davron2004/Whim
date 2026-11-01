@@ -24,11 +24,14 @@ const SLOW_PLAN = JSON.stringify({
   storageKeys: [],
 });
 
-/** The three model turns one held generation consumes: policy verdict, plan, candidate. */
+/** The four model turns one held generation consumes: policy verdict, plan, candidate, and the
+ *  repair turn a run that outlives the mount budget asks for (a hang before first paint is the
+ *  candidate's fault, so it goes to repair, and the repaired candidate hangs the same way). */
 export function heldRunTurns(): ScriptedTurn[] {
   return [
     { role: 'rewrite', deltas: ['{"verdict":"allow"}'] },
     { role: 'plan', deltas: [SLOW_PLAN] },
     { role: 'engineer', deltas: [MOUNT_HANG] },
+    { role: 'repair', deltas: [MOUNT_HANG] },
   ];
 }
