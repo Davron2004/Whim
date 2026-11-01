@@ -19,3 +19,5 @@
 - runner chain-wire #2: PASS (gate 0, ratchet 0, redchecks device/deploy RED, 2.5 pin RED by scratch mutation, typecheck-tests diagnostics count equal to BASE). integrity exit 4 = design.md (change folder planning artifact, D11 precedence edit) — adjudicated: accepted, same change. handoff/wire-runner-2.md
 - merged: chain-wire (tasks 2.1–2.6 ticked). Post-merge regate (covers run-verdict + wire) next.
 - dispatched: chain-upstream BASE 6f30bc5729f59fc3693f81a31c9374c64565e64e, .claude/worktrees/generation-reliability-upstream (chain/generation-reliability-upstream); regate runner on staging tip in parallel
+- filed parked issues: #273 (loader probes on load failure; incl. run-verdict review finding 6), #274 (awaitMount race), #275 (engineer first-token deadline), #276 (flowbench provider_unavailable). Fallback model stays in #66's out-of-scope note (not filed).
+- regate after run-verdict + wire merges (tip fe4f34b4): gate.sh PASS (exit 0), server:e2e 68/0 PASS.
