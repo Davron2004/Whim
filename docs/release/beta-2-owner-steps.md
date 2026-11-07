@@ -12,7 +12,8 @@ certificate, is in an AES-256 encrypted disk image in iCloud Drive,
 `Whim-release-keys-2026-11-07.dmg` (password known to the owner only; restore steps in its
 `README.txt`). It was verified by mounting it and diffing it against the originals. The lost GCP key
 `61a1fb4b…` was deleted the same day. Only the current key `38f3d409…` remains, and it was tested
-after the delete.
+after the delete. The lost ASC key `whim-release-admin` (34LSB2S98U) was revoked the same day. Only
+4V4UN8R5H9 remains active, and it was tested after the revoke.
 
 The 2026-10-10 wipe deleted every release credential under `~/.config/whim/`, including the Android
 upload keystore, with no backup. They were recreated on 2026-10-31. Put these in the password manager
