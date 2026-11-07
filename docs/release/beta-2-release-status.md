@@ -1,6 +1,7 @@
 # Beta-2 release status
 
-Updated 2026-10-31 (evening, EDT) by the beta-2 release orchestrator. Owner checklist:
+Updated 2026-11-07: both stores serve 437758 to testers (first written 2026-10-31 by the beta-2
+release orchestrator). Owner checklist:
 `docs/release/beta-2-owner-steps.md`.
 
 ## Builds
@@ -14,18 +15,23 @@ Play signing fingerprint; none of them changes the app binary. Local tag `releas
 | | iOS | Android |
 |---|---|---|
 | Artifact | TestFlight build f3b51274-c973-45ae-a0b2-67dba3743e6a, VALID | `~/.cache/whim-upgrade/beta-2/app-release-437758.aab` (3 ABIs, verified, signed with the new upload key 92:D0:6D:…:76:82) |
-| Where | Groups `Team` (internal, testing) and `Public beta` (external) | Not uploaded: Play refuses uploads until the new upload key is valid, **2026-11-02 23:59 UTC** |
-| Review | Beta App Review submitted 2026-10-31 20:44 EDT, `WAITING_FOR_REVIEW` | — |
-| Public entry | https://testflight.apple.com/join/tM69UkDf (serves 382511 until 437758 is approved) | Opt-in https://play.google.com/apps/testing/com.anycognition.whim, track "Closed testing - Alpha" (382511 live, 397438 draft) |
+| Where | Groups `Team` (internal) and `Public beta` (external), both serving 437758 (checked 2026-11-07 via the ASC API) | Track "Closed testing - Alpha": 437758 only, status completed, release name 1.1.0 (uploaded 2026-11-07) |
+| Review | Beta App Review `APPROVED`, external state `BETA_APPROVED` | Sent with the upload (Play's own review of the track change) |
+| Public entry | https://testflight.apple.com/join/tM69UkDf | Opt-in https://play.google.com/apps/testing/com.anycognition.whim |
 
-**Next agent step (from 2026-11-03 00:00 UTC):** upload the existing AAB to the alpha track and roll
-it out (`fastlane android closed build:437758 status:completed` rebuilds from source; to ship the exact
-AAB already built, use `fastlane supply --aab ~/.cache/whim-upgrade/beta-2/app-release-437758.aab
---track alpha --release_status completed --json_key ~/.config/whim/play-publisher.json
---package_name com.anycognition.whim --skip_upload_metadata --skip_upload_images
---skip_upload_screenshots`), discard the 397438 draft in the same edit, add release notes, then tag
-nothing new (the tag already exists). Gcloud needs `CLOUDSDK_CORE_ACCOUNT=j.ruzimetova@gmail.com
-CLOUDSDK_PYTHON=/opt/homebrew/bin/python3.14`.
+**Play upload (2026-11-07):** the exact AAB above, via `fastlane supply --aab … --track alpha
+--release_status completed --metadata_path <dir> --skip_upload_metadata --skip_upload_images
+--skip_upload_screenshots` (json key and package as in `docs/release/mobile.md`). One en-US changelog
+(`<dir>/en-US/changelogs/437758.txt`, not committed):
+
+> A new look: Whim's screens, sheets and motion have been redesigned.
+> Making a copy of an app now asks whether to copy its data or start fresh.
+> Fixes for copies that shared data with the original app.
+> Better support for large text sizes and screen readers.
+
+The 397438 draft and the 382511 release left the track in the same edit (version codes afterwards:
+`[437758]`). No new tag: `release/1.1.0+437758` exists locally (release tags are not pushed).
+Gcloud needs `CLOUDSDK_CORE_ACCOUNT=j.ruzimetova@gmail.com CLOUDSDK_PYTHON=/opt/homebrew/bin/python3.14`.
 
 ## Credentials recreated 2026-10-31 (all lost in the 2026-10-10 wipe)
 
