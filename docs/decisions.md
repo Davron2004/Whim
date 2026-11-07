@@ -1724,6 +1724,13 @@ rejected option was the right one.
 - **A failed switch does not cost an older Undo.** An Undo whose newer switch is still running waits
   for it; it is dropped only if that switch lands.
 
+**Owner direction (2026-11-07, not built).** A change sent from an app running an older version should not
+silently edit the active version. Before the request goes out, an intermediate screen says the person is on
+an older version and offers both paths: switch to the newest version and ask for the change there, or make a
+copy (fork) from the version on screen and apply the change to that copy. Both are legitimate outcomes, so the
+person chooses. Until this is built, the rule above stands (a change is made from the active version).
+Building it needs fork-from-shown-version delivery: the copy and its first change have to land together.
+
 
 ### 83. The legacy `tileColor` read path is removed; a tint-less record shows its fallback tint `[DECIDED — PO ruling 24 under the owner's delegation, 2026-10-30; openspec: design-system-v1 tileColor-removal piece; supersedes #75's nearest-tint mapping of installed hex colours]`
 
