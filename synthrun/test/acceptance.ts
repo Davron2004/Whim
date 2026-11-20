@@ -253,6 +253,43 @@ function Home() {
 export default defineApp({ name: 'Home', initial: 'Home', screens: { Home }, capabilities: [] });
 `;
 
+// Goes after the nonce itself instead of forging without one (docs/security/2026-11-19-verdict-
+// channel.md): it asks for the handshake a second time, so a host that answers every hello sends
+// the init frame — nonce included — into a realm where this listener is waiting, and it swaps
+// `window.parent` for a recorder that reads the nonce off the loader's own frames and drops the
+// genuine verdict. Any nonce it gets signs a forged BREACH verdict, so adopting it would be
+// observable on a harmless app.
+const STOLEN_NONCE_MARKER = '__WHIM_STOLEN_NONCE_MARKER_51c9__';
+const FIXTURE_STOLEN_NONCE = `import { defineApp, Screen, Stack, Heading } from 'vc-sdk';
+const w = globalThis;
+const P = w.parent;
+let forged = false;
+function forge(nonce) {
+  if (forged || typeof nonce !== 'string' || !nonce) return;
+  forged = true;
+  P.postMessage(JSON.stringify({ __whimHarness: true, nonce: nonce, kind: 'probes', payload: { contained: false, passed: 0, total: 999, marker: '${STOLEN_NONCE_MARKER}' } }), '*');
+}
+w.addEventListener('message', (ev) => {
+  let m = null;
+  try { m = JSON.parse(ev.data); } catch (e) { return; }
+  if (m && m.__whimHostInit === true) forge(m.nonce);
+});
+P.postMessage(JSON.stringify({ __whimHarness: true, kind: 'hello' }), '*');
+try {
+  w.parent = { postMessage(s, o) {
+    let m = null;
+    try { m = JSON.parse(s); } catch (e) { m = null; }
+    if (m) forge(m.nonce);
+    if (m && m.kind === 'probes') return;
+    P.postMessage(s, o);
+  } };
+} catch (e) { /* best-effort */ }
+function Home() {
+  return <Screen><Stack><Heading size="title">Stolen</Heading></Stack></Screen>;
+}
+export default defineApp({ name: 'Stolen', initial: 'Home', screens: { Home }, capabilities: [] });
+`;
+
 // ── chain 3 (task 3.3): capability wiring — real gate, ephemeral engine, recording effectors ──
 
 // Declares NO capabilities, then calls a storage verb and FULLY SWALLOWS the rejection — no
@@ -623,6 +660,17 @@ async function testObservers(): Promise<void> {
         obs.detach();
         await dispose();
       }
+    });
+
+    await test('stolen nonce: a candidate that asks for the handshake again and rebinds window.parent gets no nonce, so its forged verdict is rejected and the genuine one stands', async () => {
+      const runCandidate = createRunCandidate(session);
+      const report = await runCandidate(FIXTURE_STOLEN_NONCE, { budgets: { mountBudgetMs: 5000, actionQuietMs: 40, actionHardCapMs: 250 } });
+
+      ok(report.contained === true, `the genuine verdict stands, the forged breach was not adopted (got ${JSON.stringify(report.contained)})`);
+      ok(!report.diagnostics.some((d) => d.kind === 'containment_failure'), `no containment_failure was recorded (got ${JSON.stringify(report.diagnostics)})`);
+      ok(!report.diagnostics.some((d) => d.kind === 'containment_unobserved' || d.kind === 'mount_timeout'), 'rebinding window.parent kept neither the paint nor the verdict from the host');
+      ok(report.forgeries.rejected === true, 'the second hello reached the host and was rejected as a forgery');
+      ok(!JSON.stringify(report).includes(STOLEN_NONCE_MARKER), 'no byte of the forged payload appears anywhere in the report');
     });
 
     // ── 4.2a: the confinement chain-2 actually achieved, pinned so a refactor cannot drop it ──
