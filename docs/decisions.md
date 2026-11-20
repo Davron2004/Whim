@@ -1801,3 +1801,35 @@ founder.
   it is never skipped for a sharer with data in its group.
 
 Pinned by `src/host/launcher/test/shared-group.suite.ts` (the `index authority:`, `index:` and `group route:` cases).
+
+### 86. The verdict nonce goes out once per iframe, and only through what the loader captured before app code ran `[BUILT — security fix, 2026-11-19; docs/security/2026-11-19-verdict-channel.md; tightens #37's constraint #4]`
+
+**Context:** an audit showed a mini-app could sign its own containment verdict: the outer page answered
+every `hello` with the nonce, into the realm where app code listens, and the loader read the live
+`window.parent` (a [Replaceable] attribute) on every post. Ten more routes to the same result
+followed from the same root: after delivery every global and built-in prototype in the realm is the
+bundle's, so anything the nonce or the frame envelope passes through, read live, is a leak, a relabel,
+a reroute or a silence. The synthetic run trusts the outer page's `trusted` tag, so its containment
+check could be fooled. No containment leg was affected.
+
+- **One handshake per iframe.** The outer page answers a `hello` only from the current iframe and
+  only the first time since that iframe was created; the loader's `hello` is always first. Every later
+  `hello` is a `rejected-forgery`. Authenticated frames must come from the current iframe, after the
+  handshake. No CSPRNG means no nonce and no verdict, never a guessable nonce.
+- **The loader's trusted path is captured at load.** Parent window and its `postMessage`,
+  `Reflect.apply`, JSON, `Promise.prototype.then`, `requestAnimationFrame`, the `MessageEvent`
+  getters, React/ReactDOM and the mount root. Frames are built by concatenation around a head made
+  once from the init frame; payloads are copied as plain own data first; host frames are read by own
+  property. The generation count is closure state (`window.__whimGeneration` is a read-only view),
+  `window.__whimAfterBundle` is non-writable, and nothing is delivered before the handshake.
+- **Channel (a) defers its baked bundle** to after the init frame (the parser-inserted script only
+  defines it), so no app code is listening when the nonce arrives.
+- **Not claimed:** the probes still measure the realm after the app ran, with its live built-ins, so
+  app code can bend what they observe without the nonce. The verdict detects regressions in the
+  platform legs; it does not prove a hostile app stayed contained. A pre-delivery probe run is the
+  candidate fix (open, owner decision). Also open: whether Android injects the native bridge into a
+  frame the mini-app navigates to (security doc, last section).
+
+Pinned by `invariants/sandbox-isolation/verdict-channel.mjs` (`npm run invariants` §3c: twelve
+attacks and two negative controls that patch the fix out) and `synthrun/test/acceptance.ts`
+(`stolen nonce`).
