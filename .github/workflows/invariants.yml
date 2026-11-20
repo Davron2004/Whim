@@ -20,7 +20,8 @@ on:
 
 jobs:
   quality-gate:
-    runs-on: ubuntu-latest
+    # Pinned: ubuntu-latest moved to 26.04 (Nov 2026), which Playwright 1.60 can't install Chromium on.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -48,7 +49,8 @@ jobs:
             src/ 2>/dev/null
 
   isolation-suite:
-    runs-on: ubuntu-latest
+    # Pinned with the Playwright version below; move both together.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
