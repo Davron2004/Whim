@@ -13,6 +13,7 @@ import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
 import { buildSrcdoc, buildOuterHtml } from '../../build/assemble.mjs';
+import { verdictChannelChecks } from './verdict-channel.mjs';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..', '..');
@@ -176,6 +177,14 @@ const browser = await chromium.launch();
   record(ok, 'A1 (self-posted __whimDeliver/__whimHostInit ignored; ev.source guard)',
     `selfPost: genBefore=${genBefore} genAfter=${after.gen} (must be equal) selfpostScriptRan=${after.ran} (must be false) · legit reinject genAfter=${genAfterLegit} (must be > ${genBefore}, proves the guard is not a dead drop-all)${aerr.length ? ' ERRORS=' + aerr.join('|') : ''}`);
 }
+
+// 3c. Verdict channel (constraint #4, docs/security/2026-11-19-verdict-channel.md) — a hostile
+//     bundle cannot obtain the nonce (re-asking for the handshake, from its own realm or a document
+//     it navigates to, or reading it off the loader's frames through rebound globals and planted
+//     prototype hooks), cannot relabel or reroute the loader's frames, cannot start a delivery,
+//     and cannot keep the genuine paint and verdict from posting by rebinding what the loader
+//     calls. Two negative controls patch the fix back out and must be flagged.
+await verdictChannelChecks({ browser, parts, bundles, buildSrcdoc, buildOuterHtml, writePage, record });
 
 // 4. realm-reset seam (constraint #5) — re-create the iframe between generations → gen-2 sees
 //    a CLEAN realm (no gen-1 poison). Drive a RESET re-injection of the victim after poison.

@@ -64,6 +64,13 @@ What it asserts against the retained build:
   verdict (closure-captured probes, constraint #3) still shows CONTAINED.
 - **A1**: a self-posted `__whimDeliver`/`__whimHostInit` is ignored (`ev.source` guard), while a
   real host re-injection still advances the generation.
+- **verdict channel** (`verdict-channel.mjs`, decision #86): twelve hostile bundles try to get the
+  nonce (a second `hello`, from the realm or from a document the frame navigates to; channel (a)'s
+  baked bundle; reading it off the loader's frames through a swapped `window.parent`, a rebound
+  `JSON.stringify` or an inherited `toJSON`), to feed the loader's verdict callback, to start a
+  delivery from a host frame, or to keep the paint and verdict from posting. None may produce a frame
+  the host trusts, and the genuine paint and verdict must still arrive. Two negative controls patch
+  the fix back out and must be flagged.
 - **reset re-injection** (constraint #5 seam): re-creating the iframe gives gen-2 a clean realm
   (`anyPoison=false`, read from the trusted probes line).
 - **INV-TIMER**: a gen-1 SDK `interval` never ticks after a realm reset, with a no-reset control.
