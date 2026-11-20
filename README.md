@@ -1,15 +1,8 @@
 # Whim
 
-**Describe a tiny app. It shows up on your phone, running. You never see code.**
+Whim is a React Native app (iOS and Android) that builds small personal apps from a description. You describe the app, a server generates it with a language model, and it runs on your phone in a sandboxed WebView. You can change it the same way later, and every version is kept on the device.
 
-[![invariants](https://github.com/Davron2004/Whim/actions/workflows/invariants.yml/badge.svg)](https://github.com/Davron2004/Whim/actions/workflows/invariants.yml)
-[![quality gate](https://sonarcloud.io/api/project_badges/measure?project=Davron2004_Whim&metric=alert_status)](https://sonarcloud.io/summary/new_code?id=Davron2004_Whim)
-![React Native 0.85](https://img.shields.io/badge/React%20Native-0.85-61dafb)
-![iOS + Android](https://img.shields.io/badge/platform-iOS%20%2B%20Android-3ddc84)
-
-Most software people want is too small to exist. A timer for one pour-over recipe. A log for a sourdough starter. A tracker for a thing only you care about. Nobody will build it, and no store will list it. Whim is a phone app where you type a sentence, answer a question or two, wait a few minutes, and the app is on your home screen. You can change it the same way, and every version is kept.
-
-The generation is done by a model. The interesting part is everything around the model: running code nobody reviewed on a phone without letting it out, governing what it can touch, giving it an SDK it cannot misuse, and versioning every result so a bad generation is a rollback, not a loss.
+Beta: [TestFlight](https://testflight.apple.com/join/tM69UkDf) on iOS, or sign up at [whim.anycognition.ca/beta](https://whim.anycognition.ca/beta) for iOS or Android.
 
 <p align="center">
   <img src="docs/readme/compose.png" width="190" alt="Compose: What should it do?" />
@@ -23,118 +16,121 @@ The generation is done by a model. The interesting part is everything around the
   <img src="docs/readme/home.png" width="190" alt="Home grid" />
 </p>
 
-*One real run on the emulator: the prompt was "A log for my sourdough starter: feeding time, flour, water, and how it smelled". Five minutes later the app on the right existed and had an entry in it.*
+*One run on the Android emulator in September 2026. The prompt was "A log for my sourdough starter: feeding time, flour, water, and how it smelled".*
 
-There is also a [one-minute video of a full session](https://www.linkedin.com/feed/update/urn:li:activity:7504626219317923840/): a tea timer described in a sentence, built, changed, force-quit and reopened, then forked from an older version.
+There is also a [one-minute video](https://www.linkedin.com/feed/update/urn:li:activity:7504626219317923840/) of a tea timer being described, built, changed, force-quit and reopened, then copied from an older version.
 
-## What a session looks like
+## How a session works
 
-1. **Describe.** Type what you want. Whim asks a few quick questions with tappable answers, or you skip them and it picks. Then it shows the plan in plain words, and you can tap any line to change it before building.
-2. **Build.** The server plans, generates one TypeScript file against the SDK, runs static checks over it, builds it, boots it in a headless copy of the same sandbox the phone uses, and pokes at every interactive element it can find. Anything that fails goes back to the model as a structured diagnostic, at most three times. The build screen shows what is happening: how many characters the model has written, how long it has been thinking, whether the connection is alive.
-3. **Use.** The app lands on the home grid and opens full screen. It keeps its own data on the device. Opening it never talks to the server.
-4. **Change it.** "Changing Sourdough Log" runs the same flow with the app's current source and data as context. If the app is at its latest version the edit replaces it; if you had rolled back first, the edit becomes a fork that shares the original's data.
-5. **Go back.** Every generation is a snapshot. History shows them all, with restore, pin, and fork from any point.
+1. **Describe.** You type what you want. Whim asks up to three questions with tappable answers (each defaults to "Decide for me") and shows the plan in plain words. You can edit any line of the plan. Nothing is sent for generation until you tap Make it.
+2. **Make.** The server plans, generates one TypeScript file against the SDK, runs static checks on it, builds it, and boots it in a headless copy of the phone's sandbox page, where it taps through the app's interactive elements. Failures go back to the model as structured diagnostics, for up to three repair rounds. The phone shows the current step, elapsed time, queue position and a notice if the stream goes quiet for 40 seconds.
+3. **Use.** The app appears on the home grid and opens full screen. Its data stays on the device. Opening an app needs no network.
+4. **Change.** A change request sends the app's current source and data schema to the server and runs the same flow. If the app is on its latest version, the change becomes a new version of the same app. If you had switched to an older version first, the change becomes a new app that shares the original's data.
+5. **History.** Every generation is a saved version. From History you can switch to any version (with Undo) or make a copy of it as a separate app, with a copy of its data or empty.
 
-## Why it is hard
+## Sandbox
 
-**Untrusted code on a phone.** Every mini-app is code no human reviewed, so the sandbox assumes it is hostile, including assuming it will lie about being contained. Containment has three web legs, and pen-testing showed none is enough alone; a fourth, native leg makes the WebView refuse every network load, because a frame navigating itself gets past all three (decision #74):
+A mini-app is code nobody reviewed, so the runtime treats it as hostile. Each app runs inside a WebView, in an iframe that the WebView page creates. Containment has four parts, and each one closes something the others leave open:
 
-```mermaid
-flowchart TB
-    HOST["WebView outer document and<br/>React Native host, trusted"]
-    CSP["Leg 1, CSP: script-src without unsafe-eval,<br/>default-src none, connect-src none"]
-    subgraph IF["Leg 2, cross-origin iframe: sandbox=allow-scripts, opaque origin"]
-        direction TB
-        NEU["Leg 3, neutralize.js strips the window's reach:<br/>fetch, XHR, WebSocket, RTCPeerConnection,<br/>localStorage, indexedDB, Worker, sendBeacon"]
-        APP["untrusted mini-app bundle"]
-        SDK["vc-sdk plus one shared React"]
-        LD["loader: holds nothing stronger<br/>than parent.postMessage"]
-    end
-    HOST ~~~ CSP
-    CSP -. "enforced on" .-> APP
-    NEU -. "runs before" .-> APP
-    APP -- "renders through vc-sdk" --> SDK
-    LD -- "nonce-authenticated frames" --> HOST
-```
+1. **Sandboxed iframe.** The app runs in `<iframe sandbox="allow-scripts" srcdoc=…>`. Without `allow-same-origin` the frame has an opaque origin, so `parent.document`, `top.location` and the outer page's native bridge throw a `SecurityError`. The only way out is `parent.postMessage`.
+2. **Content Security Policy.** The iframe document sets `default-src 'none'; script-src 'unsafe-inline'; connect-src 'none'` (plus `none` for frames, workers, forms and base URI). There is no `unsafe-eval`, and this is the only defense against `({}).constructor.constructor('…')`: every object reaches `Function` through its prototype chain, so removing globals can't close it. `eval` and `Function` are left in place because React uses `Function`; the CSP blocks code generation in the engine. `blob:` and `data:` scripts are refused.
+3. **Neutralized globals.** `neutralize.js` runs first in the iframe and replaces `fetch`, `XMLHttpRequest`, `WebSocket`, `EventSource`, `RTCPeerConnection` (and `webkitRTCPeerConnection`), `localStorage`, `sessionStorage`, `indexedDB`, `caches`, `Worker`, `SharedWorker` and `navigator.sendBeacon` with non-configurable stubs that throw when called. It covers what the CSP doesn't: WebRTC ignores `connect-src`. The stubs are on `window`, so a `<script>` the app injects itself sees them too.
+4. **Native network refusal** (decision #74). A sandboxed frame can still navigate itself (`location.href = 'http://…?data'`), and no web-layer rule stops that. So the WebView refuses every network load. On Android a subclassed WebView manager sets `blockNetworkLoads` before any content loads. On iOS a `WKContentRuleList` blocks `http(s)` and `ws(s)` for every frame, and if the list hasn't compiled, the WebView starts with JavaScript off. Mini-apps never need the network; generation and reports use React Native's own networking.
 
-The iframe has an opaque origin, so `parent.document`, `top.location` and the native bridge are all a `SecurityError`. The CSP is the only thing that closes `({}).constructor.constructor('...')`, because every object reaches `Function` through its prototype chain and no amount of global stripping can stop that; `eval` and `Function` are left in place because React needs them and the CSP kills code generation at the engine level anyway. The global strip covers what CSP cannot, such as WebRTC, which ignores `connect-src`. A bundle shares scope with the loader and can forge its own "I am contained" report, so the host trusts only a verdict from closure-captured probes it cannot overwrite, delivered in frames authenticated by a per-load nonce. A new realm is created for every load, because an earlier generation can otherwise reach the next one through `Object.prototype`. That last one was found on a real device and is now a regression test.
+Every launch gets a fresh iframe. In the pen test, loading a second app into the same iframe let the first one leave a backdoor on `window` and `Object.prototype` that the second one inherited (confirmed on Android), so the host never reuses one.
 
-**Governing what the code can touch.** Storage, haptics and sound are not ambient. They are syscalls over an append-only registry with a fixed-order gate. The channel needs no nonce: a forged reply posted by the bundle to its own window arrives with `ev.source` set to the iframe, never the parent, and the browser sets that field. An undeclared capability is refused with a structured error.
+After the first paint, the loader runs a set of 49 containment probes, using a reference it captured before the app's code ran, and reports the result to the host. The probe set includes planted leaks that must be flagged, so a broken probe can't report success. On the server the same page runs in headless Chromium, and a failed containment verdict ends the run: nothing is delivered and nothing about it goes back to the model.
 
-**An SDK for a model, not a person.** About 35 exports, documented in one file that fits in a system prompt. Components take semantic tokens, never raw colours or sizes, so a theme change restyles every app ever generated, including snapshots made before the theme existed. The shell ships one theme today; the picker was cut from the current design. The only resolvable imports at runtime are `vc-sdk`, `react` and `react-dom`; anything else throws, so a hallucinated import fails at build, not on the phone.
+`npm run invariants` runs these checks against the current build in headless Chromium. It loads adversarial bundles from `fixtures/adversarial/` (escape attempts, a forged verdict, cross-version poisoning, a timer that outlives its realm, a `blob:` script) and a copy of the page with `unsafe-eval` added, which the suite must flag. It runs in CI on every pull request and every push to main. Desktop Chromium can't test the native network refusal, so that one has a device probe (`scripts/netdeny/run.mjs` with a canary server), and the release checks fail if its Android or iOS wiring is weakened.
 
-**Version control nobody sees.** Each app is a real git repository on the device (isomorphic-git under Hermes). The API speaks product verbs only: snapshot, history, diff, rollback, pin, fork. A build guard fails if a hash or a ref ever reaches a return type. isomorphic-git has no garbage collection, so compaction is a pack-then-drop pass triggered by loose-object count.
+## Capabilities
 
-**A generation loop that repairs itself.** The state machine behind a request is plan, generate, check, build, run, repair, with every stage an injectable interface so the loop is tested against fakes. The run stage boots the candidate in the unmodified production sandbox page in headless Chromium and reports from a trusted vantage only. A bundle that fails containment is terminal, not repairable. The models are DeepSeek through OpenRouter with reasoning streamed back, so the build screen can show thinking as it happens.
+Storage, haptics and sound are only reachable as syscalls. The SDK's `storage` and `cues` objects post a request to the host, and the host checks it in a fixed order:
+
+1. the method is registered,
+2. its capability is declared in the app's manifest,
+3. the permission hook allows it,
+4. the params match the method's schema.
+
+Every refusal is a structured error with a kind and a fix hint. The manifest is extracted from the source by the static checker and saved with each version; the host never asks the running app what it declared. Each realm is bound to one app when it is created, so a syscall carries no app id. Syscall ids are deduplicated per realm, and a realm reset starts a new generation, so late results from a torn-down realm are dropped. The registry is append-only.
+
+Each app's data lives in its own SQLite database (op-sqlite). The engine has a fixed set of verbs (`kv.get/set/remove`, `records.append/list/update/remove`) and host-written SQL. Values are always bound as parameters, and collection and field names resolve through the declared schema to engine-assigned ids, so app text never reaches a SQL string. A `sql-injector` fixture tests this end to end through the sandbox. Schemas only grow: field ids are never reused, and a rename only changes the display name.
+
+## SDK
+
+Mini-apps are written against `vc-sdk`, which has 37 runtime exports (components, `storage`, `cues`, `nav`, timers, `Chart`). The model's view of it is one file, [`docs/sdk-reference.md`](docs/sdk-reference.md) (280 lines), sent with every generation; a server test checks it against the SDK's actual exports. Components take semantic tokens, never raw colors or sizes, so the host's theme decides how every app looks, including versions generated before a theme change. Apps follow the phone's light or dark mode. The SDK exposes no HTML or DOM.
+
+A mini-app is one TypeScript file that imports only `vc-sdk` and default-exports `defineApp(...)`. esbuild compiles it to a single IIFE (4 to 6 KiB for the sample apps) with `vc-sdk`, `react` and `react-dom` external. At runtime the resolver knows only those three names and throws on anything else, and the static checks reject other imports before the build.
+
+## Versions
+
+Each app is a git repository on the device: isomorphic-git running under Hermes, stored in MMKV. The version store's API uses product verbs (snapshot, history, diff, rollback, pin, fork), and a test asserts that no return value contains a commit hash or a git field name. isomorphic-git has no garbage collection, so the store packs reachable objects and drops loose ones once the loose-object count passes 80.
 
 ## Architecture
 
-The phone owns what must stay stable: apps, data, history, the runtime. The server owns what changes constantly: prompts, model access, checks. The server keeps no state; the device is the system of record.
+The phone holds the apps, their data and their history. The server holds the prompts, model access and checks. It stores no app source, data or history; it keeps per-device usage limits, a request ledger and user-sent reports.
 
 ```mermaid
 flowchart LR
-    subgraph Phone["Phone: system of record"]
-        UI["Launcher and prompt flow"]
-        RT["Sandbox runtime<br/>(hardened WebView)"]
-        VS[("Version store<br/>(on-device git,<br/>product verbs only)")]
+    subgraph Phone
+        L["Launcher"] --> W["WebView sandbox"]
+        W -- "syscalls" --> B["Capability bridge"]
+        B --> S[("SQLite per app")]
+        L --> V[("Version store (git)")]
     end
-    subgraph Server["Server: stateless"]
-        H["plan → generate → check<br/>→ build → run → repair"]
-    end
-    M["OpenRouter"]
-    UI -- "describe or change an app" --> H
-    H <--> M
-    H -- "verified bundle" --> RT
-    RT -- "snapshot every generation" --> VS
+    L -- "prompt, current source" --> G["Generation server"]
+    G -- "checked app" --> L
+    G <--> M["OpenRouter"]
 ```
 
-A mini-app is one TypeScript file that imports only `vc-sdk` and exports a `defineApp` spec. esbuild turns it into a single IIFE of about 4.5 KiB; `react`, `react-dom` and `vc-sdk` stay external and resolve to host-injected globals.
+The server is a Hono app that streams progress over SSE and runs on Cloud Run. The generation loop (plan, generate, check, build, run, repair) is a state machine whose stages are injected interfaces, so it is tested against fakes. Models are called through OpenRouter; the model for each role is set by environment variables.
 
-## Measured on the device
+## Measurements
 
-Android System WebView on Hermes, release build, not desktop Chrome.
+Unless noted, measured on an arm64 Android emulator (Android System WebView, Hermes, release build, software GL).
 
 | | |
 |---|---|
-| Containment probes from a trusted vantage | 42 of 42, `contained: true`, with a broken-CSP negative control proving the suite is not vacuous |
-| Mini-app mount to first paint | about 119 ms cold, 32 ms on a warm realm |
+| Containment probes | 49 of 49 contained on every launch in the October 2026 verification run (42 of 42 in the first device run) |
+| Mount to first paint | about 119 ms on a cold WebView, 32 ms on a recreated iframe |
+| Tap to first paint, prewarmed WebView | 75 ms median, 84 ms p90 over 30 launches |
 | Snapshot, rollback, fork | 45 to 86 ms, 58 to 183 ms, 37 to 68 ms |
-| Storage per generation | about 650 bytes and 4 git objects |
-| Persistence | 3 kill-and-relaunch cycles, no corruption |
-| Syscall round trip | 16 to 17 ms median, bound by the two WebView-to-native crossings |
-| A generation, end to end | about five minutes in the run pictured above, nearly all of it the model thinking |
+| Storage per version | about 650 bytes and 4 git objects |
+| Persistence | 3 kill-and-relaunch cycles, no failures |
+| Syscall round trip | 16 to 17 ms median, dominated by the two WebView-to-native crossings |
+| Generate phase (production server, 22 prompts, Sept 2026) | 53 s median, 144 s p90, 225 s worst; 21 of 22 produced an app |
 
 ## Status
 
-Working on device: the sandbox runtime and its invariant suites, the version store, the per-app SQLite storage engine, the capability bridge, the launcher with its prompt, clarify, build, history and settings screens, the token-based SDK with a component kit and charts, the static check pipeline, the synthetic-run harness, the eval harness, and the generation loop with the edit flow.
-
-Open: the formal end-to-end v1 acceptance on a fresh device over the network, voice input, iOS.
+iOS and Android builds are in beta on TestFlight and Google Play closed testing, with the server in production on Cloud Run. Open: the formal end-to-end v1 acceptance on a fresh device, voice input, and network-refusal runs on a physical device.
 
 ## How it is built
 
-- Every risky unknown got a throwaway spike with a written hypothesis and an on-device verdict. The scaffolds are deleted; the findings live in [`docs/`](docs/).
-- [`docs/decisions.md`](docs/decisions.md) is a numbered log of every decision with the alternatives it rejected, reversals included.
-- The bundle contract was pen-tested before it was productionized. The attacks that landed became constraints, and the constraints became CI.
-- Changes go through [OpenSpec](openspec/): proposal, design, tasks, archive. Capability specs are the source of truth, not the code.
-- Most implementation is dispatched to subagents in isolated git worktrees, each gated by a pinned-commit integrity check and a red-then-green check that proves every new test can fail.
-- [`DEVLOG.md`](DEVLOG.md) keeps the dead ends.
+- Each risky unknown got a throwaway spike with a written hypothesis and an on-device result. The spike code is deleted; the findings are in [`docs/`](docs/).
+- [`docs/decisions.md`](docs/decisions.md) is a numbered log of decisions with the alternatives each one rejected, reversals included.
+- The bundle contract was pen-tested before it went into the product. Each attack that worked became a constraint and then a CI check.
+- Changes go through [OpenSpec](openspec/) (proposal, design, tasks, archive). The capability specs in `openspec/specs/` describe current behavior.
+- Most implementation is done by coding agents in separate git worktrees. Each change is checked against a pinned base commit, and each new test has to fail before the fix and pass after it.
+- [`DEVLOG.md`](DEVLOG.md) records the dead ends.
 
 ## Repository map
 
 ```
 src/host/     RN shell: launcher, capability bridge, storage engine, version store
-src/runtime/  the WebView sandbox runtime (neutralize, resolver, probes, loader, syscall)
+src/runtime/  sandbox runtime inside the WebView (neutralize, resolver, probes, loader, syscall)
 src/sdk/      vc-sdk, the SDK mini-apps are written against
 build/        esbuild pipeline: mini-app bundles and the runtime HTML the WebView loads
-server/       @whim/server: Hono generation server (SSE, metering, the state machine)
+server/       @whim/server: Hono generation server (SSE, admission limits, the state machine)
 contract/     @whim/contract: zod wire schemas shared by device and server
-checks/       static check pipeline: AST checks over a closed diagnostic vocabulary
-synthrun/     synthetic-run harness: headless-Chromium run-and-observe
-evals/        corpus eval runner; the holdout set never enters the repo
-invariants/   never-regress containment suites, the blocking CI gate
-fixtures/     sample mini-apps and the adversarial bundles that attack the sandbox
-docs/         decisions, spike findings, the prompt-ready SDK reference, handoffs
-openspec/     spec-driven change workflow
+checks/       static checks: AST passes with a closed set of diagnostic kinds
+synthrun/     synthetic run: boots a candidate in headless Chromium and observes it
+evals/        corpus eval runner; the holdout set is never committed
+invariants/   containment suites, a blocking CI check
+fixtures/     sample mini-apps and adversarial bundles that attack the sandbox
+deploy/       Cloud Run server, the website, Firestore
+fastlane/     store release lanes
+docs/         decisions, spike findings, the SDK reference, runbooks
+openspec/     specs and change history
 ```
 
 ## Running it
@@ -144,19 +140,16 @@ Node 22 and JDK 21.
 ```sh
 npm install
 npm run build              # runtime HTML, app bundles, artifacts
-npm run invariants         # containment suite against this exact build (headless Chromium)
-npm run launcher:test      # launcher acceptance (Node); vstore:test, storage:test, bridge:test, sdk:test, server:test likewise
-npm run android:release -- --device <serial>    # debug-signed offline build onto that one device or emulator (or set ANDROID_SERIAL; never opens a packager window); the store AAB comes only from `fastlane android closed`
-npm run android -- --device <serial>            # debug build onto that one device; start Metro yourself first (npm start)
+npm run invariants         # containment suite against this build (headless Chromium)
+npm run launcher:test      # launcher suite (Node); vstore:test, storage:test, bridge:test, sdk:test, server:test likewise
+npm run android:release -- --device <serial>   # debug-signed offline build, no Metro needed
+npm run android -- --device <serial>           # debug build; start Metro first (npm start)
 ```
 
-Generating needs the server: `npm run server:dev` with `OPENROUTER_API_KEY`, `WHIM_REWRITE_MODEL` and `WHIM_ENGINEER_MODEL` in `.env`, or `WHIM_PIPELINE=stub` for a canned pipeline (`WHIM_STUB_DELAY_MS` sets its wait before each event, 200 by default). Opening apps you already have does not.
+Generating apps needs the server: `npm run server:dev` with `OPENROUTER_API_KEY`, `WHIM_REWRITE_MODEL` and `WHIM_ENGINEER_MODEL` in `.env`, or `WHIM_PIPELINE=stub` for a canned pipeline (`WHIM_STUB_DELAY_MS` sets the delay before each event, 200 ms by default). Opening apps you already have doesn't need it.
 
-Store releases (TestFlight and Play) are attended-only fastlane lanes — see `docs/release/mobile.md`.
-Deploying the server publicly is attended-only too — see `docs/deploy.md`.
+Store builds go through fastlane (`docs/release/mobile.md`). Server deployment is in `docs/deploy.md`.
 
 ## License
 
-Apache License 2.0, see `LICENSE`. Fork it, change it and ship it. If you distribute something
-built on this code, keep the `NOTICE` file with it. Running your own server needs nothing: point
-the app at it under Settings → Advanced → Server address.
+Apache License 2.0, see `LICENSE`. If you distribute something built on this code, keep the `NOTICE` file with it. To use your own server, set it in the app under Settings → Advanced → Server address.
