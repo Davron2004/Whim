@@ -49,8 +49,8 @@ function jsLiteral(value) {
 }
 
 // The channel-(b)/loader bundle wrapper, also used to PRE-BAKE the bundle for channel (a).
-// `callAfter=false` for channel (a): the loader calls __whimAfterBundle on host-init instead
-// (so the verdict is posted after the auth nonce is set). Keep in sync with loader.js.
+// `callAfter=false` for channel (a): the loader runs the baked bundle and mounts it on host-init
+// instead (so no app code runs before the auth nonce is set). Keep in sync with loader.js.
 export function wrapBundle(bundleSrc, callAfter) {
   return (
     '(function(){ "use strict";\n' +
@@ -83,8 +83,10 @@ export function buildSrcdoc({ parts, channel, bakedBundle }) {
   for (const s of scripts) body += inlineScript(s) + '\n';
   if (channel === 'a' && bakedBundle) {
     // Channel (a) fallback: the bundle is a PARSER-INSERTED inline <script> (proves the engine
-    // runs one under the locked CSP). It sets __WHIM_APP_MODULE__ but does not mount.
-    body += inlineScript(wrapBundle(bakedBundle, false)) + '\n';
+    // runs one under the locked CSP). The script only DEFINES the wrapped bundle; the loader runs
+    // it after the host init frame has arrived, as channel (b) does. Run at parse time, app code
+    // would be listening when the init frame (and its nonce) reached the realm.
+    body += inlineScript('window.__whimBakedBundle = function () {\n' + wrapBundle(bakedBundle, false) + '\n};') + '\n';
   }
   return (
     '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">\n' +

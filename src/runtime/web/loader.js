@@ -10,17 +10,56 @@
 // Carry-forward constraints honored here (D4):
 //   #2 — the loader holds NO capability stronger than parent.postMessage. What it leaves
 //        reachable on `window`: the postMessage stub, the allowlist resolver (resolver.js),
-//        a number (__whimGeneration), and __whimAfterBundle (touches only React/ReactDOM —
-//        pure UI libs). The trusted-probe ref and the host nonce live in THIS closure, never
-//        on window.
+//        a read-only number (__whimGeneration), and a read-only __whimAfterBundle (touches only
+//        React/ReactDOM — pure UI libs). The trusted-probe ref and the host nonce live in THIS
+//        closure, never on window.
 //   #3 — TRUSTED VANTAGE: we capture the genuine `__whimRunProbes` into a closure var BEFORE
 //        any bundle runs, and call the captured ref. A malicious bundle that overwrites
-//        `window.__whimRunProbes` (the evil fixture does) cannot change the verdict we post.
+//        `window.__whimRunProbes` (the evil fixture does) cannot substitute its own verdict.
+//        The probes still run in the realm the bundle ran in and measure it as the bundle left
+//        it (docs/security/2026-11-19-verdict-channel.md, "What stays out of reach").
 //   #4 — every genuine loader→host frame is tagged with a per-realm secret NONCE the host
 //        sent us before the first bundle was delivered (and which we never expose on window).
 //        The bundle, delivered later, never saw it and cannot forge an authenticated frame.
+//        "Never exposed" covers more than `window`: once a bundle runs, every global and every
+//        built-in prototype in this realm is its to rewrite, so the nonce, the frame envelope and
+//        the transport must never pass through anything read live (see "Captured before any app
+//        code runs" below). The host hands the nonce out once per iframe (build/assemble.mjs).
 (function whimLoaderChannelB() {
   'use strict';
+
+  // ── Captured before any app code runs (constraint #4) ───────────────────────
+  // A bundle shares this realm. `window.parent` is a [Replaceable] attribute, JSON, Promise and
+  // requestAnimationFrame are writable globals, and a getter or a toJSON planted on a prototype
+  // runs inside any code that reads through it. Read live, each let app code read the nonce off
+  // a loader frame, relabel or reroute one, feed the loader's verdict callback, start a delivery
+  // from an unrelated host frame, or keep the paint and the verdict from ever posting. So the
+  // loader takes what its trusted path needs now; this script runs before any bundle can.
+  const PARENT = window.parent;
+  const apply = Reflect.apply;
+  const parentPost = PARENT.postMessage;
+  const stringify = JSON.stringify;
+  const parse = JSON.parse;
+  const hasOwn = Object.prototype.hasOwnProperty;
+  const ownKeys = Reflect.ownKeys;
+  const ownDescriptor = Reflect.getOwnPropertyDescriptor;
+  const defineOwn = Reflect.defineProperty;
+  const setPrototype = Reflect.setPrototypeOf;
+  const isArray = Array.isArray;
+  const promiseThen = Promise.prototype.then;
+  const nextFrame = window.requestAnimationFrame;
+  const eventSource = ownDescriptor(MessageEvent.prototype, 'source').get;
+  const eventData = ownDescriptor(MessageEvent.prototype, 'data').get;
+  const React = window.React;
+  const ReactDOM = window.ReactDOM;
+  const rootElement = document.getElementById('whim-root');
+
+  // An own property of a parsed host frame, never an inherited one (a getter on Object.prototype
+  // must not be able to answer for a field the host did not send).
+  function own(obj, key) {
+    return apply(hasOwn, obj, [key]) ? obj[key] : undefined;
+  }
+
   function now() {
     return window.performance?.now ? window.performance.now() : Date.now();
   }
@@ -52,9 +91,12 @@
   // CONSTRAINT #3: snapshot the genuine probe fn before any untrusted code can overwrite it.
   const trustedRunProbes = (typeof __whimRunProbes === 'function') ? __whimRunProbes : null;
 
-  // CONSTRAINT #4: the per-realm authentication nonce, sent by the host before delivery and
-  // kept ONLY in this closure (never on window). null until the host's init frame arrives.
-  let hostNonce = null;
+  // CONSTRAINT #4: the head of every authenticated frame, `{"__whimHarness":true,"nonce":"…","kind":`,
+  // built once from the host's init frame (which arrives before any app code runs) and kept ONLY
+  // in this closure. The nonce exists nowhere else, and frames are assembled by concatenation, so
+  // it never passes through a function app code could have replaced. null until init arrives.
+  let envelopeHead = null;
+  const UNAUTHENTICATED_HEAD = '{"__whimHarness":true,"nonce":null,"kind":';
 
   // ── Transport shim (§5.6 / D7) ──────────────────────────────────────────────
   // The bundle calls window.ReactNativeWebView.postMessage(string); inside this opaque-origin
@@ -63,7 +105,7 @@
   // SDK (and a forgeable spoof from a malicious bundle) both ride this — the host MUST treat
   // all inbound frames as untrusted data and authenticate by nonce (constraint #4).
   window.ReactNativeWebView = {
-    postMessage: function (s) { try { window.parent.postMessage(String(s), '*'); } catch (e) {} },
+    postMessage: function (s) { try { apply(parentPost, PARENT, [String(s), '*']); } catch (e) {} },
   };
 
   // ── nav-depth seam anchor (launcher-shell / #5 D4 — consumed by SDK navigation) ────────
@@ -78,13 +120,50 @@
   //     and re-emits nav-depth. The loader only anchors the frame seam; the SDK emits and
   //     consumes the frames without adding a capability to this trusted closure.
 
-  // Genuine, authenticated loader→host control frame (carries the secret nonce).
+  // A payload copied as plain data before it is serialized: own, enumerable, string-keyed data
+  // properties only, into prototype-less objects and arrays, so serializing the copy runs no getter
+  // and no inherited toJSON. The loader then reports exactly the values it was handed. A cycle, a
+  // value nested deeper than MAX_DEPTH, and everything past the first MAX_NODES objects become null.
+  const MAX_DEPTH = 32;
+  const MAX_NODES = 20000;
+  function plainCopy(value) {
+    const path = { __proto__: null }; // the objects on the current path, by depth
+    let nodes = 0;
+    function copyOf(v, depth) {
+      if (v === null) return null;
+      const type = typeof v;
+      if (type === 'string' || type === 'number' || type === 'boolean') return v;
+      if (type !== 'object') return undefined; // undefined, function, symbol, bigint: no JSON value
+      if (depth >= MAX_DEPTH || ++nodes > MAX_NODES) return null;
+      for (let i = 0; i < depth; i++) if (path[i] === v) return null;
+      path[depth] = v;
+      const array = isArray(v);
+      const copy = array ? [] : { __proto__: null };
+      const keys = ownKeys(v);
+      for (let i = 0; i < keys.length; i++) {
+        const key = keys[i];
+        if (typeof key !== 'string') continue;
+        const desc = ownDescriptor(v, key);
+        if (!desc || desc.enumerable !== true || !apply(hasOwn, desc, ['value'])) continue;
+        const item = copyOf(desc.value, depth + 1);
+        if (item === undefined && !array) continue;
+        defineOwn(copy, key, { __proto__: null, value: item, writable: true, enumerable: true, configurable: true });
+      }
+      if (array) setPrototype(copy, null);
+      return copy;
+    }
+    return copyOf(value, 0);
+  }
+
+  // Genuine, authenticated loader→host control frame (carries the secret nonce). Same JSON as
+  // `{__whimHarness:true, nonce, kind, payload}`, assembled by concatenation: `kind` is always one
+  // of this file's literals, so app code can neither read the nonce nor change the kind.
   function post(kind, payload) {
     try {
-      window.parent.postMessage(
-        JSON.stringify({ __whimHarness: true, nonce: hostNonce, kind: kind, payload: payload }),
-        '*',
-      );
+      const body = payload === undefined ? undefined : stringify(plainCopy(payload));
+      const frame = (envelopeHead === null ? UNAUTHENTICATED_HEAD : envelopeHead) + stringify(kind) +
+        (typeof body === 'string' ? ',"payload":' + body : '') + '}';
+      apply(parentPost, PARENT, [frame, '*']);
     } catch (e) {}
   }
 
@@ -141,7 +220,12 @@
   // generation counter (T7 / constraint #5): how many bundles have run in THIS realm. The host
   // resets the realm (re-creates the iframe) per generation, so in practice this is 1 here;
   // the counter + the in-place re-injection path remain so the seam is real and measurable.
-  window.__whimGeneration = 0;
+  // The count lives in this closure; `window.__whimGeneration` is a read-only view of it, so app
+  // code can read it (the SDK and the T7 probe do) but cannot rewrite it to skip the mount.
+  let generation = 0;
+  Object.defineProperty(window, '__whimGeneration', {
+    get: function () { return generation; }, enumerable: true, configurable: false,
+  });
   let whimRoot = null;      // reused across any same-realm re-injection
   let mountedGen = -1;      // guard: mount each generation at most once
 
@@ -168,20 +252,21 @@
   }
 
   // ── Mount + paint + TRUSTED verdict (tasks 5.1 / 5.4 / 6.2) ──────────────────
-  window.__whimAfterBundle = function () {
-    if (mountedGen === window.__whimGeneration) return; // already mounted this generation
-    mountedGen = window.__whimGeneration;
-    const React = window.React, ReactDOM = window.ReactDOM;
+  // Called by the wrapped bundle's last line. Installed read-only and non-configurable: a bundle
+  // that could swap it would decide whether, and when, its own paint and verdict get posted.
+  function afterBundle() {
+    if (mountedGen === generation) return; // already mounted this generation
+    mountedGen = generation;
     const appModule = (typeof window.__WHIM_APP_MODULE__ !== 'undefined') ? window.__WHIM_APP_MODULE__ : null;
     if (!appModule || !appModule.default) {
       post('error', { where: 'bundle', message: 'no AppSpec default export (did the inline script execute?)' });
       return;
     }
     const spec = appModule.default;
-    const gen = window.__whimGeneration;
+    const gen = generation;
     try {
       if (!whimRoot) {
-        whimRoot = ReactDOM.createRoot(document.getElementById('whim-root'), { onUncaughtError: onUncaughtRenderError });
+        whimRoot = ReactDOM.createRoot(rootElement, { onUncaughtError: onUncaughtRenderError });
       }
       // The bundle does not know it is in an iframe/WebView — it just described screens.
       whimRoot.render(React.createElement(trustedNavRoot, { spec: spec, chromeInsetBottom: chromeInsetBottom }));
@@ -190,19 +275,29 @@
       return;
     }
     // double rAF fires after the first paint → honest mount→first-paint.
-    requestAnimationFrame(function () {
-      requestAnimationFrame(function () {
+    apply(nextFrame, window, [function () {
+      apply(nextFrame, window, [function () {
         const T1 = now();
         post('paint', { generation: gen, mountToFirstPaintMs: Math.round((T1 - T0) * 100) / 100, appName: spec.name });
-        // CONSTRAINT #3: call the CLOSURE-CAPTURED probe fn, never window.__whimRunProbes.
+        // CONSTRAINT #3: call the CLOSURE-CAPTURED probe fn, never window.__whimRunProbes, and
+        // settle it through the captured `then`, so app code never holds the callbacks below.
         if (!trustedRunProbes) { post('error', { where: 'probes', message: 'trusted probe fn missing' }); return; }
-        trustedRunProbes().then(
-          function (r) { r.generation = gen; post('probes', r); },
-          function (e) { post('error', { where: 'probes', name: e && e.name, message: e && String(e.message) }); }
-        );
-      });
-    });
-  };
+        apply(promiseThen, trustedRunProbes(), [
+          function (r) {
+            const verdict = plainCopy(r);
+            if (verdict !== null && typeof verdict === 'object') {
+              defineOwn(verdict, 'generation', { __proto__: null, value: gen, writable: true, enumerable: true, configurable: true });
+            }
+            post('probes', verdict);
+          },
+          function (e) { post('error', { where: 'probes', name: e && e.name, message: e && String(e.message) }); },
+        ]);
+      }]);
+    }]);
+  }
+  Object.defineProperty(window, '__whimAfterBundle', {
+    value: afterBundle, writable: false, enumerable: true, configurable: false,
+  });
 
   // ── Delivery (channel b) + host init (tasks 4.3 / 6.1) ───────────────────────
   let deliveryBusy = false;
@@ -231,23 +326,27 @@
   }
 
   function handleHostInit(msg) {
-    if (msg.__whimHostInit !== true || hostNonce !== null) return false;
+    if (own(msg, '__whimHostInit') !== true || envelopeHead !== null) return false;
 
-    hostNonce = msg.nonce || '';
+    const nonce = own(msg, 'nonce');
+    envelopeHead = '{"__whimHarness":true,"nonce":' + stringify(typeof nonce === 'string' ? nonce : '') + ',"kind":';
     // Optional inert theme payload (sdk-design-system D1): installed as a frozen global
     // BEFORE any bundle mount can occur (hostInit always precedes delivery). Invalid input
     // leaves no usable global, so the SDK falls back to its own defaults.
-    installTheme(msg.theme);
-    post('ready', { generation: window.__whimGeneration });
+    installTheme(own(msg, 'theme'));
+    post('ready', { generation: generation });
 
     // Channel (a) fallback: the bundle was baked into the srcdoc as a parser-inserted
-    // <script> that already ran (proving the engine executes a parser-inserted inline
-    // script under the locked CSP) and set window.__WHIM_APP_MODULE__. The host does NOT
-    // deliver in channel (a); mount the pre-baked module now (after the nonce is set so the
-    // verdict is authenticated). Channel (b) has no module yet here → this is a no-op.
-    if (typeof window.__WHIM_APP_MODULE__ !== 'undefined' && window.__WHIM_APP_MODULE__) {
-      window.__whimGeneration = window.__whimGeneration + 1;
-      window.__whimAfterBundle();
+    // <script> (proving the engine executes one under the locked CSP) that only defined it.
+    // The host does NOT deliver in channel (a); run and mount the baked bundle now, after the
+    // nonce is set, so no app code was listening when the init frame arrived and the verdict
+    // is authenticated. Channel (b) has nothing baked → this is a no-op.
+    const baked = window.__whimBakedBundle;
+    if (typeof baked === 'function') {
+      delete window.__whimBakedBundle;
+      generation = generation + 1;
+      baked();
+      afterBundle();
     }
     return true;
   }
@@ -287,7 +386,7 @@
     window.setTimeout(function () {
       const ran = (typeof window.__WHIM_APP_MODULE__ !== 'undefined') && !!window.__WHIM_APP_MODULE__;
       post('delivery', {
-        accepted: ran, via: 'blob', refused: !ran, generation: window.__whimGeneration,
+        accepted: ran, via: 'blob', refused: !ran, generation: generation,
         note: ran ? 'BLOB SCRIPT RAN (CSP breach!)' : 'blob script refused by CSP (never widen script-src)',
       });
       try { URL.revokeObjectURL(blobUrl); } catch (e) {}
@@ -299,53 +398,62 @@
     const s = document.createElement('script');
     s.textContent = wrapped; // DOM-inserted INLINE script (NOT eval) — runs synchronously on append
     (document.head || document.documentElement).appendChild(s);
-    post('delivery', { accepted: true, generation: window.__whimGeneration, note: 'DOM-inserted inline script appended without throwing' });
+    post('delivery', { accepted: true, generation: generation, note: 'DOM-inserted inline script appended without throwing' });
     deliveryBusy = false; // re-injection ready (a new generation in the SAME realm)
   }
 
   function deliverBundle(msg) {
     deliveryBusy = true;
-    window.__whimGeneration = (window.__whimGeneration || 0) + 1;
+    generation = generation + 1;
     try {
-      const wrapped = wrappedBundleSource(msg.bundle);
-      if (msg.viaBlob === true) {
+      const wrapped = wrappedBundleSource(own(msg, 'bundle'));
+      if (own(msg, 'viaBlob') === true) {
         deliverBlob(wrapped);
         return;
       }
       deliverInline(wrapped);
     } catch (e) {
-      post('delivery', { accepted: false, generation: window.__whimGeneration, name: e && e.name, message: e && String(e.message) });
+      post('delivery', { accepted: false, generation: generation, name: e && e.name, message: e && String(e.message) });
       post('error', { where: 'deliver', name: e && e.name, message: e && String(e.message) });
       deliveryBusy = false;
     }
   }
 
   window.addEventListener('message', function (ev) {
-    const data = ev.data;
-    if (typeof data !== 'string') return;
-    let msg;
-    try { msg = JSON.parse(data); } catch (e) { return; }
-    if (!msg) return;
+    let source, data;
+    try {
+      source = apply(eventSource, ev, []);
+      data = apply(eventData, ev, []);
+    } catch (e) { return; }
 
     // Host-channel-only acceptance (A1 — mirrors syscall.js's ev.source guard): a frame posted by a
-    // bundle sharing this realm has ev.source === window, not window.parent. Drop it. Without this, a
+    // bundle sharing this realm has ev.source === window, not the parent. Drop it. Without this, a
     // delivered bundle could self-post __whimDeliver on a later tick to forge a delivery — bumping
     // __whimGeneration, injecting its payload, and posting a host frame carrying the closure-captured
     // real nonce (indistinguishable to the host) — corrupting the host's generation state machine.
-    if (ev.source !== window.parent) return;
+    // Both sides of the comparison were captured before any bundle ran: the event's own `source`
+    // getter and the parent as it was at load (a bundle can reassign `window.parent`).
+    if (source !== PARENT) return;
+    if (typeof data !== 'string') return;
+    let msg;
+    try { msg = parse(data); } catch (e) { return; }
+    if (msg === null || typeof msg !== 'object') return;
 
     // Host init: the FIRST one wins and is locked in. It arrives before any bundle is
     // delivered, so a later (untrusted) bundle cannot re-set or read this nonce.
     if (handleHostInit(msg)) return;
 
-    if (msg.__whimDeliver !== true || deliveryBusy) return;
+    // No delivery before the handshake: a bundle running before the init frame arrived would be
+    // listening when the nonce did.
+    if (envelopeHead === null || own(msg, '__whimDeliver') !== true || deliveryBusy) return;
     deliverBundle(msg);
   });
 
   // Announce liveness so the host sends the init nonce, then the bundle.
   // (We post WITHOUT a nonce here on purpose — it is the only pre-auth frame; the host keys
-  // off kind:'hello' and replies with the nonce. All later genuine frames carry the nonce.)
+  // off kind:'hello' and replies with the nonce, to this first hello only. All later genuine
+  // frames carry the nonce.)
   try {
-    window.parent.postMessage(JSON.stringify({ __whimHarness: true, kind: 'hello' }), '*');
+    apply(parentPost, PARENT, ['{"__whimHarness":true,"kind":"hello"}', '*']);
   } catch (e) {}
 })();

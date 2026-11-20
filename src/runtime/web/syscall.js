@@ -20,6 +20,11 @@
 (function whimSyscallMarshaller() {
   'use strict';
 
+  // The host channel as it was at load, before any bundle ran: `window.parent` is a [Replaceable]
+  // attribute, so a live read lets a bundle make its own self-posted `sysret` pass the source check
+  // below, and swallow its syscalls before they reach the host.
+  const PARENT = globalThis.parent;
+
   let seq = 0;                 // monotonic id, per generation (a fresh iframe → a fresh seq)
   let hostGen = 1;             // the generation the host bound this realm at; set from init
   const pending = Object.create(null); // id -> { resolve, reject, timer }
@@ -44,7 +49,7 @@
       }, TIMEOUT_MS);
       pending[id] = { resolve: resolve, reject: reject, timer: timer };
       try {
-        window.parent.postMessage(JSON.stringify(frame), '*'); // NOSONAR - sandboxed srcdoc iframe posts to an opaque parent channel.
+        PARENT.postMessage(JSON.stringify(frame), '*'); // NOSONAR - sandboxed srcdoc iframe posts to an opaque parent channel.
       } catch (e) {
         globalThis.clearTimeout(timer);
         delete pending[id];
@@ -75,7 +80,7 @@
 
   window.addEventListener('message', function (ev) {
     // Host-channel-only acceptance (D3): forged in-iframe frames have ev.source === window.
-    if (ev.source !== globalThis.parent) return;
+    if (ev.source !== PARENT) return;
     // The production transport is parent <-> sandboxed srcdoc, so the legitimate origin is
     // opaque ("null"). The equality branch keeps same-origin invariant harnesses working
     // without making origin the authority source; the exact parent window remains required.
