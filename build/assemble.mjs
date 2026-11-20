@@ -113,7 +113,10 @@ function orchestrationScript(cfg) {
     // GEN is the generation the host bound this realm at; it travels in the init frame and the
     // iframe stamps it onto every syscall (the host is the generation-fence authority, D3).
     '  var GEN = 1;\n' +
-    '  var nonce = null, iframe = null, deliveredName = null, pendingDeliver = ' +
+    // helloAnswered: the nonce is handed out ONCE per iframe, to the loader's own `hello` (the first
+    // frame the realm posts, before any app code exists). Any later `hello` — app code asking again,
+    // or a document the iframe navigated to — gets nothing: answering it handed the nonce to app code.
+    '  var nonce = null, helloAnswered = false, iframe = null, deliveredName = null, pendingDeliver = ' +
       (cfg.autostart ? 'INITIAL' : 'null') + ';\n' +
     // launcher-shell / #5 D3: a host-supplied bundle SOURCE (string) to deliver instead of a
     // baked name. The launcher reads it from the version-store record and passes it via
@@ -133,7 +136,10 @@ function orchestrationScript(cfg) {
     // A frame forwarded to RN stamped with the generation the host bound this realm at (GEN), never
     // the realm's own counter: the loader's payload fields, with `generation` replaced.
     '  function stampGen(p){ var o={}; if(p&&typeof p==="object"){ for(var k in p){ if(Object.prototype.hasOwnProperty.call(p,k)) o[k]=p[k]; } } o.generation=GEN; return o; }\n' +
-    "  function rnd(){ try{ var a=new Uint8Array(16); (window.crypto||window.msCrypto).getRandomValues(a); var s=''; for(var i=0;i<a.length;i++) s+=(a[i]+256).toString(16).slice(-2); return s; }catch(e){ var t=''; for(var j=0;j<32;j++) t+=((j*7+13)%16).toString(16); return t+String((window.performance&&performance.now?performance.now():0)); } }\n" +
+    // The nonce comes from the CSPRNG or not at all: a null nonce answers no `hello` and
+    // authenticates no frame, so a page without getRandomValues reports no verdict (fail closed)
+    // instead of one keyed on a guessable value.
+    "  function rnd(){ try{ var a=new Uint8Array(16); window.crypto.getRandomValues(a); var s=''; for(var i=0;i<a.length;i++) s+=(a[i]+256).toString(16).slice(-2); return s; }catch(e){ rnLog('no CSPRNG: the verdict channel stays closed'); return null; } }\n" +
     '  function toRN(obj){ try{ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(obj)); }catch(e){} }\n' +
     // Relay a sysret string from the host back INTO the iframe (host→iframe; ev.source there is
     // window.parent, which the marshaller requires). Exposed as a global so the RN host can
@@ -149,10 +155,17 @@ function orchestrationScript(cfg) {
     // {__whimDeliver:true, bundle:<src>} over channel b. A by-source delivery carries a display
     // name only for diagnostics; the bytes come from opts.source.
     '  function deliver(name, opts){ opts=opts||{}; var bySource=(typeof opts.source==="string"); var src=bySource?opts.source:BUNDLES[name]; if(src==null){ rnLog("deliver: unknown bundle "+name); return; } deliveredName=name||deliveredName; var f={__whimDeliver:true, bundle:src}; if(opts.viaBlob) f.viaBlob=true; try{ iframe.contentWindow.postMessage(JSON.stringify(f),"*"); }catch(e){ rnLog("deliver failed: "+(e&&e.name)); } setDiag("delivery", "delivering \\""+(name||"(by source)")+"\\""+(opts.viaBlob?" via blob (must be refused)":(bySource?" by source (host record)":" over channel-b transport"))+"…"); }\n' +
-    '  function makeIframe(){ if(iframe&&iframe.parentNode) iframe.parentNode.removeChild(iframe); nonce=rnd(); iframe=document.createElement("iframe"); iframe.id="whim-iframe"; iframe.title="mini-app"; iframe.setAttribute("sandbox","allow-scripts"); iframe.style.cssText="border:0;width:100%;height:"+(SHOW_DIAG?"60vh":"100%")+";background:"+bg+";display:block"; document.getElementById("app").appendChild(iframe); iframe.srcdoc=canvasSrcdoc(); }\n' +
+    '  function makeIframe(){ if(iframe&&iframe.parentNode) iframe.parentNode.removeChild(iframe); nonce=rnd(); helloAnswered=false; iframe=document.createElement("iframe"); iframe.id="whim-iframe"; iframe.title="mini-app"; iframe.setAttribute("sandbox","allow-scripts"); iframe.style.cssText="border:0;width:100%;height:"+(SHOW_DIAG?"60vh":"100%")+";background:"+bg+";display:block"; document.getElementById("app").appendChild(iframe); iframe.srcdoc=canvasSrcdoc(); }\n' +
+    // A control frame that failed authentication: relayed as a rejection (never as data) and logged.
+    "  function rejectForgery(m){ setDiag('delivery','REJECTED unauthenticated frame (kind='+m.kind+') — forged control message ignored (constraint #4)'); toRN({kind:'rejected-forgery',trusted:false,forgedKind:m.kind,payload:m.payload||null}); rnLog('REJECTED-FORGERY kind='+m.kind); }\n" +
     "  window.addEventListener('message', function(ev){\n" +
     '    var m; try{ m=JSON.parse(ev.data); }catch(e){ return; } if(!m) return;\n' +
-    "    if(m.__whimHarness===true && m.kind==='hello' && nonce){ try{ var initF={__whimHostInit:true,nonce:nonce,gen:GEN}; if(pendingTheme) initF.theme=pendingTheme; iframe.contentWindow.postMessage(JSON.stringify(initF),'*'); }catch(e){} return; }\n" +
+    '    var fromIframe = !!iframe && ev.source===iframe.contentWindow;\n' +
+    // The handshake (constraint #4): the nonce goes out once per iframe, only to a `hello` from that
+    // iframe, and the loader's `hello` is always the first one (it is posted while the srcdoc parses,
+    // before any app code exists). A second `hello` can only come from app code or a document the
+    // iframe navigated to, so it is a forgery attempt: rejected, never answered.
+    "    if(m.__whimHarness===true && m.kind==='hello'){ if(!fromIframe || helloAnswered || !nonce){ rejectForgery(m); return; } helloAnswered=true; try{ var initF={__whimHostInit:true,nonce:nonce,gen:GEN}; if(pendingTheme) initF.theme=pendingTheme; iframe.contentWindow.postMessage(JSON.stringify(initF),'*'); }catch(e){} return; }\n" +
     "    if(m.__whimUiEvent===true){ if(ev.source!==(iframe&&iframe.contentWindow)) return; toRN({kind:'ui-event',trusted:false,payload:m}); rnLog('UI-EVENT '+(m.type||'?')+' '+(m.label||'')); return; }\n" +
     // nav seam (launcher-shell / #5 D4): an SDK nav-depth HINT from our iframe. Source-verify it
     // came from OUR iframe (like syscall), then relay to RN STAMPED with the generation the host
@@ -163,8 +176,11 @@ function orchestrationScript(cfg) {
     // (D2: the relay forwards only its own iframe's frames), then route to the host sink.
     "    if(m.whim==='syscall'){ if(ev.source!==(iframe&&iframe.contentWindow)) return; relaySyscall(ev.data, m); return; }\n" +
     '    if(m.__whimHarness!==true) return;\n' +
-    '    var authentic = (!!nonce && m.nonce===nonce);\n' +
-    "    if(!authentic){ setDiag('delivery','REJECTED unauthenticated frame (kind='+m.kind+') — forged control message ignored (constraint #4)'); toRN({kind:'rejected-forgery',trusted:false,forgedKind:m.kind,payload:m.payload||null}); rnLog('REJECTED-FORGERY kind='+m.kind); return; }\n" +
+    // Authentic = from the current iframe, after its handshake, carrying its nonce. (The source
+    // check pins the iframe, not the document in it; only the nonce, which no later document can
+    // obtain, ties a frame to the realm that answered the handshake.)
+    '    var authentic = (fromIframe && helloAnswered && !!nonce && m.nonce===nonce);\n' +
+    '    if(!authentic){ rejectForgery(m); return; }\n' +
     "    if(m.kind==='ready'){ if(CHANNEL!=='a'){ if(pendingSource!=null) deliver(pendingDeliver, {source:pendingSource}); else if(pendingDeliver) deliver(pendingDeliver,{viaBlob:CHANNEL==='c'}); } return; }\n" +
     "    if(m.kind==='delivery'){ setDiag('delivery', JSON.stringify(m.payload,null,1)); toRN({kind:'delivery',trusted:true,payload:m.payload}); return; }\n" +
     // design-system-v1 D4: `paint` is the opening signal, so like nav-depth it reaches the host
