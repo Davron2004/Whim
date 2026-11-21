@@ -1,0 +1,29 @@
+# chain-2 (deps-w2-node-26) review 1
+Range 8022d32f..77e2ee3d (3 commits). Reviewer: read-only auditor.
+
+VERDICT: ACCEPT (code verdict: findings, none blocking)
+REPORT HONESTY: matches diff. FILES TOUCHED = 31 files + handoff, matches diffstat (32) file by file. Lockfile diff is exactly the three `engines` blocks (root, contract added, server); no package moved. Deviations (release preflight, contract engines, READMEs) declared as class A.
+SPEC CONFORMANCE: conforms. All 3 deploy/Dockerfile FROMs + deploy/loadtest/Dockerfile build FROM = node:26.13.1-bookworm-slim@sha256:5df79989...b0f1; loadtest runtime inherits FROM ${SERVER_IMAGE}. Live generation-server Purpose line -> Node 26; requirement line 16 and server-deployment:96 are left to the delta specs (correct, they sync at archive).
+
+Check-weakening scan: no weakening. No Class-1 checker loosened (package.json touched for engines only).
+- deploy-config.suite.ts:1302-1309: old refusal case (24.1.0, `includes('Node 22')`) is now a loop over 24.1.0 and 22.23.5, each asserting exit 1, `Node <v> is running`, `needs Node 26`, and gcloud log == []. Stricter than before (old `Node 24.1.0` substring is now `... is running`; the 22.23.5 case cannot pass on the version string echo because it asserts `needs Node 26`). Acceptance of 26 is proven by the stub default 26.13.1 (:989) that every gcloud-reaching deploy.sh scenario depends on.
+- release-cli.suite.ts:49,76-82: baseline snapshot 26 -> zero findings (acceptance); new case 22 -> exactly one finding naming `major version 22` and fix `Node 26` (refusal). Net +1 test.
+- Commits: no Co-Authored-By or agent attribution.
+
+esbuild: 0.25.12 accepts `node26`. Verified read-only: bundling server/src/main.ts with target node22 vs node26 (write:false) gives byte-identical output (1,775,900 bytes). No runtime behavior change.
+
+FINDINGS
+1. MED - typecheck Node types are a phantom transitive: server/tsconfig.json:13 and tsconfig.tests.json:3 use `"types": ["node"]`, resolved to @types/node 25.9.2 hoisted from @fission-ai/openspec -> @inquirer/* (`npm ls @types/node`). Not a declared devDependency, and it now lags the runtime by one major (Node 26 APIs untyped; any API removed in 26 still typed). Pre-existing, not introduced here, and adding a dep is outside chain-2's plan. Recommend the change's tasks add `@types/node@^26` as a direct root devDependency (it must be named in the plan, per the dependency rule), rather than this chain doing it ad hoc.
+2. LOW - garbage class, now-constant condition: deploy/Dockerfile:45-47 `NODE_OPTIONS=--disable-warning=ExperimentalWarning`, justified as "drops node:sqlite's ExperimentalWarning". Verified locally: Node 26.13.1 loads node:sqlite with no warning; 22.23.5 emits it. The flag is now inert for its stated reason, and the comment is false on Node 26. Remove the flag + comment (or re-justify) in a follow-up; no test pins it.
+3. LOW - the spec's "Node 26 base" has no mechanical check. The deploy-config tripwire (pinned digest :183-192, Playwright == lockfile :200-202, non-root :208/:3502, sandbox flags :735/:4151) still covers the image unchanged, but nothing asserts the FROM major equals engines/.nvmrc/deploy.sh/CI/release preflight. The major is now hand-synced in ~7 places (.nvmrc, 3x engines, invariants.yml x2, deploy.sh:124, preflight.ts:116, 4 FROMs, devcontainer). A single cross-file consistency check in deploy-config would make the next major bump mechanical. Conformance is fine as is (the spec's tripwire list doesn't require it).
+4. LOW - deploy/loadtest/Dockerfile's build-stage FROM is not covered by the digest-pin check (only deploy/Dockerfile runs through dockerfileProblems; loadtest.suite.ts has no Dockerfile assertions). Pre-existing; this diff pinned it correctly by hand.
+5. LOW (risk note) - scripts/release/lib/preflight.ts:116 now makes Node 26 mandatory for mobile releases while no Android/iOS build has been run on Node 26 in this chain (D7 schedules device builds in W3). RN 0.85.3/metro 0.84.4 engines accept >=25, so no expected break; DEVLOG.md:42 ("Node 26 too new for the RN toolchain") is now historically stale. The deviation was correct (otherwise every release is refused on the mandated Node); just do not cut a release between W2 and W3 without an offline Android build on 26.
+6. NEUTRAL - .devcontainer/Dockerfile:17 `node:26-bookworm` is a floating tag (pre-existing style, declared). Its `npx ... firebase-tools@15.32.1` vs root package.json 15.37.0 mismatch is pre-existing, not this chain's.
+Missed-coupling sweep: no other process.versions.node / nodeMajorVersion / semver comparisons; cloudbuild uses a digest-pinned docker builder (no Node runtime); site.Dockerfile is caddy; no corepack/yarn use (Node 25+ dropped corepack). Remaining "Node 22" strings are history/narrative or CLAUDE.md:66, which task 10.1 owns.
+
+HARNESS FEEDBACK
+- CAUGHT-REAL-MISTAKE (builder): brief's string grep missed the numeric `nodeMajorVersion !== 22` gate in release preflight; builder found it by grepping comparisons. Proposal: runtime-major briefs list "grep version comparisons, not strings" and name preflight.ts + deploy.sh.
+- DRAWBACK: Node-major-dependent config (NODE_OPTIONS warning suppression) is invisible to a FROM/engines-focused brief. Proposal: runtime-major briefs add "re-justify every node flag / NODE_OPTIONS / experimental-feature workaround".
+- DRAWBACK: @types/node is not in any plan; a runtime-major chain cannot fix it without an unplanned dep. Proposal: planner includes the @types/node major in the same wave as the runtime move.
+- ENV: synthrun:test needs the large-suite wall cap (builder lost one run to the 180 s default).
+- NEUTRAL: esbuild target equivalence was cheap to prove with a write:false bundle diff; suggest briefs ask for it when a target moves.

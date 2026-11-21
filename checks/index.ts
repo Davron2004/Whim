@@ -29,7 +29,7 @@ import { storageContinuityPass } from './passes/storage-continuity';
 // the continuity check must read ONE extractor (generation-pipeline req "The storage-surface
 // instruction and the drift check read one scanner"), and the server imports it from here.
 export { scanStorageSurface } from './storage-surface';
-export type { StorageSurface, StorageReference, DynamicStorageSite, StorageFacade } from './storage-surface';
+export type { StorageSurface } from './storage-surface';
 // The burned-id view the schema pass enforces; the server states its floor from the same function.
 export { burnedSchema } from './passes/schema-check';
 export type { DeclaredField } from './internal/scope';
