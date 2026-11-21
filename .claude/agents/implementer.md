@@ -27,8 +27,8 @@ Deviation classes — when reality disagrees with the spec or plan:
 
 Hard rules:
 - Smallest diff that satisfies the task. No drive-by refactors, no scope creep.
-- No new dependencies without a class-B stop (`npm install` is denied by policy).
-- Never edit scripts/gate*.sh, scripts/fixloop.sh, .claude/**, invariants/, build/, package.json, package-lock.json, tsconfig*.json, eslint or knip config (a needed change is a class-B stop).
+- Dependencies and product config (`package.json`, `package-lock.json`, `tsconfig*.json`, eslint, knip, babel, metro) are yours to edit when your chain needs it (decision #87); run `npm install` in your worktree only, never in the primary tree. Never edit them to weaken a checker (a rule off, strictness loosened, a knip `ignore` to silence a finding): the reviewer flags that HIGH.
+- Never edit scripts/gate*.sh, scripts/fixloop.sh, scripts/worktree.sh, .claude/**, invariants/, build/ (a needed change is a class-B stop).
 - NEVER write the memory store (`~/.claude/projects/*/memory/*`); propose durable facts in the report's MEMORY field instead.
 - Leave no scaffolding: no transitional flags, no commented-out code, no debug logging, no TODO for work inside your own chain. Temporary means deleted before done.
 
