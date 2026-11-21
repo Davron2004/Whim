@@ -11,7 +11,7 @@
     "--cap-add=NET_ADMIN",
     "--cap-add=NET_RAW",
     "--security-opt",
-    "seccomp=${localWorkspaceFolder}/deploy/seccomp/chromium-playwright-1.60.0.json"
+    "seccomp=${localWorkspaceFolder}/deploy/seccomp/chromium-playwright-1.65.1.json"
   ],
 
   // The host repo is BIND-MOUNTED (the default workspaceMount does this), so

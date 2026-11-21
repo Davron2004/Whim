@@ -485,6 +485,30 @@ export function runContractTests(): void {
     eq(`server pins ${dep} to the lockfile-resolved version exactly`, serverLockDeps[dep], resolved);
   }
 
+  // The lockfile entry is only what the last install recorded: server/package.json is what an
+  // `npm ci` from a drifted manifest would reject, so its declared range must be the exact version too.
+  const declaredServerDeps = (JSON.parse(readFileSync(path.join(root, 'server/package.json'), 'utf8')) as { dependencies?: Record<string, string> }).dependencies ?? {};
+  const toolchain = ['esbuild', 'playwright', 'typescript'];
+  const resolvedRoot = (dep: string): string => lock.packages[`node_modules/${dep}`]?.version ?? '';
+  const pinProblems = (declared: Readonly<Record<string, string>>): string[] =>
+    toolchain.filter((dep) => declared[dep] !== resolvedRoot(dep)).map((dep) => `${dep}: server/package.json declares ${JSON.stringify(declared[dep])}, the lockfile resolves ${resolvedRoot(dep)}`);
+  eq('server/package.json declares esbuild, playwright and typescript at exactly the lockfile-resolved versions', pinProblems(declaredServerDeps), []);
+  const exact = Object.fromEntries(toolchain.map((dep) => [dep, resolvedRoot(dep)]));
+  for (const dep of toolchain) {
+    const [major = '0', minor = '0', patch = '0'] = resolvedRoot(dep).split('.');
+    const drifts: Array<[string, string]> = [
+      ['a different patch', `${major}.${minor}.${Number(patch) + 1}`],
+      ['a caret range on the resolved version', `^${resolvedRoot(dep)}`],
+      ['a tilde range on the resolved version', `~${resolvedRoot(dep)}`],
+    ];
+    for (const [what, declared] of drifts) {
+      const problems = pinProblems({ ...exact, [dep]: declared });
+      check(`  red: ${dep} declared as ${what} (${declared}) fails the pin`, problems.length === 1 && problems[0]!.startsWith(`${dep}:`), problems.join(' | '));
+    }
+    const without = Object.fromEntries(Object.entries(exact).filter(([name]) => name !== dep));
+    check(`  red: ${dep} missing from server/package.json fails the pin`, pinProblems(without).some((p) => p.startsWith(`${dep}:`)));
+  }
+
   // The pretty printer is a HUMAN convenience, not part of the service: the server must run with
   // structured JSON where it is absent (spec "The service runs without the pretty printer"), so it
   // may never appear under `dependencies`.

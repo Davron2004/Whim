@@ -15,13 +15,14 @@ name: invariants
 
 on:
   push:
-    branches: [main]
+    # integration/** : a run's staging branch gets CI on push before its PR exists. Once the PR exists
+    # the push and pull_request runs both fire; that duplication is accepted.
+    branches: [main, "integration/**"]
   pull_request:
 
 jobs:
   quality-gate:
-    # Pinned: ubuntu-latest moved to 26.04 (Nov 2026), which Playwright 1.60 can't install Chromium on.
-    runs-on: ubuntu-24.04
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -49,8 +50,9 @@ jobs:
             src/ 2>/dev/null
 
   isolation-suite:
-    # Pinned with the Playwright version below; move both together.
-    runs-on: ubuntu-24.04
+    # ubuntu-latest is 26.04 (Nov 2026); Playwright 1.65 lists it as a supported host. If a later
+    # Playwright cannot install Chromium on a new image, pin the image here and say why.
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-node@v5
@@ -111,8 +113,8 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ~/.cache/ms-playwright
-          key: playwright-${{ runner.os }}-1.60.0
-      - run: npx --ignore-scripts --package=playwright@1.60.0 playwright install --with-deps chromium
+          key: playwright-${{ runner.os }}-1.65.1
+      - run: npx --ignore-scripts --package=playwright@1.65.1 playwright install --with-deps chromium
       # Chromium's OS sandbox needs unprivileged user namespaces, which Ubuntu's AppArmor restricts
       # by default. Synthrun launches with the sandbox on and never falls back to disabling it
       # (public-generation-server D4), so allow them before any Chromium suite runs.

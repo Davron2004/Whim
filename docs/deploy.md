@@ -955,7 +955,7 @@ run `deploy/deploy.sh` (no `--tag`) so it re-reads the latest enabled version an
   allows `chroot` only with `CAP_SYS_CHROOT`, and Chromium's namespace sandbox chroots inside its
   own user namespace to boot at all. Dropping this one capability back in fails the boot self-test;
   everything else effective (`CapEff`/`CapPrm`/`CapAmb`) stays zero.
-- `no-new-privileges:true` plus the vendored, digest-matched Chromium/Playwright seccomp profile —
+- `no-new-privileges:true` plus the vendored Chromium/Playwright seccomp profile, byte-identical to upstream `microsoft/playwright` `utils/docker/seccomp_profile.json` at tag `v1.65.1` (sha256 `cc3e61cabda6bbc1e53e54d27ba4d55a9d3be829b6dd1a596f4a7b31b1cc7849`; at the next Playwright bump, fetch the file at the new tag from raw.githubusercontent.com, compare `shasum -a 256` against the vendored copy, and rename it to the new version) —
   Never `--no-sandbox`.
 - `read_only: true` with a `tmpfs` `/tmp` — the image writes nothing to its own layer at runtime.
 - No published server port — Caddy is the only ingress, and it never buffers SSE

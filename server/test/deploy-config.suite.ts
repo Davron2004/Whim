@@ -215,6 +215,35 @@ function playwrightPinProblems(text: string, version: string): string[] {
   return problems;
 }
 
+/** A tooling file (devcontainer, CI) that must carry the lockfile's Playwright version in `pattern`'s
+ *  first capture group: every match must equal it, and a file with no match fails closed. */
+function playwrightSiteProblems(site: string, text: string, pattern: RegExp, what: string, version: string): string[] {
+  const found = [...text.matchAll(pattern)].map((match) => match[1]!);
+  const problems = found.filter((pin) => pin !== version).map((pin) => `${site}: ${what} is ${pin}, the lockfile resolves ${version}`);
+  if (found.length === 0) problems.push(`${site}: no ${what} found`);
+  return problems;
+}
+
+const SECCOMP_PATH = /deploy\/seccomp\/chromium-playwright-(\d+(?:\.\d+)+)\.json/g;
+
+function seccompSiteProblems(site: string, text: string, version: string, seccompFiles: readonly string[]): string[] {
+  const problems = playwrightSiteProblems(site, text, SECCOMP_PATH, 'seccomp profile version', version);
+  const file = `chromium-playwright-${version}.json`;
+  if (!seccompFiles.includes(file)) problems.push(`${site}: deploy/seccomp/${file} is not vendored`);
+  return problems;
+}
+
+function devcontainerPlaywrightProblems(files: ReadonlyMap<string, string>, version: string, seccompFiles: readonly string[]): string[] {
+  const text = (rel: string): string => files.get(rel) ?? '';
+  return [
+    ...seccompSiteProblems('.devcontainer/devcontainer.json', text('.devcontainer/devcontainer.json'), version, seccompFiles),
+    ...seccompSiteProblems('.devcontainer/run-loop.sh', text('.devcontainer/run-loop.sh'), version, seccompFiles),
+    ...playwrightPinProblems(text('.devcontainer/Dockerfile'), version).map((problem) => `.devcontainer/Dockerfile: ${problem}`),
+    ...playwrightPinProblems(text('.github/workflows/invariants.yml'), version).map((problem) => `.github/workflows/invariants.yml: ${problem}`),
+    ...playwrightSiteProblems('.github/workflows/invariants.yml', text('.github/workflows/invariants.yml'), /playwright-\$\{\{ runner\.os \}\}-(\d+(?:\.\d+)+)/g, 'browser cache key version', version),
+  ];
+}
+
 function finalStageProblems(stage: readonly DockerInstruction[]): string[] {
   const problems: string[] = [];
   const user = stage.filter((i) => i.keyword === 'USER').at(-1)?.args ?? '';
@@ -3750,6 +3779,26 @@ function provisionMonitoringTests(): void {
   check('a policy display name held by two policies refuses, naming it, rather than guessing which to update', twice.status === 1 && twice.stderr.includes('two resources are named'), twice.stderr);
 }
 
+function toolingPlaywrightTests(playwrightVersion: string, seccompFiles: readonly string[]): void {
+  section('Tooling: Playwright version sites');
+  const rels = ['.devcontainer/devcontainer.json', '.devcontainer/run-loop.sh', '.devcontainer/Dockerfile', '.github/workflows/invariants.yml'];
+  const files = new Map(rels.map((rel) => [rel, readRepoFile(rel)]));
+  const problems = (map: ReadonlyMap<string, string>): string[] => devcontainerPlaywrightProblems(map, playwrightVersion, seccompFiles);
+  const stale = '9.99.9';
+  const staleSeccomp = (rel: string): Map<string, string> => withFile(files, rel, (files.get(rel) ?? '').replaceAll(playwrightVersion, stale));
+  checkClean('the devcontainer, its run-loop, its Dockerfile and the CI workflow all carry the lockfile Playwright version and a vendored seccomp profile', problems(files));
+  checkCaught('  red: a devcontainer.json seccomp path on another version fails', problems(staleSeccomp('.devcontainer/devcontainer.json')), '.devcontainer/devcontainer.json: seccomp profile version is 9.99.9');
+  checkCaught('  red: a run-loop.sh seccomp path on another version fails', problems(staleSeccomp('.devcontainer/run-loop.sh')), '.devcontainer/run-loop.sh: seccomp profile version is 9.99.9');
+  checkCaught('  red: a lockfile Playwright with no vendored seccomp profile fails', devcontainerPlaywrightProblems(files, playwrightVersion, []), `.devcontainer/run-loop.sh: deploy/seccomp/chromium-playwright-${playwrightVersion}.json is not vendored`);
+  checkCaught('  red: a devcontainer Dockerfile install on another version fails', problems(staleSeccomp('.devcontainer/Dockerfile')), '.devcontainer/Dockerfile: the image pins playwright@9.99.9');
+  checkCaught('  red: a CI install on another version fails', problems(withFile(files, '.github/workflows/invariants.yml', plant(files.get('.github/workflows/invariants.yml') ?? '', `--package=playwright@${playwrightVersion}`, `--package=playwright@${stale}`))), '.github/workflows/invariants.yml: the image pins playwright@9.99.9');
+  checkCaught('  red: a CI cache key on another version fails', problems(withFile(files, '.github/workflows/invariants.yml', plant(files.get('.github/workflows/invariants.yml') ?? '', `-${playwrightVersion}\n`, `-${stale}\n`))), '.github/workflows/invariants.yml: browser cache key version is 9.99.9');
+  checkCaught('  red: a devcontainer.json without a seccomp path fails closed', problems(withFile(files, '.devcontainer/devcontainer.json', '{}')), '.devcontainer/devcontainer.json: no seccomp profile version found');
+  checkCaught('  red: a run-loop.sh without a seccomp path fails closed', problems(withFile(files, '.devcontainer/run-loop.sh', '')), '.devcontainer/run-loop.sh: no seccomp profile version found');
+  checkCaught('  red: a Dockerfile without a pinned install fails closed', problems(withFile(files, '.devcontainer/Dockerfile', '')), '.devcontainer/Dockerfile: the image installs no pinned playwright');
+  checkCaught('  red: a workflow without the install or cache key fails closed', problems(withFile(files, '.github/workflows/invariants.yml', '')), '.github/workflows/invariants.yml: no browser cache key version found');
+}
+
 // ---------------------------------------------------------------------------------------------
 
 function imageTests(files: ReadonlyMap<string, string>, playwrightVersion: string): void {
@@ -4595,6 +4644,7 @@ export async function runDeployConfigTests(): Promise<void> {
   const siteFiles = fs.readdirSync(path.join(ROOT, 'deploy', 'site'), { recursive: true, encoding: 'utf8' });
 
   imageTests(files, playwrightVersion);
+  toolingPlaywrightTests(playwrightVersion, composeContext.seccompFiles);
   imageClosureTests(files);
   composeTests(files, composeContext);
   caddyTests(files, maxBodyBytes, siteFiles);

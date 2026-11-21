@@ -29,7 +29,7 @@ services:
       - SYS_CHROOT
     security_opt:
       - no-new-privileges:true
-      - seccomp=/opt/whim/seccomp/chromium-playwright-1.60.0.json
+      - seccomp=/opt/whim/seccomp/chromium-playwright-1.65.1.json
     volumes:
       - /mnt/disks/whim-data/server:/data
     networks:

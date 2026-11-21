@@ -134,7 +134,7 @@ The 0.88 template flips `UIViewControllerBasedStatusBarAppearance` to true. Whim
 - **[React 19.3 or esbuild 0.28 changes sandbox behavior]** → `npm run invariants` and `bridge:invariants` after the rebuild, plus the on-device verdict.
 - **[0.88's Hermes ships a native `TextDecoder` and the fill-only-if-missing polyfill steps aside]** → The streaming decode path then runs on Hermes' implementation. W3's end-to-end generation on device covers it. A wrong decode shows up as a broken stream, not silent data loss.
 - **[RN 0.88.1 has known iOS crashes waiting on 0.88.2, including `NativeDeviceInfo.getConstants`]** → D3 takes the newest patch at implementation time. If 0.88.2 hasn't shipped by W3, record whether the crash reproduces on the simulator.
-- **[Playwright 1.65 changes the server's Chromium (149 → 158), and with it the probe surface]** → That is exactly what the invariants measure. A new failure is a finding, not something to suppress. The seccomp profile filenames embed `1.60.0` and are renamed in the same commit.
+- **[Playwright 1.65 changes the server's Chromium (149 → 159), and with it the probe surface]** → That is exactly what the invariants measure. A new failure is a finding, not something to suppress. The seccomp profile filenames embed `1.60.0` and are renamed in the same commit.
 - **[The tooling waves take a while to review]** → Accepted. The commits are grouped per wave, and the PR description carries the wave table.
 
 ## Migration Plan

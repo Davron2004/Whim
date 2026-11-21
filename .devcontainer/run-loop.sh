@@ -79,7 +79,7 @@ case "${1:-}" in
     # (user namespaces); see devcontainer.json. Never swap it for --no-sandbox.
     docker run --rm \
       --cap-add=NET_ADMIN --cap-add=NET_RAW \
-      --security-opt seccomp="$REPO/deploy/seccomp/chromium-playwright-1.60.0.json" \
+      --security-opt seccomp="$REPO/deploy/seccomp/chromium-playwright-1.65.1.json" \
       -e CLAUDE_CODE_OAUTH_TOKEN="$TOKEN" \
       -v "$REPO":/workspace \
       -v "$VOLUME":/workspace/node_modules:ro \
