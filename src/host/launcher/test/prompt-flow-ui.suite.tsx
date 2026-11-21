@@ -837,6 +837,47 @@ export async function runPromptFlowUiTests(h: Harness): Promise<void> {
     });
   });
 
+  await h.test('flow: a close that lands before the Making page is drawn (Make it, then the close control, both on the plan as drawn) leaves the run going and keeps no draft: Home says it is ready, and the composer starts afresh, its Make it making again', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ server: streamingServer(streams) }, async ({ tree, sent }) => {
+      await composeToPlan(tree, 'A tea timer');
+      const make = tree.root.findByType(PlanPage).props.onMake;
+      const close = tree.root.findByType(MakingSheet).props.onClose;
+      await tap(() => { make(); close(); });
+      await waitFor(() => streams.length === 1, 'the run to start');
+      h.ok(onHome(tree) && !makingSheetOpen(tree), 'the sheet closed onto Home');
+      h.eq(home(tree).props.draft, undefined, 'and the composer offers nothing to continue: the words are a run');
+      streams[0].push(resultEvent('Tea Timer'));
+      streams[0].end();
+      await waitFor(() => hasInstalled(tree, 'Tea Timer'), 'the run to deliver');
+      h.eq(toastOf(tree), { message: 'Tea Timer is ready', action: COPY.actionOpen }, 'delivered with the sheet closed, a toast says it is ready');
+      await composeToPlan(tree, 'A coffee timer');
+      h.eq(plan(tree).text, 'A coffee timer', 'the composer opened a new Describe, not the spent plan');
+      await buildIt(tree);
+      await waitFor(() => on(tree, MakingPage), 'the making page');
+      h.eq(sent.filter((r) => r.path === '/v1/generate').length, 2, 'and its Make it starts a second run');
+      streams[1].end();
+    });
+  });
+
+  await h.test('flow: a close that lands before the plan page is drawn (Continue, then the close control, both on Describe as drawn) keeps the words, and reopening them Continue asks again', async () => {
+    await withLauncher({ server: (r) => (r.path === '/v1/clarify' ? json({ questions: [] }) : json({ rewrittenPrompt: String(r.body?.prompt), plan: [] })) }, async ({ tree, sent }) => {
+      await TestRenderer.act(async () => home(tree).props.onCreate());
+      await TestRenderer.act(async () => tree.root.findByType(DescribePage).props.onChangeText('A tea timer'));
+      const next = tree.root.findByType(DescribePage).props.onContinue;
+      const close = tree.root.findByType(MakingSheet).props.onClose;
+      await tap(() => { next(); close(); });
+      await settle();
+      h.ok(onHome(tree), 'the sheet closed onto Home');
+      h.eq(home(tree).props.draft, 'A tea timer', 'the words are kept to continue');
+      h.ok(sent.filter((r) => r.path === '/v1/clarify').every((r) => r.signal?.aborted === true), 'the clarify the plan page sent went with it');
+      await TestRenderer.act(async () => home(tree).props.onCreate());
+      await tap(() => tree.root.findByType(DescribePage).props.onContinue());
+      await waitFor(() => planLoaded(tree), 'the plan');
+      h.eq(sent.filter((r) => r.path === '/v1/clarify' && r.signal?.aborted !== true).length, 1, 'Continue on the kept words asks again');
+    });
+  });
+
   await h.test('flow: delivered with the sheet open, Ready shows the app, and Open it launches it', async () => {
     const streams: ReturnType<typeof sseStream>[] = [];
     await withLauncher({ server: streamingServer(streams) }, async ({ tree }) => {

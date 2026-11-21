@@ -17,7 +17,7 @@ import { useTokens } from '../../ui/tokens';
 import { LAYOUT } from '../../../design/tokens';
 import { ambientOpacity, springConfig, timingOf } from '../../ui/tokens-pure';
 import { StyleSheet, accessibilitySettings, emitAccessibility } from './native-host';
-import { animations, elapseSprings, holdAnimations, isStep, measuring, ReduceMotion } from './native-reanimated';
+import { animations, elapse, elapseSprings, frameStyles, holdAnimations, holdWrites, isStep, measureWarnings, measuring, ReduceMotion } from './native-reanimated';
 import { button, hostType, press, renderScreen, textOf, unmountScreen } from './react-screen';
 
 type Tree = TestRenderer.ReactTestRenderer;
@@ -239,6 +239,28 @@ export async function runMakeItMotionUiTests(h: Harness): Promise<void> {
       h.ok(seenEmbers(tree).length === 1 && inside(seenEmbers(tree)[0], making(tree)), 'the Making page’s own ember is the one seen');
       h.ok(makingParts(tree).slice(0, 4).every((part) => seen(part).opacity === 1), 'its words, steps and Stop whole');
     } finally { await leave(tree, release); }
+  });
+
+  await h.test('M9: a close mid-travel once the plan has faded lands the ember and drops the plan page in one go, and no UI frame of the travel’s styles, which run on until the UI thread hears they stopped, measures Make it’s place, gone with the page', async () => {
+    const { tree, release } = await makeIt();
+    let writes: ReturnType<typeof holdWrites> | null = null;
+    try {
+      await run(() => { elapseSprings(60); elapse(FADE_OUT.duration); });
+      const travelling = flying(tree);
+      const departing = plan(tree)?.findAll((n) => hostType(n) === 'Animated.View' && ((flat(n).transform as Style[] | undefined) ?? []).some((step) => 'scale' in step && step.scale === MAKE_IT_EMBER / 48))[0];
+      h.ok(travelling !== null && departing !== undefined, 'mid-travel, the plan faded out under the Making page, still mounted');
+      const running = [travelling!.node.props.style, departing!.props.style];
+      measureWarnings.unattached = 0;
+      measureWarnings.outOfTree = 0;
+      writes = holdWrites();
+      await press(button(tree, COPY.sheetClose));
+      h.ok(plan(tree) === undefined && flying(tree) === null, 'closed: the ember landed and the plan page went');
+      for (let i = 0; i < 3; i++) await run(() => { for (const style of running) frameStyles(style); });
+      h.eq(measureWarnings, { unattached: 0, outOfTree: 0 }, 'the frames before the UI thread hears of it never ask Reanimated about a view out of the tree');
+    } finally {
+      if (writes) await run(writes.release);
+      await leave(tree, release);
+    }
   });
 
   // ── The marker moves down to the repair row (§7.1 Step list) ───────────────

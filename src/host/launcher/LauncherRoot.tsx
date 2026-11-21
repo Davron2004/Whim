@@ -784,7 +784,8 @@ function firstRunAskOf(screen: Screen): FirstRunAsk | null {
  * Whether `page` is a page whose forward action has not been taken yet. A second tap on the same
  * page lands before React has drawn the next one, and a busy action ignores taps (system.md Button):
  * it would otherwise send a second request, or start a second run. Every page the machine moves to
- * is a new object.
+ * is a new object. `spent` says a page's forward action was taken: a close can land on it after that,
+ * before the page it went to is drawn, and must not keep it to come back to, where it would be dead.
  */
 function useFirstTake() {
   const taken = useRef<object | null>(null);
@@ -793,7 +794,8 @@ function useFirstTake() {
     taken.current = page;
     return true;
   };
-  return { firstTake };
+  const spent = (page: object): boolean => taken.current === page;
+  return { firstTake, spent };
 }
 
 /** What the first-run sheet needs of the current terms and consent state. */
@@ -1605,6 +1607,7 @@ function LauncherShell({
   /** The session's making-sheet drafts (`flow-draft.ts`): the page left on Describe or Plan, with its
    *  words, answers and plan edits, one for a new app and one per app being changed. */
   const drafts = useRef(new FlowDrafts()).current;
+  const { firstTake, spent } = useFirstTake();
   const [composerDraft, setComposerDraft] = useState<string | undefined>(undefined);
   const syncComposerDraft = () => setComposerDraft(drafts.composerWords());
 
@@ -1620,11 +1623,17 @@ function LauncherShell({
   };
 
   /** Leaving a draft page by any route (close, scrim, drag, back, a link, a screen that replaces
-   *  it) aborts what it has in flight and keeps what the person had, to come back to from the composer. */
+   *  it) aborts what it has in flight and keeps what the person had, to come back to from the composer.
+   *  A page left after its forward action was taken (`spent`: the close landed before the next page was
+   *  drawn) is left as that next page: a plan's Make it made its words a run, so nothing is kept;
+   *  Describe's Continue sent the plan page's clarify, which goes, and its words are kept on a page of
+   *  their own, so Continue on them asks again. */
   const keepDraft = (from: Screen) => {
-    leaveFlowStep(from.kind);
+    const left = from.kind === 'describe' && spent(from) ? 'plan' : from.kind;
+    leaveFlowStep(left);
+    if (from.kind === 'plan' && spent(from)) return;
     if (from.kind === 'describe' || from.kind === 'plan') {
-      drafts.keep(from);
+      drafts.keep(spent(from) ? { ...from } : from);
       syncComposerDraft();
     }
   };
@@ -1985,8 +1994,6 @@ function LauncherShell({
     ...(journalId != null ? { journalId } : {}),
     ...(pendingId != null ? { pendingId } : {}),
   });
-
-  const { firstTake } = useFirstTake();
 
   /** Opens the making sheet, optionally scoped to one app being changed: on the draft the person left
    *  for it (a plan page comes back as it was, with its answers and edits; its missing requests are
@@ -3605,7 +3612,8 @@ function LauncherShell({
   };
 
   /** Closing the sheet by any route (the close control, the scrim, a drag, Android back): on Making the
-   *  run keeps going and the sheet collapses into its tile; on Describe and Plan the in-flight
+   *  run keeps going and the sheet collapses into its tile, as on a plan whose Make it was taken before
+   *  the Making page was drawn; on Describe and Plan the in-flight
    *  clarify or rewrite is aborted and the draft kept (`goHome` → `keepDraft`), or, over the app the
    *  Whim sheet sent the change from, the app shows again; on Ready it is Done; on Failure it leaves
    *  the attempt as it is, its tile and journal kept. The Whim sheet closes onto its running app.
@@ -3615,7 +3623,7 @@ function LauncherShell({
   const closeSheet = () => {
     if (screen.kind === 'history') {
       historyBack(screen)();
-    } else if (screen.kind === 'making') {
+    } else if (screen.kind === 'making' || (screen.kind === 'plan' && running === null && spent(screen))) {
       onLeaveRunning();
     } else if (screen.kind === 'app') {
       setScreen({ ...screen, sheet: undefined });

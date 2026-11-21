@@ -1,4 +1,5 @@
-/** react-native-reanimated (and react-native-worklets' `scheduleOnRN`, held by `holdHops`) for React interaction tests. Nothing runs on a UI thread: assigning an
+/** react-native-reanimated (and react-native-worklets' `scheduleOnRN`, held by `holdHops`; `scheduleOnUI` and the JS
+ *  thread's writes to shared values and animated refs, held by `holdWrites`; `createSynchronizable`) for React interaction tests. Nothing runs on a UI thread: assigning an
  *  animation to a shared value records it in `animations` (oldest first) and jumps the value to
  *  where the animation ends, so a test reads what motion a control asked for — the target, the
  *  spring or timing config, delays, sequences and repeats — and the style it settles in.
@@ -287,6 +288,10 @@ class SharedValue<T> {
     return this.current;
   }
   set value(next: T) {
+    if (writes !== null && !onUiThread) {
+      writes.push(() => { this.value = next; });
+      return;
+    }
     const was = this.running;
     this.interrupt();
     if (isAnimation(next)) {
@@ -440,10 +445,68 @@ export function useSharedValue<T>(initial: T): SharedValue<T> {
 /** Code runs as a worklet on the UI thread (a style on a UI frame, a reaction, a native event's
  *  handler): only there does `measure` measure. */
 let onUiThread = false;
+/** While a test holds them, the JS thread's writes to the UI thread since, oldest first. */
+let writes: (() => void)[] | null = null;
+/** A JS-thread write to the UI thread: at once, unless the test holds writes; on the UI thread, at once. */
+function toUi(write: () => void): void {
+  if (writes === null || onUiThread) write();
+  else writes.push(write);
+}
+/** From now on what the JS thread writes for the UI thread waits, as on a phone, where a shared value
+ *  assigned on the JS thread (mutables.native.ts, `scheduleOnUI`), an animated ref taken on or off a
+ *  view (useAnimatedRef.native.ts, `scheduleOnUI`) and `scheduleOnUI` itself only queue the write,
+ *  in the order made, and UI frames run on before the UI thread takes them: a test looks at those
+ *  frames. The JS thread reads what it last saw. `waiting` counts the writes queued; `release` runs
+ *  them on the UI thread, oldest first, and stops holding. */
+export function holdWrites(): { waiting: () => number; release: () => void } {
+  const queue: (() => void)[] = [];
+  writes = queue;
+  return {
+    waiting: () => queue.length,
+    release: () => {
+      writes = null;
+      for (const write of queue) onUi(write);
+    },
+  };
+}
+/** react-native-worklets' `scheduleOnUI`: `fn(...args)` as a worklet on the UI thread, after every
+ *  write queued before it (`holdWrites`). */
+export function scheduleOnUI<A extends unknown[]>(fn: (...args: A) => void, ...args: A): void {
+  toUi(() => onUi(() => fn(...args)));
+}
+/** react-native-worklets' Synchronizable: one value both threads read and write at once, never
+ *  through the queue `holdWrites` holds (SynchronizableFixed.cpp: an atomic). `setBlocking` takes a
+ *  value, or a function of the value now, as one step. */
+export interface Synchronizable<T> {
+  getDirty(): T;
+  getBlocking(): T;
+  setBlocking(next: T | ((now: T) => T)): void;
+  setDirty(next: T): void;
+  lock(): void;
+  unlock(): void;
+}
+export type FixedSynchronizable<T> = Synchronizable<T>;
+function countedRead<T>(value: T): T {
+  if (!onUiThread) jsThreadReads.count += 1;
+  return value;
+}
+export function createSynchronizable<T>(initial: T, _config?: { fixedType?: boolean }): Synchronizable<T> {
+  let value = initial;
+  return {
+    getDirty: () => countedRead(value),
+    getBlocking: () => countedRead(value),
+    setBlocking: (next) => { value = typeof next === 'function' ? (next as (now: T) => T)(value) : next; },
+    setDirty: (next) => { value = next; },
+    lock: () => {},
+    unlock: () => {},
+  };
+}
 /** Whether code runs on the RN (JS) runtime, as worklets' `isRNRuntime`. */
 export const isRNRuntime = (): boolean => !onUiThread;
-/** How many shared-value reads ran on the JS thread: Reanimated 4 answers a dirty value there with a
- *  synchronous round trip into the UI runtime. A test reads it before and after. */
+/** How many shared-value and Synchronizable reads ran on the JS thread: Reanimated 4 answers a dirty
+ *  shared value there with a synchronous round trip into the UI runtime; a Synchronizable read on
+ *  the JS thread is counted too, for a worklet that must not touch one there. A test reads it before
+ *  and after. */
 export const jsThreadReads = { count: 0 };
 /** Runs `fn` as a worklet on the UI thread, at once; a test measures through it. */
 export function onUi<R>(fn: () => R): R {
@@ -519,6 +582,9 @@ type Observer = (tag: number | null) => (() => void) | undefined;
 interface AnimatedRef<T> {
   (node?: T | null): T | null;
   current: T | null;
+  /** The view the UI thread holds: `current`, once the write that took the ref on or off a view has
+   *  reached the UI thread (`holdWrites`). */
+  ui: T | null;
   observe: (observer: Observer) => () => void;
 }
 let nextTag = 1;
@@ -551,6 +617,7 @@ export function useAnimatedRef<T>(): AnimatedRef<T> {
       }
       const [node] = given;
       animatedRef.current = node;
+      toUi(() => { animatedRef.ui = node; });
       if (node === null) {
         if (observers.size > 0) queueMicrotask(cleanUpIfDetached);
         return null;
@@ -564,6 +631,7 @@ export function useAnimatedRef<T>(): AnimatedRef<T> {
       return node;
     }) as AnimatedRef<T>;
     animatedRef.current = null;
+    animatedRef.ui = null;
     animatedRef.observe = (observer) => {
       const viewTag = tagOf(animatedRef.current);
       observers.set(observer, { tag: viewTag, cleanup: observer(viewTag) });
@@ -694,20 +762,30 @@ export const measuredRect = { x: 0, y: 0, width: 100, height: 100, pageX: 0, pag
 /** Where particular views are now: given what a ref holds (the test's `createNodeMock` output), the
  *  rect it measures, or undefined for `measuredRect`. A test sets `rectOf`, and clears it after. */
 export const measuring: { rectOf: ((node: unknown) => typeof measuredRect | undefined) | null } = { rectOf: null };
-/** How many times a worklet measured a ref that held no view: Reanimated 4.8 logs a warning on every
- *  such call (measure.native.ts:35-41, `logger.warn`, never deduplicated). A test zeroes it. */
-export const measureWarnings = { unattached: 0 };
-/** Reanimated's synchronous measurement: the view's rect, or null while its ref holds no view, never
- *  put on one or taken off it (Reanimated 4.8 answers that null itself, and warns: `measureWarnings`).
- *  Only a worklet on the UI thread measures: on the JS thread it answers null, without a warning
- *  (measure.native.ts:31-33). */
+/** How many times a worklet measured a ref that held no view (`unattached`: Reanimated 4.8 logs "The
+ *  view with tag null is not a valid argument", measure.native.ts:35-41), and a ref the UI thread
+ *  still holds on a view React has already taken out of the tree it committed (`outOfTree`: the view
+ *  is no longer in the shadow tree's current revision, UIManager.cpp:380-386 measures against it,
+ *  LayoutableShadowNode.cpp:85-88 answers `EmptyLayoutMetrics`, ReanimatedModuleProxy.cpp:1281 null,
+ *  and measure.native.ts:44-48 logs "meaningless value of `LayoutMetrics`"). Each warning is logged on
+ *  every such call, never deduplicated. A test zeroes them. */
+export const measureWarnings = { unattached: 0, outOfTree: 0 };
+/** Reanimated's synchronous measurement of the view the UI thread holds: its rect, or null, with a
+ *  warning (`measureWarnings`), while it holds none, and while it still holds one React has taken off
+ *  the ref (the view left the committed tree, or the ref moved on), before that write reaches it
+ *  (`holdWrites`). Only a worklet on the UI thread measures: on the JS thread it answers null,
+ *  without a warning (measure.native.ts:31-33). */
 export function measure<T>(ref: AnimatedRef<T>): typeof measuredRect | null {
   if (!onUiThread) return null;
-  if (ref.current === null) {
+  if (ref.ui === null) {
     measureWarnings.unattached += 1;
     return null;
   }
-  return { ...(measuring.rectOf?.(ref.current) ?? measuredRect) };
+  if (ref.ui !== ref.current) {
+    measureWarnings.outOfTree += 1;
+    return null;
+  }
+  return { ...(measuring.rectOf?.(ref.ui) ?? measuredRect) };
 }
 
 // ── Layout animations ────────────────────────────────────────────────────────

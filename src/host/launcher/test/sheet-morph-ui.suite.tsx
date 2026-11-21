@@ -19,10 +19,11 @@ import { measured as measuredPlace, SheetAnchors, tileAnchor, usePlace, type Pla
 import { Text } from '../../ui/Text';
 import { useTokens } from '../../ui/tokens';
 import { emberLook, springConfig, timingOf } from '../../ui/tokens-pure';
-import { StyleSheet, accessibilitySettings, emitAccessibility, holdModalDismissals } from './native-host';
+import { Platform, StyleSheet, accessibilitySettings, emitAccessibility, holdModalDismissals } from './native-host';
 import { pan } from './native-gesture-handler';
-import { animations, elapse, elapseSprings, frameStyles, holdAnimations, holdHops, isStep, jsThreadReads, measuredRect, measureWarnings, measuring, onUi, ReduceMotion, runningAnimations } from './native-reanimated';
-import { androidBack, button, hostType, isHost, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { animations, elapse, elapseSprings, frameStyles, holdAnimations, holdHops, holdWrites, isStep, jsThreadReads, measuredRect, measureWarnings, measuring, onUi, ReduceMotion, runningAnimations } from './native-reanimated';
+import { androidBack, button, captureTimeouts, hostType, isHost, press, renderScreen, textOf, unmountScreen } from './react-screen';
+import { EXIT_CEILING_MS } from '../../ui/OverlayModal';
 
 type Tree = TestRenderer.ReactTestRenderer;
 type Node = TestRenderer.ReactTestInstance;
@@ -497,6 +498,47 @@ export async function runSheetMorphUiTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('M6 and M5 on Android: an exit that outruns the overlay’s ceiling (a slow phone) has its window taken down mid-way, and no UI frame of the plate and the face, which run on until the UI thread hears they stopped, measures a view that left the tree with it', async () => {
+    const cases: [string, 'describe' | 'making'][] = [['M6 by X', 'describe'], ['M5 by X', 'making']];
+    const previousOs = Platform.OS;
+    Platform.OS = 'android';
+    try {
+      for (const [name, start] of cases) {
+        const timers = captureTimeouts();
+        const { tree, release } = await rig(start);
+        let writes: ReturnType<typeof holdWrites> | null = null;
+        let hold: (() => void) | null = null;
+        try {
+          await run(release);
+          await cardLaidOut(tree);
+          hold = holdAnimations();
+          await press(button(tree, COPY.sheetClose));
+          for (let i = 0; i < 3; i++) await run(() => { elapseSprings(16); elapse(16); });
+          const running = [plate(tree), face(tree)].map((node) => node?.props.style);
+          h.ok(modal(tree) !== undefined && running.every((style) => style !== undefined), `${name}: mid-way out, the window is up with its plate and face`);
+          measureWarnings.unattached = 0;
+          measureWarnings.outOfTree = 0;
+          let inWindow = 0;
+          measuring.rectOf = (node) => {
+            const at = placeOf(node);
+            if (at === FRAME || at === MAKING_EMBER) inWindow += 1;
+            return at;
+          };
+          writes = holdWrites();
+          await TestRenderer.act(async () => timers.fire(EXIT_CEILING_MS));
+          h.eq(modal(tree), undefined, `${name}: the ceiling took the window down`);
+          for (let i = 0; i < 3; i++) await run(() => { elapseSprings(16); elapse(16); for (const style of running) frameStyles(style); });
+          h.eq([inWindow, measureWarnings], [0, { unattached: 0, outOfTree: 0 }], `${name}: the frames before the UI thread hears of it measure no view of the window, and Reanimated warns of nothing`);
+        } finally {
+          if (writes) await run(writes.release);
+          if (hold) await run(hold);
+          timers.restore();
+          await leave(tree, release);
+        }
+      }
+    } finally { Platform.OS = previousOs; }
+  });
+
   await h.test('M6: a sheet closed all the way into the capsule grows out of it again when the composer is tapped once more, the plate and the face drawn on the capsule as it sets out', async () => {
     const { tree, release } = await rig(null);
     try {
@@ -666,7 +708,45 @@ export async function runSheetMorphUiTests(h: Harness): Promise<void> {
     } finally { await unmountScreen(tree); }
   });
 
-  await h.test('a place asked on the JS thread (a style’s first run, during render) answers null without reading its shared value, which would round-trip into the UI runtime', async () => {
+  await h.test('a place is never measured on a UI frame that runs before the UI thread has heard the JS thread’s writes: not once React has taken its view out of the tree, not before the ref holds the view, and not after a view put on and taken off at once', async () => {
+    let place!: PlaceRef;
+    function Probe({ shown }: Readonly<{ shown: boolean }>) {
+      place = usePlace();
+      return shown ? <View ref={place.attach} /> : null;
+    }
+    const tree = await renderScreen(<Probe shown />, { createNodeMock: nodeMock });
+    measureWarnings.unattached = 0;
+    measureWarnings.outOfTree = 0;
+    let writes: ReturnType<typeof holdWrites> | null = null;
+    try {
+      h.eq(onUi(() => measuredPlace(place)), measuredRect, 'on its view, the place measures');
+      writes = holdWrites();
+      await TestRenderer.act(async () => tree.update(<Probe shown={false} />));
+      const removed = onUi(() => measuredPlace(place));
+      h.ok(writes.waiting() > 0, 'the JS thread’s writes for the removal are still on their way to the UI thread');
+      await run(writes.release);
+      writes = holdWrites();
+      await TestRenderer.act(async () => tree.update(<Probe shown />));
+      const putOn = onUi(() => measuredPlace(place));
+      await run(writes.release);
+      writes = null;
+      const on = onUi(() => measuredPlace(place));
+      writes = holdWrites();
+      await TestRenderer.act(async () => tree.update(<Probe shown={false} />));
+      await TestRenderer.act(async () => tree.update(<Probe shown />));
+      await TestRenderer.act(async () => tree.update(<Probe shown={false} />));
+      await run(writes.release);
+      writes = null;
+      const offAgain = onUi(() => measuredPlace(place));
+      h.eq([removed, putOn, on, offAgain], [null, null, measuredRect, null], 'null once its view left the tree, null until the ref holds the new view, its rect once it does, null after it was put on and taken off');
+      h.eq(measureWarnings, { unattached: 0, outOfTree: 0 }, 'and Reanimated was never asked about a view out of the tree or a ref on none');
+    } finally {
+      if (writes) await run(writes.release);
+      await unmountScreen(tree);
+    }
+  });
+
+  await h.test('a place asked on the JS thread (a style’s first run, during render) answers null without reading its place’s Synchronizable or any shared value on the JS thread', async () => {
     let place!: PlaceRef;
     function Probe() {
       place = usePlace();
@@ -676,7 +756,7 @@ export async function runSheetMorphUiTests(h: Harness): Promise<void> {
     try {
       const reads = jsThreadReads.count;
       const onJs = measuredPlace(place);
-      h.eq([onJs, jsThreadReads.count - reads], [null, 0], 'null, and not one JS-thread read of the place’s shared value');
+      h.eq([onJs, jsThreadReads.count - reads], [null, 0], 'null, and not one JS-thread read of the place’s Synchronizable');
       h.eq(onUi(() => measuredPlace(place)), measuredRect, 'while on the UI thread the same attached place still measures');
     } finally { await unmountScreen(tree); }
   });
