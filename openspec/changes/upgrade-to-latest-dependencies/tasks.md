@@ -61,9 +61,9 @@
 
 ## 9. W6: ESLint 9 flat config, prettier 3
 
-- [ ] 9.1 Rewrite `.eslintrc.js` as `eslint.config.mjs` on ESLint 9.39.x (pin entry) with `@react-native/eslint-config` 0.88.1 and sonarjs `recommended`. Carry over every custom `no-restricted-syntax` guard and override. Delete `.eslintrc.js`/`.eslintignore`. Move prettier to 3.x. Commit.
-- [ ] 9.2 Prove each carried-over custom guard still fires by red-checking it with a deliberate violation. Fix new lint findings at their cause, with no blanket disables.
-- [ ] 9.3 Update `CONFIG_SET` documentation references from `.eslintrc*` to `eslint.config.*` where docs name the file.
+- [x] 9.1 Rewrite `.eslintrc.js` as `eslint.config.mjs` on ESLint 9.39.x (pin entry) with `@react-native/eslint-config` 0.88.1 and sonarjs `recommended`. Carry over every custom `no-restricted-syntax` guard and override. Delete `.eslintrc.js`/`.eslintignore`. Move prettier to 3.x. Commit.
+- [x] 9.2 Prove each carried-over custom guard still fires by red-checking it with a deliberate violation. Fix new lint findings at their cause, with no blanket disables.
+- [x] 9.3 Update `CONFIG_SET` documentation references from `.eslintrc*` to `eslint.config.*` where docs name the file.
 
 ## 10. W7: docs and closure
 
