@@ -43,8 +43,8 @@ FROM node:26.13.1-bookworm-slim@sha256:5df79989ed685e09f0a98019db4cebfb22fb9df1a
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
 RUN npx --yes --ignore-scripts --package=playwright@1.65.1 playwright install --with-deps --only-shell chromium \
   && chmod -R a+rX /ms-playwright \
-  && rm -rf /root/.npm /var/lib/apt/lists/*
-RUN groupadd --gid 10001 whim \
+  && rm -rf /root/.npm /var/lib/apt/lists/* \
+  && groupadd --gid 10001 whim \
   && useradd --uid 10001 --gid 10001 --no-log-init --no-create-home --home-dir /tmp --shell /usr/sbin/nologin whim
 WORKDIR /app
 COPY --from=deps /deps/node_modules ./node_modules

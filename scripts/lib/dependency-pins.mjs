@@ -18,7 +18,7 @@ import path from 'node:path';
 
 export const PIN_REGISTER_FILE = 'dependency-pins.json';
 
-const ENTRY_FIELDS = ['package', 'range', 'reason', 'lift'];
+const ENTRY_FIELDS = new Set(['package', 'range', 'reason', 'lift']);
 const VERSION = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/;
 const OPERATOR = /^(\^|~|>=|<=|>|<|=)?v?/;
 const NUMBER = /^\d+$/;
@@ -244,7 +244,7 @@ export function pinRegisterFindings(root) {
     const name = entry.package;
     seen.set(name, (seen.get(name) ?? 0) + 1);
     for (const key of Object.keys(entry)) {
-      if (!ENTRY_FIELDS.includes(key)) findings.push(`${PIN_REGISTER_FILE}: ${name}: unknown field "${key}"`);
+      if (!ENTRY_FIELDS.has(key)) findings.push(`${PIN_REGISTER_FILE}: ${name}: unknown field "${key}"`);
     }
     for (const key of ['range', 'reason', 'lift']) {
       if (!filled(entry[key])) findings.push(`${PIN_REGISTER_FILE}: ${name}: missing or empty "${key}"`);

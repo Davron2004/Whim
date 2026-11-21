@@ -1,6 +1,6 @@
 /**
  * xhr-transport — the `XMLHttpRequest`-backed `ResponseBodyReader` producer for
- * `POST /v1/generate`, for runtimes whose `fetch` cannot stream a response body (RN 0.85's
+ * `POST /v1/generate`, for runtimes whose `fetch` cannot stream a response body (RN 0.88's
  * `whatwg-fetch` polyfill; spec "generation-stream-transport", §"The device consumes the
  * generation stream incrementally"). RN's own `XMLHttpRequest` streams progressively:
  * `XMLHttpRequest.js:370`'s `__didReceiveIncrementalData` fires repeated `LOADING` readyState
