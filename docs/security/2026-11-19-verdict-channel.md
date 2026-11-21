@@ -123,3 +123,48 @@ change, and what the verdict should not be read as claiming:
   replaces it, and navigate the frame to a `data:` document that reports the same. On device the
   verdict only feeds the dev probe screen, so the impact there is diagnostic; the frames that do
   act (paint, error, syscall) would be worth the same check.
+
+  **The answer can differ by device.** react-native-webview (13.16.1) picks its bridge at
+  runtime (`RNCWebView.java`, `createRNCWebViewBridge`): `addWebMessageListener` with `"*"` only
+  when the device's System WebView supports `WEB_MESSAGE_LISTENER`, and otherwise
+  `addJavascriptInterface`, which Android documents as exposing the object to **every** frame
+  with no origin control. A phone whose System WebView is old enough to lack the feature takes the
+  fallback path, where the question above is already answered, even if current WebViews turn out
+  not to inject into opaque origins. Even on the listener path, the library drops `isMainFrame`
+  (it forwards the sender's origin as the event's `url`, and the host reads only
+  `nativeEvent.data`, `src/host/launcher/MiniAppView.tsx`), so the RN host cannot tell a subframe
+  message from the outer page's today. iOS is a separate mechanism (WKWebView script message handlers)
+  and a separate question. The device check therefore has three cases, not one: a current WebView
+  (listener path), a WebView on the fallback path, and iOS.
+
+  Upgrading does not change this. RN 0.86 through 0.88 touch nothing here, and react-native-webview
+  14.0.1 (`latest`) and 17.1.0 (`next`) carry the same Android bridge code: `"*"`, `isMainFrame`
+  dropped, the same fallback. On iOS the library registers its messaging script
+  `forMainFrameOnly:YES`, so the `window.ReactNativeWebView` wrapper exists only in the top-level
+  page. Whether the underlying `window.webkit.messageHandlers.ReactNativeWebView` handler is
+  reachable from a subframe is unchecked (research for `upgrade-to-latest-dependencies`,
+  2026-11-20).
+
+  **Proposed fix (not implemented; the change after `upgrade-to-latest-dependencies`):**
+  1. *Reproduce first.* A fixture mini-app navigates its frame to a `data:` document that reports
+     `typeof window.ReactNativeWebView` and, when present, posts a marked `probes` frame straight to
+     RN. Run it on all three cases above. That fixes the urgency; the fix is likely needed
+     regardless, since the fallback path is exposed by Android's own description.
+  2. *Primary: authenticate the outer page → RN hop.* RN generates a random token per WebView and
+     hands it to the outer page through a main-frame-only channel (main-frame-only injected
+     script). The outer page keeps it in a closure and attaches it to every `toRN` message. RN drops
+     any message without it before reading anything else, for every kind (paint, error, syscall,
+     nav-depth, probes). This holds however the bridge is exposed (both Android paths, iOS) and
+     does not depend on whether `"*"` matches opaque origins. Unlike the iframe nonce, the token
+     lives in a realm that never holds app code, and a subframe cannot read the outer page's realm.
+  3. *Second layer: drop non-main-frame messages natively.* Patch react-native-webview's listener
+     path to drop messages with `isMainFrame == false` (and offer it upstream). The synthetic run
+     already has the server-side equivalent: `synthrun/capability.ts` returns early when
+     `source.frame !== source.page.mainFrame()`. This cannot be the only fix: the fallback path
+     does not know the sender's frame.
+  4. *Rejected:* refusing the frame's navigation natively (Android does not reliably surface
+     subframe navigations, and a `data:` URL is not a network load); requiring a minimum WebView
+     version to avoid the fallback (still leaves the `"*"` question).
+  5. *Tests:* a host-side test that a token-less message of every kind is dropped, red-checked
+     against the weaker variant that checks the token on `probes` only; the step-1 fixture kept as
+     an on-device acceptance case.
