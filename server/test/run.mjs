@@ -53,7 +53,7 @@ await build({
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node22', // node:sqlite (DatabaseSync) needs Node 22+ — match dev.mjs, not a misleading node20
+  target: 'node26', // the Node major the server runs on (engines) — match dev.mjs, not a misleading node20
   logLevel: 'warning',
   // The server's declared runtime packages and the tool packages stay external (`server/build.mjs`);
   // Node resolves them from node_modules at run time.

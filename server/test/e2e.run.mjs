@@ -28,7 +28,7 @@ await build({
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node22',
+  target: 'node26',
   // The server's declared runtime packages stay external too (`server/build.mjs`).
   external: devBundleExternals(path.join(here, '..')),
   logLevel: 'warning',

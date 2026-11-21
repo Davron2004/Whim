@@ -7,7 +7,7 @@
 #
 # Values come from deploy/defaults.env, then ~/.config/whim/deploy.env, then the environment.
 # Preflight refuses before anything is built or changed: a missing required value, a WHIM_API_HOST
-# that isn't api.<WHIM_WEB_HOST>, a Node major other than 22, server values the server's own boot
+# that isn't api.<WHIM_WEB_HOST>, a Node major other than 26, server values the server's own boot
 # parse refuses (such as a keep-period above the disclosure manifest's maximum), a dirty or unpushed
 # tree, then (full deploys only) a missing, version-less or empty OpenRouter secret and a VM machine
 # type no profile names. The profile is chosen by the VM's machine type; there is no option to pick one.
@@ -118,10 +118,10 @@ preflight_server_config() {
 }
 
 preflight_node() {
-  command -v node >/dev/null 2>&1 || whim_fail "node is not on PATH; deploy needs Node 22"
+  command -v node >/dev/null 2>&1 || whim_fail "node is not on PATH; deploy needs Node 26"
   local version
   version="$(node -p 'process.versions.node')"
-  [ "${version%%.*}" = 22 ] || whim_fail "Node $version is running; deploy needs Node 22, the major every gate and the image run"
+  [ "${version%%.*}" = 26 ] || whim_fail "Node $version is running; deploy needs Node 26, the major every gate and the image run"
 }
 
 preflight_git() {

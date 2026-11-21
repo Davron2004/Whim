@@ -28,7 +28,7 @@ await build({
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node22',
+  target: 'node26',
   logLevel: 'warning',
   external: devBundleExternals(path.join(here, '..')),
 });

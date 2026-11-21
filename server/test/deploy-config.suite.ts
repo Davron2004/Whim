@@ -40,6 +40,7 @@ import { defaultModelRoster } from '../src/generation/model';
 import type { Clock } from '../src/generation/machine';
 import * as releaseConfig from '../../src/host/launcher/release-config';
 import { MANIFESTS, keepLimit, latestVersion } from '../../contract/src/disclosure-manifest';
+import { declaredRuntimePackages } from '../build.mjs';
 
 const ROOT = process.cwd();
 /** The ceiling on every script this suite runs. The scripts never wait on a clock (sleep and the
@@ -182,18 +183,29 @@ function dockerInstructions(text: string): DockerInstruction[] {
 
 const PINNED_IMAGE = /^[\w./-]+:[\w.-]+@sha256:[0-9a-f]{64}$/;
 
-function fromProblems(instructions: readonly DockerInstruction[]): string[] {
+/** `externalArgs` are the build args an image reference may name instead of a digest: a global ARG with
+ *  no default is supplied by the caller, so it is not itself a registry pin to check. */
+function fromProblems(instructions: readonly DockerInstruction[], externalArgs: ReadonlySet<string> = new Set()): string[] {
   const problems: string[] = [];
   const stages = new Set<string>();
   for (const instruction of instructions.filter((i) => i.keyword === 'FROM')) {
     const parts = instruction.args.split(/\s+/).filter((part) => !part.startsWith('--platform'));
     const image = parts[0] ?? '';
-    if (!stages.has(image) && !PINNED_IMAGE.test(image)) {
+    const argName = /^\$\{(\w+)\}$/.exec(image)?.[1] ?? '';
+    if (!stages.has(image) && !externalArgs.has(argName) && !PINNED_IMAGE.test(image)) {
       problems.push(`FROM ${image} (line ${instruction.line}) is not pinned by digest`);
     }
     if (parts[1]?.toUpperCase() === 'AS' && parts[2]) stages.add(parts[2]);
   }
   return problems;
+}
+
+/** The load-test image: its build stage is pinned like the server's, its runtime stage builds on the
+ *  `${SERVER_IMAGE}` build arg the replay script passes (declared without a default). */
+function loadtestDockerfileProblems(text: string): string[] {
+  const instructions = dockerInstructions(text);
+  const external = new Set(instructions.filter((i) => i.keyword === 'ARG' && !i.args.includes('=')).map((i) => i.args));
+  return fromProblems(instructions, external);
 }
 
 function playwrightPinProblems(text: string, version: string): string[] {
@@ -258,6 +270,251 @@ function runtimeCommitProblems(files: ReadonlyMap<string, string>): string[] {
 function imageUidOf(dockerfile: string): string {
   const instructions = dockerInstructions(dockerfile);
   return (instructions.filter((i) => i.keyword === 'USER').at(-1)?.args ?? '').split(':')[0] ?? '';
+}
+
+// ---------------------------------------------------------------------------------------------
+// The image's production dependency closure: where npm puts each package (package-lock.json),
+// which of those directories the runtime stage copies and to where (deploy/Dockerfile), and whether
+// Node, resolving from the server entry inside the image, finds every package the server needs.
+
+interface LockEntry {
+  readonly link?: boolean;
+  readonly dev?: boolean;
+  readonly dependencies?: Readonly<Record<string, string>>;
+  readonly optionalDependencies?: Readonly<Record<string, string>>;
+  readonly peerDependencies?: Readonly<Record<string, string>>;
+  readonly peerDependenciesMeta?: Readonly<Record<string, { readonly optional?: boolean }>>;
+}
+
+type LockPackages = Readonly<Record<string, LockEntry>>;
+
+/** One resolution npm's layout must keep working: `from` (a lockfile location, `server` for the
+ *  workspace) imports `name`, which Node finds at the lockfile location `to`. */
+interface ClosureEdge {
+  readonly from: string;
+  readonly name: string;
+  readonly to: string;
+}
+
+/** Node's bare-specifier lookup over a set of package directories (`/`-separated, no leading slash):
+ *  `<dir>/node_modules/<name>` for `dir` and each ancestor not itself named `node_modules`. */
+function nodeResolve(fromDir: string, name: string, has: (dir: string) => boolean): string | undefined {
+  const parts = fromDir === '' ? [] : fromDir.split('/');
+  for (let i = parts.length; i >= 0; i--) {
+    if (i > 0 && parts[i - 1] === 'node_modules') continue;
+    const base = parts.slice(0, i).join('/');
+    const candidate = base === '' ? `node_modules/${name}` : `${base}/node_modules/${name}`;
+    if (has(candidate)) return candidate;
+  }
+  return undefined;
+}
+
+function packageNameOf(location: string): string {
+  return location.slice(location.lastIndexOf('node_modules/') + 'node_modules/'.length);
+}
+
+/** The production closure `npm ci --omit=dev --workspace <workspace>` installs for the runtime
+ *  packages, walked through the lockfile the way Node resolves: every location and every edge. */
+function productionClosure(lock: LockPackages, workspace: string, roots: readonly string[]): { locations: Set<string>; edges: ClosureEdge[]; problems: string[] } {
+  const locations = new Set<string>();
+  const edges: ClosureEdge[] = [];
+  const problems: string[] = [];
+  const has = (dir: string): boolean => dir in lock && lock[dir]?.dev !== true;
+  const pending: ImportRequest[] = roots.map((name) => ({ from: workspace, name, optional: false }));
+  for (let next = pending.shift(); next; next = pending.shift()) {
+    const to = nodeResolve(next.from, next.name, has);
+    if (!to) {
+      if (!next.optional) problems.push(`${next.name}, imported from ${next.from}, is not a production package in package-lock.json`);
+      continue;
+    }
+    edges.push({ from: next.from, name: next.name, to });
+    if (!locations.has(to)) pending.push(...importsOf(to, lock[to] ?? {}));
+    locations.add(to);
+  }
+  return { locations, edges, problems };
+}
+
+interface ImportRequest {
+  readonly from: string;
+  readonly name: string;
+  readonly optional: boolean;
+}
+
+/** What npm installs for a lockfile entry: its dependencies, its optional dependencies (absent on
+ *  another platform) and its peers (unless marked optional). A workspace link installs nothing here. */
+function importsOf(location: string, entry: LockEntry): ImportRequest[] {
+  if (entry.link) return [];
+  const request = (optional: (name: string) => boolean) => (name: string): ImportRequest => ({ from: location, name, optional: optional(name) });
+  return [
+    ...Object.keys(entry.dependencies ?? {}).map(request(() => false)),
+    ...Object.keys(entry.optionalDependencies ?? {}).map(request(() => true)),
+    ...Object.keys(entry.peerDependencies ?? {}).map(request((name) => entry.peerDependenciesMeta?.[name]?.optional === true)),
+  ];
+}
+
+function absoluteIn(workdir: string, target: string): string {
+  return path.posix.resolve('/', workdir, target).slice(1);
+}
+
+interface ImageModel {
+  /** The workspace the deps stage installs (`--workspace <name>`), a lockfile location. */
+  readonly workspace: string;
+  /** The deps stage's WORKDIR, where the lockfile's locations are installed. */
+  readonly depsRoot: string;
+  /** The runtime stage's `COPY --from=<deps stage>` pairs, in order: absolute source, absolute destination. */
+  readonly copies: ReadonlyArray<{ readonly from: string; readonly to: string; readonly line: number }>;
+  /** Directories the deps stage's RUN creates with `mkdir -p`, absolute. */
+  readonly made: readonly string[];
+  /** The deps stage's RUN text, for its guards. */
+  readonly depsRun: string;
+  /** The directory of the script the runtime CMD starts, absolute. */
+  readonly entryDir: string;
+}
+
+/** Splits a Dockerfile into stages: each FROM's name (`AS x`) and its instructions. */
+function dockerStages(instructions: readonly DockerInstruction[]): Array<{ name: string; body: DockerInstruction[] }> {
+  const stages: Array<{ name: string; body: DockerInstruction[] }> = [];
+  for (const instruction of instructions) {
+    if (instruction.keyword === 'FROM') {
+      const parts = instruction.args.split(/\s+/);
+      stages.push({ name: parts[1]?.toUpperCase() === 'AS' ? (parts[2] ?? '') : '', body: [] });
+    } else {
+      stages.at(-1)?.body.push(instruction);
+    }
+  }
+  return stages;
+}
+
+function imageModel(dockerfile: string): ImageModel | string {
+  const stages = dockerStages(dockerInstructions(dockerfile));
+  const deps = stages.find((stage) => stage.body.some((i) => i.keyword === 'RUN' && /\bnpm ci\b/.test(i.args) && i.args.includes('--omit=dev')));
+  const runtime = stages.at(-1);
+  if (!deps || !runtime || deps === runtime) return 'the Dockerfile has no deps stage (npm ci --omit=dev) before its runtime stage';
+  const workspace = /--workspace[= ](\S+)/.exec(deps.body.map((i) => i.args).join('\n'))?.[1];
+  if (!workspace) return 'the deps stage installs no --workspace';
+  const runtimeStage = runtimeStageModel(runtime.body, deps.name);
+  if (runtimeStage.entryDir === '') return 'the runtime stage has no exec-form CMD naming the server entry';
+  return { workspace, ...depsStageModel(deps.body), ...runtimeStage };
+}
+
+/** The deps stage's install root (its WORKDIR), its RUN text and the directories `mkdir -p` makes. */
+function depsStageModel(body: readonly DockerInstruction[]): Pick<ImageModel, 'depsRoot' | 'depsRun' | 'made'> {
+  let depsRoot = '';
+  const runs: string[] = [];
+  const made: string[] = [];
+  for (const instruction of body) {
+    if (instruction.keyword === 'WORKDIR') depsRoot = absoluteIn(depsRoot, instruction.args);
+    if (instruction.keyword !== 'RUN') continue;
+    runs.push(instruction.args);
+    const root = depsRoot;
+    for (const match of instruction.args.matchAll(/\bmkdir -p ((?:[^\s&;|]+\s*)+)/g)) {
+      made.push(...match[1]!.trim().split(/\s+/).map((dir) => absoluteIn(root, dir)));
+    }
+  }
+  return { depsRoot, depsRun: runs.join('\n'), made };
+}
+
+/** The runtime stage's copies out of the deps stage (each resolved against the WORKDIR in force) and
+ *  the directory of the script its CMD starts. */
+function runtimeStageModel(body: readonly DockerInstruction[], depsStage: string): Pick<ImageModel, 'copies' | 'entryDir'> {
+  let workdir = '';
+  let entryDir = '';
+  const copies: Array<{ from: string; to: string; line: number }> = [];
+  for (const instruction of body) {
+    if (instruction.keyword === 'WORKDIR') workdir = absoluteIn(workdir, instruction.args);
+    if (instruction.keyword === 'CMD') entryDir = path.posix.dirname(absoluteIn(workdir, (JSON.parse(instruction.args) as string[]).at(-1) ?? ''));
+    if (instruction.keyword !== 'COPY' || !instruction.args.startsWith(`--from=${depsStage} `)) continue;
+    const operands = instruction.args.split(/\s+/).filter((part) => !part.startsWith('--'));
+    const destination = absoluteIn(workdir, operands.at(-1) ?? '');
+    copies.push(...operands.slice(0, -1).map((source) => ({ from: absoluteIn('/', source), to: destination, line: instruction.line })));
+  }
+  return { copies, entryDir };
+}
+
+function under(dir: string, root: string): boolean {
+  return dir === root || dir.startsWith(`${root}/`);
+}
+
+/** Where a deps-stage directory ends up in the runtime image: the last COPY whose source holds it. */
+function imagePathOf(model: ImageModel, depsDir: string): string | undefined {
+  const copy = model.copies.filter((c) => under(depsDir, c.from)).at(-1);
+  return copy ? `${copy.to}${depsDir.slice(copy.from.length)}` : undefined;
+}
+
+/**
+ * Every problem with the image's dependency tree: a closure package the runtime stage doesn't copy,
+ * two packages copied onto one path, a package the server (or a dependency) imports that Node, run
+ * from the image's entry directory, wouldn't find at the copy npm installed for it, a copied
+ * directory the deps stage may not create, or a copied directory the React / workspace guards skip.
+ */
+function imageClosureProblems(dockerfile: string, lock: LockPackages, runtimePackages: readonly string[]): string[] {
+  const model = imageModel(dockerfile);
+  if (typeof model === 'string') return [model];
+  const closure = productionClosure(lock, model.workspace, runtimePackages);
+  const depsDirOf = (location: string): string => path.posix.join(model.depsRoot, location);
+  const placed = placeInImage(model, [...closure.locations].sort((a, b) => a.localeCompare(b)), depsDirOf);
+  return [
+    ...closure.problems,
+    ...placed.problems,
+    ...resolutionProblems(model, closure.edges, placed.imageOf, placed.occupant),
+    ...copySourceProblems(model, [...closure.locations].map(depsDirOf)),
+  ];
+}
+
+/** Each closure package's path in the image, the package occupying each image path, and the packages
+ *  left behind or copied onto another's path. */
+function placeInImage(model: ImageModel, locations: readonly string[], depsDirOf: (location: string) => string): { imageOf: Map<string, string>; occupant: Map<string, string>; problems: string[] } {
+  const imageOf = new Map<string, string>();
+  const occupant = new Map<string, string>();
+  const problems: string[] = [];
+  for (const location of locations) {
+    const target = imagePathOf(model, depsDirOf(location));
+    if (!target) {
+      problems.push(`${packageNameOf(location)} (${location}) is not copied into the runtime image`);
+      continue;
+    }
+    const other = occupant.get(target);
+    if (other) problems.push(`${other} and ${location} are both copied to /${target}`);
+    occupant.set(target, location);
+    imageOf.set(location, target);
+  }
+  return { imageOf, occupant, problems };
+}
+
+/** Node, resolving each closure import from the importer's place in the image (the entry directory for
+ *  the server's own imports), must land on the copy npm installed for it. */
+function resolutionProblems(model: ImageModel, edges: readonly ClosureEdge[], imageOf: ReadonlyMap<string, string>, occupant: ReadonlyMap<string, string>): string[] {
+  const problems: string[] = [];
+  for (const edge of edges) {
+    const fromServer = edge.from === model.workspace;
+    const fromImage = fromServer ? model.entryDir : imageOf.get(edge.from);
+    if (fromImage === undefined) continue;
+    const found = nodeResolve(fromImage, edge.name, (dir) => occupant.has(dir));
+    const importer = fromServer ? `the server entry (/${model.entryDir})` : `/${fromImage}`;
+    if (!found) problems.push(`${edge.name}, imported from ${importer}, resolves to nothing in the image`);
+    else if (found !== imageOf.get(edge.to)) problems.push(`${edge.name}, imported from ${importer}, resolves to /${found} (${occupant.get(found) ?? ''}), not to npm's ${edge.to}`);
+  }
+  return problems;
+}
+
+/** Every directory the runtime stage copies from the deps stage must exist there whatever npm hoists,
+ *  and carry the deps stage's workspace-link removal and React / React Native refusal. */
+function copySourceProblems(model: ImageModel, installed: readonly string[]): string[] {
+  const commands = model.depsRun.split(/&&|\n/).map((command) => command.trim().split(/\s+/));
+  const ran = (words: readonly string[]): boolean => commands.some((command) => words.every((word, i) => command[i] === word));
+  const removed = (dir: string): boolean => commands.some((command) => command[0] === 'rm' && command[1] === '-rf' && command.slice(2).includes(dir));
+  const problems: string[] = [];
+  for (const copy of model.copies) {
+    if (![...installed, ...model.made].some((dir) => under(dir, copy.from))) {
+      problems.push(`line ${copy.line} copies /${copy.from}, which the deps stage may not create: nothing the lockfile installs lands under it and no mkdir -p makes it`);
+    }
+    const relative = path.posix.relative(`/${model.depsRoot}`, `/${copy.from}`);
+    if (!removed(`${relative}/@whim`)) problems.push(`the deps stage copies /${copy.from} without rm -rf ${relative}/@whim`);
+    for (const name of ['react', 'react-native']) {
+      if (!ran(['test', '!', '-e', `${relative}/${name}`])) problems.push(`the deps stage copies /${copy.from} without test ! -e ${relative}/${name}`);
+    }
+  }
+  return problems;
 }
 
 // ---------------------------------------------------------------------------------------------
@@ -986,7 +1243,7 @@ const STUB_SCRIPT = [
   '  "gcloud "*" compute scp "*) rm -rf "$STUB_DIR/upload"; cp -R "${@: -2:1}" "$STUB_DIR/upload" ;;',
   '  "gcloud "*" compute instances set-machine-type "*) printf \'%s\' "${@: -1}" >"$STUB_DIR/machine-type" ;;',
   '  "gcloud "*" compute instances describe "*) cat "$STUB_DIR/machine-type"; echo ;;',
-  '  "node -p "*) echo "${STUB_NODE_VERSION:-22.11.0}" ;;',
+  '  "node -p "*) echo "${STUB_NODE_VERSION:-26.13.1}" ;;',
   '  "node -e const { spawnSync }"*) exec "$STUB_REAL_NODE" "$@" ;;',
   '  "node -e let healthText"*) exec "$STUB_REAL_NODE" "$@" ;;',
   '  "node -e const indexFile"*) exec "$STUB_REAL_NODE" "$@" ;;',
@@ -1299,12 +1556,14 @@ function deployPreflightTests(): void {
     );
   });
 
-  withSandbox((sandbox) => {
-    writeOperatorFile(sandbox);
-    const run = runScript(sandbox, 'deploy.sh', [], { STUB_NODE_VERSION: '24.1.0' });
-    check('deploy.sh refuses Node 24, naming the Node 22 requirement', run.status === 1 && run.stderr.includes('Node 24.1.0') && run.stderr.includes('Node 22'), run.stderr);
-    eq('  ... before any gcloud call', toolLog(sandbox, 'gcloud'), []);
-  });
+  for (const wrong of ['24.1.0', '22.23.5']) {
+    withSandbox((sandbox) => {
+      writeOperatorFile(sandbox);
+      const run = runScript(sandbox, 'deploy.sh', [], { STUB_NODE_VERSION: wrong });
+      check(`deploy.sh refuses Node ${wrong}, naming the Node 26 requirement`, run.status === 1 && run.stderr.includes(`Node ${wrong} is running`) && run.stderr.includes('needs Node 26'), run.stderr);
+      eq('  ... before any gcloud call', toolLog(sandbox, 'gcloud'), []);
+    });
+  }
 
   withSandbox((sandbox) => {
     writeOperatorFile(sandbox);
@@ -3498,6 +3757,10 @@ function imageTests(files: ReadonlyMap<string, string>, playwrightVersion: strin
   const dockerfile = files.get('deploy/Dockerfile') ?? '';
   checkClean('the Dockerfile pins every base by digest, pins Playwright to the lockfile, runs non-root and copies no env file', dockerfileProblems(dockerfile, playwrightVersion));
   checkCaught('  red: a root final user fails', dockerfileProblems(plant(dockerfile, 'USER 10001:10001', 'USER root'), playwrightVersion), 'not a fixed non-root uid');
+  const loadtestDockerfile = files.get('deploy/loadtest/Dockerfile') ?? '';
+  checkClean('the load-test Dockerfile pins its build base by digest and builds its runtime on the SERVER_IMAGE build arg', loadtestDockerfileProblems(loadtestDockerfile));
+  checkCaught('  red: an unpinned load-test build base fails', loadtestDockerfileProblems(plant(loadtestDockerfile, /@sha256:[0-9a-f]{64}/.exec(loadtestDockerfile)?.[0] ?? '', '')), 'is not pinned by digest');
+  checkCaught('  red: a runtime base with a default tag fails', loadtestDockerfileProblems(plant(loadtestDockerfile, 'ARG SERVER_IMAGE', 'ARG SERVER_IMAGE=node:latest')), 'FROM ${SERVER_IMAGE}');
   checkClean('.dockerignore keeps env files, credentials, VCS data and node_modules out of the build context', requiredLineProblems('.dockerignore', files.get('.dockerignore') ?? '', ['.git', '**/node_modules', '**/.env', '**/.env.*', '**/*.env']));
   checkClean('.gcloudignore honours .gitignore and keeps env files out of the upload', requiredLineProblems('.gcloudignore', files.get('.gcloudignore') ?? '', ['#!include:.gitignore', '.git', '**/node_modules', '**/.env']));
   checkClean('cloudbuild.yaml builds linux/amd64 tagged with the commit SHA, with a pinned builder and no secret', cloudbuildProblems(files.get('deploy/cloudbuild.yaml') ?? ''));
@@ -3510,6 +3773,73 @@ function imageTests(files: ReadonlyMap<string, string>, playwrightVersion: strin
   checkCaught('  red: a runtime stage that drops the ENV fails', commitBakeProblems(plant(dockerfile, 'ENV WHIM_COMMIT=$WHIM_COMMIT\n', '')), 'lacks ENV WHIM_COMMIT');
   checkClean('no deploy file outside the image build names WHIM_COMMIT', runtimeCommitProblems(files));
   checkCaught('  red: a compose environment setting WHIM_COMMIT fails', runtimeCommitProblems(withFile(files, 'deploy/compose.yaml', `${files.get('deploy/compose.yaml') ?? ''}# WHIM_COMMIT=${TAG}\n`)), 'deploy/compose.yaml names WHIM_COMMIT');
+}
+
+/** The real lockfile with every `server/node_modules/…` package moved to the root, replacing a root
+ *  package of the same name: the layout npm writes when nothing the server needs conflicts. */
+function hoistedLock(lock: LockPackages): Record<string, LockEntry> {
+  const hoisted: Record<string, LockEntry> = Object.fromEntries(Object.entries(lock).filter(([location]) => !location.startsWith('server/node_modules/')));
+  for (const [location, entry] of Object.entries(lock)) {
+    if (location.startsWith('server/node_modules/')) hoisted[location.slice('server/'.length)] = entry;
+  }
+  return hoisted;
+}
+
+/** The real lockfile with a second, root copy of `name` that the root package `consumer` imports: the
+ *  version conflict npm resolves by nesting the server's copy under server/node_modules. */
+function conflictingLock(lock: LockPackages, consumer: string, name: string): Record<string, LockEntry> {
+  const entry = lock[consumer];
+  if (!entry || !lock[`server/node_modules/${name}`] || lock[`node_modules/${name}`]) {
+    throw new Error(`setup: the conflict needs ${consumer} and server/node_modules/${name} without node_modules/${name}`);
+  }
+  return { ...lock, [consumer]: { ...entry, dependencies: { ...entry.dependencies, [name]: '^0.0.1' } }, [`node_modules/${name}`]: {} };
+}
+
+function imageClosureTests(files: ReadonlyMap<string, string>): void {
+  section('Deploy artifacts: the image carries the production dependency closure where Node resolves it');
+  const dockerfile = files.get('deploy/Dockerfile') ?? '';
+  const lock = (JSON.parse(readRepoFile('package-lock.json')) as { packages: LockPackages }).packages;
+  const runtimePackages = declaredRuntimePackages(path.join(ROOT, 'server'));
+  const nestedCopy = 'COPY --from=deps /deps/server/node_modules ./server/node_modules\n';
+  checkClean(
+    'every runtime package in server/package.json, and everything it imports, resolves from /app/server to the copy npm installed (package-lock.json layout through the Dockerfile COPYs)',
+    imageClosureProblems(dockerfile, lock, runtimePackages),
+  );
+  // A later re-resolution may move packages between the root and server/node_modules: the same
+  // Dockerfile must carry the layouts npm can write, not just today's.
+  const conflicting = conflictingLock(lock, 'node_modules/hono', 'pino');
+  checkClean('the same Dockerfile carries a layout where the root holds another version of a package the server nests', imageClosureProblems(dockerfile, conflicting, runtimePackages));
+  const hoisted = hoistedLock(lock);
+  checkClean('the same Dockerfile carries a fully hoisted layout (nothing under server/node_modules)', imageClosureProblems(dockerfile, hoisted, runtimePackages));
+
+  const onlyRoot = imageClosureProblems(plant(dockerfile, nestedCopy, ''), lock, runtimePackages);
+  checkCaught('  red: copying only /deps/node_modules (the image that failed to boot) leaves pino behind', onlyRoot, 'pino (server/node_modules/pino) is not copied into the runtime image');
+  checkCaught('  red: ... and the server entry cannot resolve pino', onlyRoot, 'pino, imported from the server entry (/app/server), resolves to nothing in the image');
+  checkCaught(
+    '  red: copying server/node_modules under ./node_modules/server fails',
+    imageClosureProblems(plant(dockerfile, nestedCopy, 'COPY --from=deps /deps/server/node_modules ./node_modules/server\n'), lock, runtimePackages),
+    'pino, imported from the server entry (/app/server), resolves to nothing in the image',
+  );
+  checkCaught(
+    '  red: a runtime package the lockfile does not install fails, naming it',
+    imageClosureProblems(dockerfile, lock, [...runtimePackages, 'left-pad']),
+    'left-pad, imported from server, is not a production package in package-lock.json',
+  );
+  checkCaught(
+    '  red: flattening server/node_modules into /app/node_modules overwrites the root copy in the conflicting layout',
+    imageClosureProblems(plant(dockerfile, nestedCopy, 'COPY --from=deps /deps/server/node_modules /app/node_modules\n'), conflicting, runtimePackages),
+    'node_modules/pino and server/node_modules/pino are both copied to /app/node_modules/pino',
+  );
+  checkCaught(
+    '  red: without mkdir -p, the hoisted layout copies a directory npm never made',
+    imageClosureProblems(plant(dockerfile, '&& mkdir -p node_modules server/node_modules \\\n', ''), hoisted, runtimePackages),
+    'copies /deps/server/node_modules, which the deps stage may not create',
+  );
+  checkCaught(
+    '  red: a copied directory without the React Native guard fails',
+    imageClosureProblems(plant(dockerfile, '  && test ! -e server/node_modules/react-native', ''), lock, runtimePackages),
+    'without test ! -e server/node_modules/react-native',
+  );
 }
 
 function composeTests(files: ReadonlyMap<string, string>, ctx: ComposeContext): void {
@@ -4265,6 +4595,7 @@ export async function runDeployConfigTests(): Promise<void> {
   const siteFiles = fs.readdirSync(path.join(ROOT, 'deploy', 'site'), { recursive: true, encoding: 'utf8' });
 
   imageTests(files, playwrightVersion);
+  imageClosureTests(files);
   composeTests(files, composeContext);
   caddyTests(files, maxBodyBytes, siteFiles);
   egressIpv6Tests(files);

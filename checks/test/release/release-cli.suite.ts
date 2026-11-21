@@ -46,7 +46,7 @@ function baseSnapshot(overrides: Partial<PreflightSnapshot> = {}): PreflightSnap
   return {
     platform: 'android',
     gitStatusPorcelain: '',
-    nodeMajorVersion: 22,
+    nodeMajorVersion: 26,
     jdkMajorVersion: 21,
     xcodebuildPresent: undefined,
     credentialFiles: [],
@@ -71,6 +71,14 @@ export async function run(): Promise<void> {
   await test('preflight: a fully clean snapshot passes with zero findings (baseline for the defect cases below)', () => {
     const findings = evaluatePreflight(baseSnapshot(), PASS_OPTIONS);
     assert(findings.length === 0, `expected the baseline snapshot to pass, got ${JSON.stringify(findings)}`);
+  });
+
+  await test('preflight: a release under Node 22 is refused, naming the Node 26 requirement', () => {
+    const findings = evaluatePreflight(baseSnapshot({ nodeMajorVersion: 22 }), PASS_OPTIONS);
+    assert(
+      findings.length === 1 && findings[0].reason.includes('major version 22') && findings[0].fix.includes('Node 26'),
+      `expected exactly one Node finding naming 22 and the Node 26 fix, got ${JSON.stringify(findings)}`,
+    );
   });
 
   await test('preflight: a dirty tree plus a 0644 credential file lists both, each with its fix', () => {

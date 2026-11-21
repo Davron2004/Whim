@@ -8,10 +8,10 @@
 
 ## 2. W2: Node 26
 
-- [ ] 2.1 Set `engines.node` to `>=26` in root, `contract/` and `server/`. Set `.nvmrc` to 26. `npm install` on Node 26 and commit.
-- [ ] 2.2 Move CI `setup-node`, the devcontainer image and `server/` Dockerfile base to Node 26. Update the spec text: the generation-server Purpose line "Node 22" becomes "Node 26".
-- [ ] 2.3 Run every Node suite on Node 26 (`gate.sh`, then `gate-full.sh`) and fix any failure at its cause.
-- [ ] 2.4 Build the server image locally, deploy it under the existing server-deployment protocol (smoke, one generation, rollback ready), and record the deployed tag in the change's progress file.
+- [x] 2.1 Set `engines.node` to `>=26` in root, `contract/` and `server/`. Set `.nvmrc` to 26. `npm install` on Node 26 and commit.
+- [x] 2.2 Move CI `setup-node`, the devcontainer image and `server/` Dockerfile base to Node 26. Update the spec text: the generation-server Purpose line "Node 22" becomes "Node 26".
+- [x] 2.3 Run every Node suite on Node 26 (`gate.sh`, then `gate-full.sh`) and fix any failure at its cause.
+- [x] 2.4 Build the server image locally, deploy it under the existing server-deployment protocol (smoke, one generation, rollback ready), and record the deployed tag in the change's progress file.
 
 ## 3. W3a: React Native 0.88 — JS and TypeScript side
 

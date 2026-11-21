@@ -5,7 +5,7 @@
   "type": "module",
   "description": "Whim harness server skeleton (Hono): SSE generation over a stub pipeline, device identity, token metering, OpenRouter wrapper. LAN dev only.",
   "engines": {
-    "node": ">=22.11.0"
+    "node": ">=26"
   },
   "dependencies": {
     "@google-cloud/firestore": "9.4.1",

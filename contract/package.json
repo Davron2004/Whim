@@ -6,6 +6,9 @@
   "description": "Shared wire contract (zod schemas) between the Whim device and the harness server. TS-source-only; no build step, no dist/.",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
+  "engines": {
+    "node": ">=26"
+  },
   "exports": {
     ".": "./src/index.ts"
   },

@@ -32,7 +32,7 @@ await build({
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node22',
+  target: 'node26',
   external: devBundleExternals(here),
   logLevel: 'info',
 });

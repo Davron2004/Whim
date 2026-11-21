@@ -135,7 +135,7 @@ openspec/     specs and change history
 
 ## Running it
 
-Node 22 and JDK 21.
+Node 26 and JDK 21.
 
 ```sh
 npm install

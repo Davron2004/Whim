@@ -56,7 +56,7 @@ export function devBundleExternals(serverDir) {
 }
 
 /**
- * Bundles one server entry point with the production settings: ESM for Node 22, a linked source
+ * Bundles one server entry point with the production settings: ESM for Node 26, a linked source
  * map, and exactly the declared runtime packages external. Every entry that ships in or on top of
  * the runtime tree goes through here, so all of them bundle identically.
  *
@@ -71,7 +71,7 @@ export async function bundleServerEntry({ entry, outfile, write = true }) {
     bundle: true,
     platform: 'node',
     format: 'esm',
-    target: 'node22',
+    target: 'node26',
     sourcemap: 'linked',
     external: declaredRuntimePackages(),
     metafile: true,

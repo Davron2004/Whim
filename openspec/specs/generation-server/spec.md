@@ -1,7 +1,7 @@
 # generation-server Specification
 
 ## Purpose
-The generation server: a Node 22 Hono service exposing the SSE generation endpoint over the real
+The generation server: a Node 26 Hono service exposing the SSE generation endpoint over the real
 generation pipeline, the rewrite endpoint over the real rewrite model, device-identity middleware
 behind an injectable verifier, admission control and content policy ahead of every model call, a
 durable usage ledger plus user-sent reports as the only server state, and the model-agnostic
