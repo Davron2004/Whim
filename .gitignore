@@ -96,6 +96,7 @@ src/runtime/generated/
 .claude/run/
 # esbuild bundles the Node runners import (scripts/lib/tmp-bundle.mjs); swept when their run is dead.
 /.tmp-bundles/
+/server/.tmp-bundles/
 # The same kind of bundle from the server/ CLIs, which still write next to themselves.
 *.tmp.mjs
 

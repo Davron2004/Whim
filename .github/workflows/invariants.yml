@@ -36,11 +36,15 @@ jobs:
         run: npm run typecheck
       - name: Lint (eslint --max-warnings 0)
         run: npm run lint -- --max-warnings 0
+      # knip and openspec are devDependencies: run the binaries `npm ci` installed, the lockfile's
+      # versions, which every local gate runs too. A pinned `npx --package=<pkg>@<version>` fetches
+      # the pin whenever it differs from the install, and a pin left behind by a lockfile bump ran
+      # an older knip here than anywhere else. The server suite fails on any npx in a workflow that
+      # does not pin the lockfile's version (deploy-config.suite.ts).
       - name: Dead code (knip)
-        run: npx --ignore-scripts --package=knip@6.16.1 knip
-      # openspec resolves from node_modules/.bin via the @fission-ai/openspec devDep + the npm ci above.
+        run: node_modules/.bin/knip
       - name: OpenSpec validate
-        run: npx --ignore-scripts --package=@fission-ai/openspec@1.4.1 openspec validate --all --strict
+        run: node_modules/.bin/openspec validate --all --strict
       # Mirror of the gate.sh scaffolding tripwire; `! grep` fails the step on any match.
       - name: Scaffolding tripwires
         run: |

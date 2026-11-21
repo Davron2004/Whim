@@ -30,3 +30,4 @@ server/.data
 server/.logs
 src/runtime/generated
 build/generated
+**/.tmp-bundles

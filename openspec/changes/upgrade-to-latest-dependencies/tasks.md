@@ -56,7 +56,7 @@
 - [x] 8.1 Move esbuild to its `latest` (root and server) and Playwright to its `latest` (root and server, kept equal per spec `generation-server`). Update the seven hard-coded Playwright references, including the seccomp profile filenames and the Dockerfile install. `npm install` and commit.
 - [x] 8.2 `npm run build` round-trips its source maps, and `tsconfigRaw: '{}'` still keeps `react/jsx-runtime` out of mini-app bundles (H1b). Regenerate the generated artifacts.
 - [x] 8.3 `npm run invariants`, `bridge:invariants` and `synthrun` pass on the new Chromium. A new probe failure is a finding to fix, never one to suppress.
-- [ ] 8.4 Move the CI runner to the newest Ubuntu image (reverting ffb704a0's pin) if Playwright installs Chromium there. Otherwise keep the pin and record the failure in the workflow comment.
+- [x] 8.4 Move the CI runner to the newest Ubuntu image (reverting ffb704a0's pin) if Playwright installs Chromium there. Otherwise keep the pin and record the failure in the workflow comment.
 - [x] 8.5 Rebuild and redeploy the server image so prod runs the new Chromium. Smoke-test it with one generation.
 
 ## 9. W6: ESLint 9 flat config, prettier 3

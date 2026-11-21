@@ -14,8 +14,7 @@ import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
 import { createRequire } from 'node:module';
-import { devBundleExternals } from '../build.mjs';
-import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
+import { serverBundleTarget } from '../build.mjs';
 import { parseOnly, entryFilter } from '../../scripts/lib/only-filter.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
@@ -42,22 +41,21 @@ for (const project of ['contract/tsconfig.json', 'server/tsconfig.json']) {
 
 // --- Bundle + run the acceptance suite ---
 const entry = path.join(here, 'acceptance.ts');
-const outfile = tmpBundlePath('server-acceptance');
+const serverDir = path.join(here, '..');
+// Inside the server workspace, where its externals resolve: server/node_modules, then the root's.
+const serverBundle = serverBundleTarget('server-acceptance', serverDir);
 const only = parseOnly();
 const filter = only && entryFilter(entry, only);
 
 await build({
   entryPoints: [entry],
   plugins: filter ? [filter.plugin] : [],
-  outfile,
+  ...serverBundle,
   bundle: true,
   platform: 'node',
   format: 'esm',
   target: 'node26', // the Node major the server runs on (engines) — match dev.mjs, not a misleading node20
   logLevel: 'warning',
-  // The server's declared runtime packages and the tool packages stay external (`server/build.mjs`);
-  // Node resolves them from node_modules at run time.
-  external: devBundleExternals(path.join(here, '..')),
 });
 
 // The logger's pretty transport (dev default) writes from a worker thread, which no in-process
@@ -68,7 +66,7 @@ process.env.WHIM_LOG_JSON = '1';
 filter?.assertMatched();
 
 try {
-  await import(pathToFileURL(outfile));
+  await import(pathToFileURL(serverBundle.outfile));
 } finally {
-  fs.rmSync(outfile, { force: true });
+  fs.rmSync(serverBundle.outfile, { force: true });
 }

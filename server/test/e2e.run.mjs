@@ -15,27 +15,26 @@ import { build } from 'esbuild';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
-import { devBundleExternals } from '../build.mjs';
-import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
+import { serverBundleTarget } from '../build.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const entry = path.join(here, 'e2e.ts');
-const outfile = tmpBundlePath('server-e2e');
+const serverDir = path.join(here, '..');
+// Inside the server workspace, where its externals resolve (`serverBundleTarget`).
+const serverBundle = serverBundleTarget('server-e2e', serverDir);
 
 await build({
   entryPoints: [entry],
-  outfile,
+  ...serverBundle,
   bundle: true,
   platform: 'node',
   format: 'esm',
   target: 'node26',
-  // The server's declared runtime packages stay external too (`server/build.mjs`).
-  external: devBundleExternals(path.join(here, '..')),
   logLevel: 'warning',
 });
 
 try {
-  await import(pathToFileURL(outfile));
+  await import(pathToFileURL(serverBundle.outfile));
 } finally {
-  fs.rmSync(outfile, { force: true });
+  fs.rmSync(serverBundle.outfile, { force: true });
 }

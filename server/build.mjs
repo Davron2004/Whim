@@ -21,6 +21,7 @@ import { build } from 'esbuild';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { tmpBundlePath } from '../scripts/lib/tmp-bundle.mjs';
 
 const TREE_DIR = path.join('server', 'dist', 'app');
 
@@ -53,6 +54,21 @@ const TOOL_PACKAGES = ['esbuild', 'playwright', 'typescript'];
  */
 export function devBundleExternals(serverDir) {
   return [...new Set(['node:*', ...declaredRuntimePackages(serverDir), ...TOOL_PACKAGES])];
+}
+
+/**
+ * Where a dev or test bundle of server code is written, and what it keeps external, as one value
+ * to spread into the esbuild options: `build({ ...serverBundleTarget('server-acceptance', serverDir), ... })`.
+ * The bundle goes to `<serverDir>/.tmp-bundles/`, so its externals resolve from the server
+ * workspace the way production resolves them (`tmpBundlePath` explains why a bundle written
+ * anywhere else can pass in a nested worktree and fail on a clean checkout).
+ *
+ * @param {string} name  a short label for the bundle file, as for `tmpBundlePath`
+ * @param {string} serverDir  the `server/` workspace directory
+ * @returns {{ outfile: string; external: string[] }}
+ */
+export function serverBundleTarget(name, serverDir) {
+  return { outfile: tmpBundlePath(name, serverDir), external: devBundleExternals(serverDir) };
 }
 
 /**

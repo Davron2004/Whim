@@ -11,11 +11,12 @@ import { build } from 'esbuild';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
-import { devBundleExternals } from '../build.mjs';
-import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
+import { serverBundleTarget } from '../build.mjs';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
-const outfile = tmpBundlePath('firestore-admission-load');
+const serverDir = path.join(here, '..');
+// Inside the server workspace, where its externals resolve (`serverBundleTarget`).
+const serverBundle = serverBundleTarget('firestore-admission-load', serverDir);
 
 await build({
   stdin: {
@@ -24,21 +25,20 @@ await build({
     sourcefile: 'firestore-admission-entry.ts',
     loader: 'ts',
   },
-  outfile,
+  ...serverBundle,
   bundle: true,
   platform: 'node',
   format: 'esm',
   target: 'node26',
   logLevel: 'warning',
-  external: devBundleExternals(path.join(here, '..')),
 });
 
 let code;
 try {
-  const { run } = await import(pathToFileURL(outfile));
+  const { run } = await import(pathToFileURL(serverBundle.outfile));
   code = await run(process.argv.slice(2), process.env);
 } finally {
-  fs.rmSync(outfile, { force: true });
+  fs.rmSync(serverBundle.outfile, { force: true });
 }
 // A client still retrying a database that went away would hold the process open; the verdict is in.
 process.exit(code);
