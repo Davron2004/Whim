@@ -13,8 +13,7 @@ import { build } from 'esbuild';
 import { pathToFileURL, fileURLToPath } from 'node:url';
 import path from 'node:path';
 import fs from 'node:fs';
-import { devBundleExternals } from '../build.mjs';
-import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
+import { serverBundleTarget } from '../build.mjs';
 
 if (!process.env.FIRESTORE_EMULATOR_HOST) {
   console.error('stores:firestore:test FAILED — FIRESTORE_EMULATOR_HOST is unset; run via the npm script.');
@@ -25,27 +24,26 @@ if (!process.env.FIRESTORE_EMULATOR_HOST) {
 // that at background QoS on a busy Mac). `firestore-conformance.ts` fails by name once no check
 // has been reported for its stall bound, which is what a client retrying a vanished emulator does.
 const here = path.dirname(fileURLToPath(import.meta.url));
-const outfile = tmpBundlePath('firestore-conformance');
+const serverDir = path.join(here, '..');
+// Inside the server workspace, where its externals resolve (`serverBundleTarget`).
+const serverBundle = serverBundleTarget('firestore-conformance', serverDir);
 
 await build({
   entryPoints: [path.join(here, 'firestore-conformance.ts')],
-  outfile,
+  ...serverBundle,
   bundle: true,
   platform: 'node',
   format: 'esm',
   target: 'node26',
   logLevel: 'warning',
-  // As in `server/test/e2e.run.mjs` (the firestore boot case reaches `synthrun/` through
-  // `lifecycle.ts`): the declared runtime packages and the tool packages (`server/build.mjs`).
-  external: devBundleExternals(path.join(here, '..')),
 });
 
 process.env.WHIM_LOG_JSON = '1';
 
 try {
-  await import(pathToFileURL(outfile));
+  await import(pathToFileURL(serverBundle.outfile));
 } finally {
-  fs.rmSync(outfile, { force: true });
+  fs.rmSync(serverBundle.outfile, { force: true });
 }
 
 // The unreachable-database case leaves its client retrying in the background (terminating it would

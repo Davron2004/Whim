@@ -3779,6 +3779,72 @@ function provisionMonitoringTests(): void {
   check('a policy display name held by two policies refuses, naming it, rather than guessing which to update', twice.status === 1 && twice.stderr.includes('two resources are named'), twice.stderr);
 }
 
+/** A package runner that installs what it runs: `npx`, `bunx`, `npm exec`, `npm x`, `pnpm dlx` or
+ *  `yarn dlx`, at the start of a line or after whitespace, a shell separator, a backtick or a quote. */
+const PACKAGE_RUNNER = /(?:^|[\s:;&|(`"'])(npx|bunx|npm\s+exec|npm\s+x|pnpm\s+dlx|yarn\s+dlx)(?=\s|$)/;
+
+/** Every package runner a CI workflow runs names `--package=<pkg>@<version>` (or `-p`) at the
+ *  version package-lock.json resolves. The runner uses the local install when it satisfies the pin
+ *  and fetches the pin otherwise, so a pin a lockfile bump left behind runs an older tool in CI
+ *  than every local gate runs (CI's knip 6.16.1 against the lockfile's 6.47.0). A runner with no
+ *  pinned package fails closed: it runs whatever a bare name resolves to.
+ *
+ *  Reads only `.github/workflows/*.yml`. The Playwright installs in deploy/Dockerfile and
+ *  .devcontainer/Dockerfile are the other `npx` pins; `toolingPlaywrightTests` guards them
+ *  against the lockfile's Playwright. */
+function workflowNpxProblems(workflows: ReadonlyMap<string, string>, lockedVersion: (pkg: string) => string | undefined): string[] {
+  const problems: string[] = [];
+  for (const [rel, text] of workflows) {
+    text.split('\n').forEach((line, index) => {
+      const runner = line.trim().startsWith('#') ? undefined : PACKAGE_RUNNER.exec(line)?.[1]?.replace(/\s+/g, ' ');
+      if (runner === undefined) return;
+      const where = `${rel}:${index + 1}`;
+      const specs = [...line.matchAll(/(?:--package[= ]|(?<=\s)-p\s+)(\S+)/g)].map((match) => match[1]!);
+      if (specs.length === 0) problems.push(`${where}: ${runner} runs without a --package=<pkg>@<version> pin`);
+      for (const spec of specs) {
+        const at = spec.lastIndexOf('@');
+        const [pkg, version] = at > 0 ? [spec.slice(0, at), spec.slice(at + 1)] : [spec, '(none)'];
+        const locked = lockedVersion(pkg);
+        if (locked === undefined) problems.push(`${where}: ${runner} installs ${pkg}, which package-lock.json does not resolve`);
+        else if (version !== locked) problems.push(`${where}: ${runner} installs ${pkg}@${version}, the lockfile resolves ${locked}`);
+      }
+    });
+  }
+  return problems;
+}
+
+function toolingNpxPinTests(): void {
+  section('Tooling: CI npx pins follow the lockfile');
+  const lock = JSON.parse(readRepoFile('package-lock.json')) as { packages: Record<string, { version?: string }> };
+  const lockedVersion = (pkg: string): string | undefined => lock.packages[`node_modules/${pkg}`]?.version;
+  const workflows = readFiles(listFilesUnder('.github/workflows').filter((rel) => /\.ya?ml$/.test(rel)));
+  const ci = '.github/workflows/invariants.yml';
+  const text = workflows.get(ci) ?? '';
+  const knip = lockedVersion('knip');
+  const openspec = lockedVersion('@fission-ai/openspec');
+  check('setup: the CI workflow is among the workflows read, and the lockfile resolves knip and openspec', text.includes('runs-on:') && knip !== undefined && openspec !== undefined);
+  checkClean('every npx in a CI workflow pins the version package-lock.json resolves', workflowNpxProblems(workflows, lockedVersion));
+  const runs = (line: string): Map<string, string> => withFile(workflows, ci, `${text}      - run: ${line}\n`);
+  checkCaught('  red: the knip pin a lockfile bump left behind fails', workflowNpxProblems(runs('npx --ignore-scripts --package=knip@6.16.1 knip'), lockedVersion), `npx installs knip@6.16.1, the lockfile resolves ${knip}`);
+  checkCaught('  red: a stale scoped pin fails', workflowNpxProblems(runs('npx --ignore-scripts --package=@fission-ai/openspec@0.0.1 openspec validate'), lockedVersion), `npx installs @fission-ai/openspec@0.0.1, the lockfile resolves ${openspec}`);
+  checkCaught('  red: a pin with no version fails', workflowNpxProblems(runs('npx --ignore-scripts --package=knip knip'), lockedVersion), `npx installs knip@(none), the lockfile resolves ${knip}`);
+  checkCaught('  red: an npx with no pinned package fails closed', workflowNpxProblems(runs('npx knip'), lockedVersion), 'npx runs without a --package=<pkg>@<version> pin');
+  checkCaught('  red: a package the lockfile does not resolve fails closed', workflowNpxProblems(runs('npx --ignore-scripts --package=whim-not-a-dependency@1.0.0 tool'), lockedVersion), 'npx installs whim-not-a-dependency, which package-lock.json does not resolve');
+  checkClean('  a matching pin passes', workflowNpxProblems(runs(`npx --ignore-scripts --package=knip@${knip} knip`), lockedVersion));
+  checkClean('  a matching npm exec pin passes', workflowNpxProblems(runs(`npm exec --package=knip@${knip} -- knip`), lockedVersion));
+  checkClean('  npm commands that run no fetched package pass', workflowNpxProblems(runs('npm ci && npm run build && npm exec-not-a-runner'), lockedVersion));
+  checkCaught('  red: a stale npm exec pin fails', workflowNpxProblems(runs('npm exec --package=knip@6.16.1 -- knip'), lockedVersion), `npm exec installs knip@6.16.1, the lockfile resolves ${knip}`);
+  checkCaught('  red: an unpinned npm exec fails closed', workflowNpxProblems(runs('npm exec knip'), lockedVersion), 'npm exec runs without a --package=<pkg>@<version> pin');
+  checkCaught('  red: an unpinned npm x fails closed', workflowNpxProblems(runs('npm x knip'), lockedVersion), 'npm x runs without a --package=<pkg>@<version> pin');
+  checkCaught('  red: an unpinned pnpm dlx fails closed', workflowNpxProblems(runs('pnpm dlx knip'), lockedVersion), 'pnpm dlx runs without a --package=<pkg>@<version> pin');
+  checkCaught('  red: a stale pnpm dlx pin fails', workflowNpxProblems(runs('pnpm dlx --package=knip@6.16.1 knip'), lockedVersion), `pnpm dlx installs knip@6.16.1, the lockfile resolves ${knip}`);
+  checkCaught('  red: an unpinned yarn dlx fails closed', workflowNpxProblems(runs('yarn dlx knip'), lockedVersion), 'yarn dlx runs without a --package=<pkg>@<version> pin');
+  checkCaught('  red: an unpinned bunx fails closed', workflowNpxProblems(runs('bunx knip'), lockedVersion), 'bunx runs without a --package=<pkg>@<version> pin');
+  checkCaught('  red: an npx after a backtick fails closed', workflowNpxProblems(runs('echo `npx knip`'), lockedVersion), 'npx runs without a --package=<pkg>@<version> pin');
+  checkCaught('  red: an npx at the end of its line fails closed', workflowNpxProblems(runs('npx'), lockedVersion), 'npx runs without a --package=<pkg>@<version> pin');
+  checkCaught('  red: a stale pin given with -p fails', workflowNpxProblems(runs('npx -p knip@6.16.1 knip'), lockedVersion), `npx installs knip@6.16.1, the lockfile resolves ${knip}`);
+}
+
 function toolingPlaywrightTests(playwrightVersion: string, seccompFiles: readonly string[]): void {
   section('Tooling: Playwright version sites');
   const rels = ['.devcontainer/devcontainer.json', '.devcontainer/run-loop.sh', '.devcontainer/Dockerfile', '.github/workflows/invariants.yml'];
@@ -3810,7 +3876,7 @@ function imageTests(files: ReadonlyMap<string, string>, playwrightVersion: strin
   checkClean('the load-test Dockerfile pins its build base by digest and builds its runtime on the SERVER_IMAGE build arg', loadtestDockerfileProblems(loadtestDockerfile));
   checkCaught('  red: an unpinned load-test build base fails', loadtestDockerfileProblems(plant(loadtestDockerfile, /@sha256:[0-9a-f]{64}/.exec(loadtestDockerfile)?.[0] ?? '', '')), 'is not pinned by digest');
   checkCaught('  red: a runtime base with a default tag fails', loadtestDockerfileProblems(plant(loadtestDockerfile, 'ARG SERVER_IMAGE', 'ARG SERVER_IMAGE=node:latest')), 'FROM ${SERVER_IMAGE}');
-  checkClean('.dockerignore keeps env files, credentials, VCS data and node_modules out of the build context', requiredLineProblems('.dockerignore', files.get('.dockerignore') ?? '', ['.git', '**/node_modules', '**/.env', '**/.env.*', '**/*.env']));
+  checkClean('.dockerignore keeps env files, credentials, VCS data and node_modules out of the build context', requiredLineProblems('.dockerignore', files.get('.dockerignore') ?? '', ['.git', '**/node_modules', '**/.env', '**/.env.*', '**/*.env', '**/.tmp-bundles']));
   checkClean('.gcloudignore honours .gitignore and keeps env files out of the upload', requiredLineProblems('.gcloudignore', files.get('.gcloudignore') ?? '', ['#!include:.gitignore', '.git', '**/node_modules', '**/.env']));
   checkClean('cloudbuild.yaml builds linux/amd64 tagged with the commit SHA, with a pinned builder and no secret', cloudbuildProblems(files.get('deploy/cloudbuild.yaml') ?? ''));
   checkCaught('  red: a build-time secret fails', cloudbuildProblems(`${files.get('deploy/cloudbuild.yaml') ?? ''}availableSecrets: {}\n`), 'availableSecrets');
@@ -4645,6 +4711,7 @@ export async function runDeployConfigTests(): Promise<void> {
 
   imageTests(files, playwrightVersion);
   toolingPlaywrightTests(playwrightVersion, composeContext.seccompFiles);
+  toolingNpxPinTests();
   imageClosureTests(files);
   composeTests(files, composeContext);
   caddyTests(files, maxBodyBytes, siteFiles);

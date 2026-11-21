@@ -3,3 +3,4 @@ export function bundleServerEntry(options: { entry: string; outfile: string; wri
 export function buildRuntimeTree(options: { outDir: string }): Promise<void>;
 export function declaredRuntimePackages(serverDir?: string): string[];
 export function devBundleExternals(serverDir?: string): string[];
+export function serverBundleTarget(name: string, serverDir: string): { outfile: string; external: string[] };

@@ -36,8 +36,7 @@ import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { devBundleExternals } from '../server/build.mjs';
-import { tmpBundlePath } from '../scripts/lib/tmp-bundle.mjs';
+import { serverBundleTarget } from '../server/build.mjs';
 
 const evalsDir = dirname(fileURLToPath(import.meta.url));
 const repoRoot = join(evalsDir, '..');
@@ -172,25 +171,24 @@ export async function runEvalSet(opts) {
 `;
 
 async function loadFacade() {
-  const outfile = tmpBundlePath('evals-cli-facade', repoRoot);
+  // Inside the server workspace, where its externals resolve (`serverBundleTarget`): the server's
+  // declared runtime packages plus Playwright (native bindings), esbuild and typescript, which
+  // must never be inlined. Left external, Node resolves the real `node_modules/*` at runtime.
+  const serverBundle = serverBundleTarget('evals-cli-facade', join(repoRoot, 'server'));
   await build({
     stdin: { contents: FACADE_SOURCE, resolveDir: evalsDir, sourcefile: 'facade.ts', loader: 'ts' },
-    outfile,
+    ...serverBundle,
     bundle: true,
     platform: 'node',
     format: 'esm',
     target: 'node22',
     tsconfigRaw: '{}',
     logLevel: 'warning',
-    // The one externals list for a dev bundle of server code (`server/build.mjs`): the server's
-    // declared runtime packages plus Playwright (native bindings), esbuild and typescript, which
-    // must never be inlined. Left external, Node resolves the real `node_modules/*` at runtime.
-    external: devBundleExternals(join(repoRoot, 'server')),
   });
   try {
-    return await import(pathToFileURL(outfile).href);
+    return await import(pathToFileURL(serverBundle.outfile).href);
   } finally {
-    rmSync(outfile, { force: true });
+    rmSync(serverBundle.outfile, { force: true });
   }
 }
 

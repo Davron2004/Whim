@@ -19,8 +19,7 @@ import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
 import { build } from 'esbuild';
-import { devBundleExternals } from '../build.mjs';
-import { tmpBundlePath } from '../../scripts/lib/tmp-bundle.mjs';
+import { serverBundleTarget } from '../build.mjs';
 import { check, eq, report, section } from './harness';
 import { ScriptedModelClient, type ScriptedTurn } from './scripted-model';
 import { OpenRouterNetworkError } from '../src/openrouter';
@@ -563,15 +562,16 @@ interface DrainServer {
 }
 
 async function spawnDrainServer(dataDir: string): Promise<DrainServer> {
-  const childFile = tmpBundlePath('server-e2e-drain', ROOT);
+  // Inside the server workspace, where its externals resolve (`serverBundleTarget`).
+  const serverBundle = serverBundleTarget('server-e2e-drain', path.join(ROOT, 'server'));
+  const childFile = serverBundle.outfile;
   await build({
     entryPoints: [path.join(ROOT, 'server', 'test', 'e2e-drain-server.ts')],
-    outfile: childFile,
+    ...serverBundle,
     bundle: true,
     platform: 'node',
     format: 'esm',
     target: 'node26',
-    external: devBundleExternals(path.join(ROOT, 'server')),
     logLevel: 'warning',
   });
 

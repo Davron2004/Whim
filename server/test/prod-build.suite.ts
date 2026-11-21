@@ -20,14 +20,15 @@ import path from 'node:path';
 import { spawn, spawnSync, type ChildProcessByStdio } from 'node:child_process';
 import type { Readable } from 'node:stream';
 import { createRequire, isBuiltin } from 'node:module';
-import { pathToFileURL } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 import ts from 'typescript';
 import { build } from 'esbuild';
 import { check, eq, section } from './harness';
 import { PROTOCOL_HEADER_LINE, TIMED_OUT, waitFor, within } from './route-doubles';
 import { productionEntryInputs } from './build-fixtures';
-import { buildRuntimeTree, declaredRuntimePackages, devBundleExternals } from '../build.mjs';
+import { buildRuntimeTree, declaredRuntimePackages, devBundleExternals, serverBundleTarget } from '../build.mjs';
+import { TMP_BUNDLE_DIR } from '../../scripts/lib/tmp-bundle.mjs';
 import { RUNTIME_ASSETS } from '../src/runtime-assets';
 import { loadFewShotExamples } from '../src/generation/prompts/inputs';
 import { openRouterUsageAndCostTransport } from '../src/usage/openrouter-stats';
@@ -64,12 +65,37 @@ function listFiles(dir: string, prefix = ''): string[] {
   });
 }
 
+/** The directory Node loads the bare import `name` from in a module at `fromFile`: the first
+ *  `node_modules/<name>` on its lookup path, which runs on past the checkout into every parent
+ *  directory. `undefined` when there is none. */
+function resolvedPackageDir(fromFile: string, name: string): string | undefined {
+  const lookup = createRequire(fromFile).resolve.paths(name) ?? [];
+  const found = lookup.map((dir) => path.join(dir, name)).find((dir) => fs.existsSync(path.join(dir, 'package.json')));
+  return found === undefined ? undefined : fs.realpathSync(found);
+}
+
 /** Where Node resolves `name` from the server workspace: the package's own directory. */
 function packageDir(name: string): string {
-  const lookup = createRequire(path.join(ROOT, 'server', 'package.json')).resolve.paths(name) ?? [];
-  const found = lookup.map((dir) => path.join(dir, name)).find((dir) => fs.existsSync(path.join(dir, 'package.json')));
+  const found = resolvedPackageDir(path.join(ROOT, 'server', 'package.json'), name);
   if (!found) throw new Error(`setup: ${name} does not resolve from the server workspace`);
-  return fs.realpathSync(found);
+  return found;
+}
+
+/** A bundle of server code at `bundleFile` in the checkout `root` against production, which loads
+ *  every runtime package from the server workspace (`/app/server`): each of `externals` must load
+ *  from the directory the server workspace loads it from, and that directory must be inside the
+ *  checkout, not in a parent directory's node_modules that a clean checkout does not have. */
+function bundleResolutionProblems(bundleFile: string, root: string, externals: readonly string[]): string[] {
+  const serverManifest = path.join(root, 'server', 'package.json');
+  const inside = `${fs.realpathSync(root)}${path.sep}`;
+  return externals.filter((name) => !isBuiltin(name) && name !== 'node:*').flatMap((name) => {
+    const fromBundle = resolvedPackageDir(bundleFile, name);
+    const fromServer = resolvedPackageDir(serverManifest, name);
+    if (fromBundle === undefined) return [`${name} does not resolve from the bundle`];
+    if (fromBundle !== fromServer) return [`${name} loads from ${fromBundle} in the bundle, from ${fromServer ?? 'nowhere'} in the server workspace`];
+    if (!fromBundle.startsWith(inside)) return [`${name} loads from ${fromBundle}, outside the checkout`];
+    return [];
+  });
 }
 
 /** Bare module specifiers a bundle still loads at run time: its import and export declarations, and
@@ -795,20 +821,90 @@ function externalsOf(value: ts.Expression | undefined, sourceFile: ts.SourceFile
 function propertyValue(options: ts.ObjectLiteralExpression, name: string): ts.Expression | undefined {
   for (const property of options.properties) {
     if (ts.isPropertyAssignment(property) && ts.isIdentifier(property.name) && property.name.text === name) return property.initializer;
+    if (ts.isShorthandPropertyAssignment(property) && property.name.text === name) return property.name;
   }
   return undefined;
 }
 
+/** Whether `node` is, or contains, a call of the function `name`. */
+function callsFunction(node: ts.Node, name: string): boolean {
+  if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === name) return true;
+  return ts.forEachChild(node, (child) => callsFunction(child, name) || undefined) ?? false;
+}
+
+/** Where one bundle config puts its outfile: `helper` is `serverBundleTarget` (the server
+ *  workspace's `.tmp-bundles/`), `server-dir` a file straight under `server/`, `other` anything
+ *  else, `unknown` an options argument the scan cannot read. */
+type OutfilePlacement = 'helper' | 'server-dir' | 'other' | 'unknown';
+
+interface BundleConfig {
+  at: string;
+  externals: string[];
+  /** Set when the bundle keeps the server's dev externals (`devBundleExternals`, directly or
+   *  through `serverBundleTarget`): those packages resolve from the server workspace, so the
+   *  outfile has to sit there too. `undefined` for a bundle with other externals. */
+  placement: OutfilePlacement | undefined;
+  /** Why the config does not satisfy the placement rule, if it does not. */
+  placementProblem: string | undefined;
+}
+
+/** A server-externals bundle must take outfile and externals from `serverBundleTarget`. The one
+ *  other placement that resolves the same way is a `server/*.mjs` CLI writing next to itself
+ *  (`path.join(here, …)`, `here` being server/). Anything else, or anything unreadable, is flagged. */
+function placementOf(file: string, options: ts.ObjectLiteralExpression, helperBindings: ReadonlySet<string>, constants: ReadonlyMap<string, ts.Expression>, sourceFile: ts.SourceFile): Pick<BundleConfig, 'placement' | 'placementProblem'> {
+  const helperSpread = options.properties.some(
+    (property) => ts.isSpreadAssignment(property) && (callsFunction(property.expression, 'serverBundleTarget') || (ts.isIdentifier(property.expression) && helperBindings.has(property.expression.text))),
+  );
+  const outfileValue = propertyValue(options, 'outfile');
+  const outfile = outfileValue && ts.isIdentifier(outfileValue) ? (constants.get(outfileValue.text) ?? outfileValue) : outfileValue;
+  const external = propertyValue(options, 'external');
+  if (helperSpread) {
+    const overridden = [outfileValue && 'outfile', external && 'external'].filter(Boolean);
+    return { placement: 'helper', placementProblem: overridden.length > 0 ? `${overridden.join(' and ')} overrides what serverBundleTarget returns` : undefined };
+  }
+  if (!external || !callsFunction(external, 'devBundleExternals')) return { placement: undefined, placementProblem: undefined };
+  const problem = 'keeps the server externals but does not take its outfile from serverBundleTarget (`...serverBundleTarget(name, serverDir)`)';
+  const nextToServer = /^server\/[^/]+\.mjs$/.test(file) && outfile && ts.isCallExpression(outfile) && /^path\.join\(here,/.test(outfile.getText(sourceFile));
+  return nextToServer ? { placement: 'server-dir', placementProblem: undefined } : { placement: outfile ? 'other' : 'unknown', placementProblem: problem };
+}
+
 /** Every esbuild `build({ bundle: true, ... })` call in `source`, with the packages its `external`
- *  option keeps out of the bundle. */
-function bundleExternals(file: string, source: string): { at: string; externals: string[] }[] {
+ *  option keeps out of the bundle and where its outfile goes. A `build(...)` imported from
+ *  esbuild whose options are not an object literal cannot be classified and is reported as such,
+ *  never skipped. */
+function bundleExternals(file: string, source: string): BundleConfig[] {
   const sourceFile = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, file.endsWith('.ts') ? ts.ScriptKind.TS : ts.ScriptKind.JS);
-  const found: { at: string; externals: string[] }[] = [];
+  const helperBindings = new Set<string>();
+  const constants = new Map<string, ts.Expression>();
+  const bind = (node: ts.Node): void => {
+    if (ts.isVariableDeclaration(node) && ts.isIdentifier(node.name) && node.initializer) {
+      constants.set(node.name.text, node.initializer);
+      if (callsFunction(node.initializer, 'serverBundleTarget')) helperBindings.add(node.name.text);
+    }
+    ts.forEachChild(node, bind);
+  };
+  bind(sourceFile);
+  const importsEsbuildBuild = sourceFile.statements.some(
+    (statement) =>
+      ts.isImportDeclaration(statement) &&
+      ts.isStringLiteral(statement.moduleSpecifier) &&
+      statement.moduleSpecifier.text === 'esbuild' &&
+      statement.importClause?.namedBindings !== undefined &&
+      ts.isNamedImports(statement.importClause.namedBindings) &&
+      statement.importClause.namedBindings.elements.some((element) => element.name.text === 'build'),
+  );
+  const found: BundleConfig[] = [];
   const visit = (node: ts.Node): void => {
-    const options = ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'build' ? node.arguments[0] : undefined;
-    if (options && ts.isObjectLiteralExpression(options) && propertyValue(options, 'bundle')?.kind === ts.SyntaxKind.TrueKeyword) {
-      const line = sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1;
-      found.push({ at: `${file}:${line}`, externals: externalsOf(propertyValue(options, 'external'), sourceFile) });
+    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === 'build' && node.arguments[0]) {
+      const options = node.arguments[0];
+      const at = `${file}:${sourceFile.getLineAndCharacterOfPosition(node.getStart(sourceFile)).line + 1}`;
+      if (!ts.isObjectLiteralExpression(options)) {
+        if (importsEsbuildBuild) found.push({ at, externals: [], placement: 'unknown', placementProblem: `build() options are not an object literal (${options.getText(sourceFile)}), so the bundle cannot be classified` });
+      } else if (propertyValue(options, 'bundle')?.kind === ts.SyntaxKind.TrueKeyword) {
+        const placed = placementOf(file, options, helperBindings, constants, sourceFile);
+        const externals = placed.placement === 'helper' && !propertyValue(options, 'external') ? DERIVED_EXTERNALS.devBundleExternals?.() : externalsOf(propertyValue(options, 'external'), sourceFile);
+        found.push({ at, externals: externals ?? [], ...placed });
+      }
     }
     ts.forEachChild(node, visit);
   };
@@ -816,12 +912,12 @@ function bundleExternals(file: string, source: string): { at: string; externals:
   return found;
 }
 
-/** Server sources that may hold a bundle config: every `.ts`/`.mjs` outside dependencies and build
+/** Server sources that may hold a bundle config: every `.ts`/`.mjs` outside dependencies, live test bundles and build
  *  output. */
 function serverSources(dir: string, rel: string): string[] {
   return fs.readdirSync(dir, { withFileTypes: true }).flatMap((entry) => {
     const child = `${rel}/${entry.name}`;
-    if (entry.isDirectory()) return entry.name === 'node_modules' || entry.name === 'dist' ? [] : serverSources(path.join(dir, entry.name), child);
+    if (entry.isDirectory()) return entry.name === 'node_modules' || entry.name === 'dist' || entry.name === TMP_BUNDLE_DIR ? [] : serverSources(path.join(dir, entry.name), child);
     return /\.(ts|mjs)$/.test(entry.name) && !entry.name.endsWith('.d.mts') && !entry.name.includes('.tmp.') ? [child] : [];
   });
 }
@@ -834,16 +930,53 @@ function testBundlesKeepRuntimePackagesExternal(): void {
   // evals/cli.mjs bundles server/src/pipeline.ts for `--generate`.
   const files = [...serverSources(path.join(ROOT, 'server'), 'server'), 'evals/cli.mjs'];
   const configs = files.flatMap((file) => bundleExternals(file, fs.readFileSync(path.join(ROOT, file), 'utf8')));
-  for (const runner of ['server/test/run.mjs', 'server/test/e2e.run.mjs', 'server/test/e2e.ts', 'server/test/firestore.run.mjs', 'server/dev.mjs', 'server/build.mjs', 'evals/cli.mjs']) {
+  // The runners whose bundle is imported from the checkout: each takes outfile and externals from
+  // `serverBundleTarget`, so it resolves server packages from the server workspace.
+  const placedByHelper = ['server/test/run.mjs', 'server/test/e2e.run.mjs', 'server/test/e2e.ts', 'server/test/firestore.run.mjs', 'server/test/firestore-admission.run.mjs', 'evals/cli.mjs'];
+  for (const runner of [...placedByHelper, 'server/dev.mjs', 'server/build.mjs']) {
     check(`the scan finds the bundle config in ${runner}`, configs.some((config) => config.at.startsWith(`${runner}:`)));
+  }
+  for (const runner of placedByHelper) {
+    check(`${runner} writes its bundle through serverBundleTarget`, configs.filter((config) => config.at.startsWith(`${runner}:`)).every((config) => config.placement === 'helper'));
   }
   for (const config of configs) {
     eq(`${config.at} keeps every declared runtime package external`, declared.filter((name) => !config.externals.includes(name)), []);
+    eq(`${config.at} writes a server-externals bundle where the server workspace's packages resolve`, config.placementProblem, undefined);
   }
   eq(
     'red-check: the scan reads a hand-kept list as written and never credits an unrecognised spread',
     bundleExternals('fixture.mjs', "build({ bundle: true, external: ['pino', ...declaredRuntimePackages().slice(1)] });\nbuild({ bundle: false });").map((config) => config.externals),
     [['pino', '?...declaredRuntimePackages().slice(1)']],
+  );
+  const placementOfFixture = (file: string, source: string): (string | undefined)[] => bundleExternals(file, source).map((config) => config.placementProblem);
+  const serverExternals = "import { build } from 'esbuild';\n";
+  eq(
+    'red-check: a server-externals bundle written to a root-placed outfile is flagged',
+    placementOfFixture('fixture.mjs', `${serverExternals}build({ bundle: true, outfile: tmpBundlePath('x'), external: devBundleExternals(serverDir) });`).map((problem) => problem !== undefined),
+    [true],
+  );
+  eq(
+    'red-check: ... and so is one whose outfile is hand-placed under the server directory from outside server/*.mjs',
+    placementOfFixture('server/test/fixture.mjs', `${serverExternals}build({ bundle: true, outfile: path.join(here, 'x.mjs'), external: devBundleExternals(serverDir) });`).map((problem) => problem !== undefined),
+    [true],
+  );
+  eq(
+    'red-check: a build whose options the scan cannot read is flagged, not skipped',
+    placementOfFixture('fixture.mjs', `${serverExternals}build(options);`).map((problem) => problem !== undefined),
+    [true],
+  );
+  eq(
+    'red-check: spreading serverBundleTarget (directly or through a binding) is accepted, overriding its outfile or externals is not',
+    placementOfFixture(
+      'fixture.mjs',
+      `${serverExternals}const t = serverBundleTarget('a', d);\nbuild({ bundle: true, ...serverBundleTarget('a', d) });\nbuild({ bundle: true, ...t });\nbuild({ bundle: true, ...t, outfile: 'x.mjs' });\nbuild({ bundle: true, ...t, external: [] });`,
+    ).map((problem) => problem !== undefined),
+    [false, false, true, true],
+  );
+  eq(
+    'a server/*.mjs CLI writing next to itself is accepted',
+    placementOfFixture('server/fixture.mjs', `${serverExternals}build({ bundle: true, outfile: path.join(here, '.x.tmp.mjs'), external: devBundleExternals(here) });`),
+    [undefined],
   );
 }
 
@@ -854,21 +987,64 @@ async function testInlinedBuildModuleBuildsNothing(): Promise<void> {
   fs.mkdirSync(path.join(ROOT, 'server', 'dist'), { recursive: true });
   // Inside the checkout, so the bundle resolves esbuild as build.mjs does.
   const dir = fs.mkdtempSync(path.join(ROOT, 'server', 'dist', 'inlined-build-'));
+  const serverBundle = serverBundleTarget('inlined-build', path.join(ROOT, 'server'));
+  const outfile = serverBundle.outfile;
   try {
     const entry = path.join(dir, 'entry.tmp.mjs');
-    const outfile = path.join(dir, 'bundle.tmp.mjs');
     fs.writeFileSync(entry, `import { devBundleExternals } from ${JSON.stringify(path.join(ROOT, 'server', 'build.mjs'))};\nconsole.log(devBundleExternals().length > 0);\n`);
-    await build({ entryPoints: [entry], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node26', logLevel: 'silent', external: devBundleExternals() });
+    await build({ entryPoints: [entry], ...serverBundle, bundle: true, platform: 'node', format: 'esm', target: 'node26', logLevel: 'silent' });
     check('setup: the bundle inlines build.mjs', fs.readFileSync(outfile, 'utf8').includes('buildRuntimeTree'));
     const run = spawnSync(process.execPath, [outfile], { cwd: ROOT, encoding: 'utf8', timeout: PROCESS_WAIT_MS });
     eq('it runs its own code and exits 0, building no tree', [run.status, run.stdout, run.stderr], [0, 'true\n', '']);
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
+    fs.rmSync(outfile, { force: true });
+  }
+}
+
+/** A server suite's bundle has to sit where the server workspace's packages resolve. In CI the
+ *  first clean checkout failed `server:test` with "Cannot find package 'pino'": the bundle was
+ *  written to the repo root, npm had installed pino only in server/node_modules, and every local
+ *  run had passed because Node's lookup walked on into the enclosing primary checkout's stale
+ *  node_modules. The fixture rebuilds that layout, so the red cases hold on any install. */
+function testSuiteBundleResolvesLikeTheServer(): void {
+  section('Server suite bundles: externals load from where the server workspace loads them');
+  const self = fileURLToPath(import.meta.url);
+  eq("this suite's own bundle loads every devBundleExternals package from the server workspace's directory, inside the checkout", bundleResolutionProblems(self, ROOT, devBundleExternals(path.join(ROOT, 'server'))), []);
+
+  // outer/ stands for the primary checkout a worktree is nested in: a stale install the checkout
+  // itself must never reach. outer/wt/ is the checkout, with one package npm put only under server/.
+  const outer = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'whim-bundle-placement-')));
+  const pkg = (dir: string, name: string): void => {
+    fs.mkdirSync(path.join(dir, name), { recursive: true });
+    fs.writeFileSync(path.join(dir, name, 'package.json'), JSON.stringify({ name }));
+  };
+  try {
+    const wt = path.join(outer, 'wt');
+    const [shadowed, serverOnly, parentOnly] = ['whim-probe-shadowed', 'whim-probe-server-only', 'whim-probe-parent-only'];
+    pkg(path.join(outer, 'node_modules'), shadowed);
+    pkg(path.join(outer, 'node_modules'), parentOnly);
+    pkg(path.join(wt, 'server', 'node_modules'), shadowed);
+    pkg(path.join(wt, 'server', 'node_modules'), serverOnly);
+    fs.mkdirSync(path.join(wt, 'node_modules'), { recursive: true });
+    fs.writeFileSync(path.join(wt, 'server', 'package.json'), '{}');
+    const inServer = path.join(wt, 'server', '.tmp-bundles', 'probe.1.mjs');
+    const inRoot = path.join(wt, '.tmp-bundles', 'probe.1.mjs');
+
+    eq('  a bundle under server/.tmp-bundles/ loads server-only packages from server/node_modules', bundleResolutionProblems(inServer, wt, [shadowed, serverOnly]), []);
+    eq('  red: a bundle under the root .tmp-bundles/ of a clean checkout cannot load a server-only package', bundleResolutionProblems(inRoot, wt, [serverOnly]), [`${serverOnly} does not resolve from the bundle`]);
+    eq('  red: ... and nested in another checkout it loads that checkout\'s copy instead', bundleResolutionProblems(inRoot, wt, [shadowed]), [
+      `${shadowed} loads from ${path.join(outer, 'node_modules', shadowed)} in the bundle, from ${path.join(wt, 'server', 'node_modules', shadowed)} in the server workspace`,
+    ]);
+    eq('  red: a package only a parent directory installs fails wherever the bundle sits', bundleResolutionProblems(inServer, wt, [parentOnly]), [`${parentOnly} loads from ${path.join(outer, 'node_modules', parentOnly)}, outside the checkout`]);
+  } finally {
+    fs.rmSync(outer, { recursive: true, force: true });
   }
 }
 
 export async function runProdBuildTests(): Promise<void> {
   section('Production build');
+  testSuiteBundleResolvesLikeTheServer();
   testBundlesKeepRuntimePackagesExternal();
   await testInlinedBuildModuleBuildsNothing();
   await testUsageAndCostTransport();

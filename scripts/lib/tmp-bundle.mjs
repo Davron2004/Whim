@@ -3,8 +3,14 @@
  *
  * The Node runners (`npm run launcher:test`, `server:test`, `evals:test`, …) bundle TypeScript with
  * esbuild and `import()` the result. The bundle has to live INSIDE the checkout: its external
- * packages (esbuild, typescript, pino, isomorphic-git, react, …) resolve by walking up from the
- * bundle's own location to `<root>/node_modules`, which nothing under os.tmpdir() has.
+ * packages (esbuild, typescript, isomorphic-git, react, …) resolve by walking up from the
+ * bundle's own location to `<root>/node_modules`, which nothing under os.tmpdir() has. A bundle
+ * of server code (externals: `devBundleExternals(serverDir)` in `server/build.mjs`) passes the same
+ * `serverDir` as `root`, so it resolves them the way production does from `/app/server`: npm may
+ * install a server package (pino, @google-cloud/firestore) only in `server/node_modules`, which a
+ * walk up from the repo root never visits. Past the root, Node keeps walking into the checkout's
+ * PARENT directories, so a misplaced bundle can pass in a worktree nested inside another checkout
+ * and fail on a clean CI one.
  *
  * They used to write `<root>/.<name>.<pid>.tmp.mjs` and delete it in a `finally`. That `finally`
  * never runs when the suite calls `process.exit()` — which every suite does on a failure — nor
@@ -62,7 +68,8 @@ function sweep(dir, now) {
  * removed when the process exits; stale bundles of dead runs are swept first.
  *
  * @param {string} name  a short label, e.g. `launcher-acceptance`
- * @param {string} [root]  the checkout root (default: the cwd, which `npm run` sets to it)
+ * @param {string} [root]  the package directory whose node_modules the bundle's bare imports must
+ *   resolve from: the checkout root (default: the cwd, which `npm run` sets to it) or a workspace
  * @returns {string}
  */
 export function tmpBundlePath(name, root = process.cwd()) {
