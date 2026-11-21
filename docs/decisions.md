@@ -1833,3 +1833,21 @@ check could be fooled. No containment leg was affected.
 Pinned by `invariants/sandbox-isolation/verdict-channel.mjs` (`npm run invariants` §3c: twelve
 attacks and two negative controls that patch the fix out) and `synthrun/test/acceptance.ts`
 (`stolen nonce`).
+
+### 87. The gate's tamper tripwire guards the control plane only; product config is agent-editable `[DECIDED — owner, 2026-11-20; narrows the CONFIG_SET half of the 2026-09-21 protected-file retirement]`
+
+The pinned-BASE tripwire in `scripts/gate.sh` refused to run while `package.json`, the lockfile,
+tsconfig, eslint, knip, babel or metro config differed from the base commit. It was built for
+weaker agents, on the premise that touching those files signals an agent cheating its way to
+green. In practice it blocked legitimate work (any dependency change, any lint-config fix) and
+forced an attended bootstrap commit for each one.
+
+- **`CONFIG_SET` now holds only what defines "pass":** the gate scripts, `fixloop.sh`,
+  `worktree.sh`, the removal ratchet, `.claude/{hooks,settings.json,agents,commands}`, `.codex`,
+  `build/`, `invariants/`. It equals `fixloop.sh`'s `CLASS2`.
+- **Class-1 product config is agent-editable.** `fixloop.sh integrity` lists Class-1 changes and
+  no longer exits 3 (ungranted) or 6 (needs ratification). The per-worktree grant step is retired.
+- **The control that replaces the block is review.** The reviewer's check-weakening scan
+  (`.claude/agents/reviewer.md` step 5) flags HIGH any rule turned off, strictness loosened,
+  knip `ignore` added to silence a finding, gate script dropped, or dependency added that the plan
+  doesn't name. The removal ratchet still catches deleted or shrunk checks.

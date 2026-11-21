@@ -19,16 +19,17 @@ cd "$(dirname "$0")/.." || exit 2
 # commit rights: a `git commit` can move HEAD, but it cannot move a recorded SHA (objects are
 # content-addressed), so a tampered config can never reach a green run. To make a legit change:
 # a human edits the file and commits it deliberately (which advances the baseline).
+# Only the control plane is here: what defines "pass" (the gate scripts, hooks, agent briefs, build,
+# invariants). Product config (package.json, the lockfile, tsconfig, eslint, knip, babel, metro) is
+# agent-editable since 2026-11-20 (owner decision): a weakened checker there is caught by the
+# reviewer's check-weakening scan and the removal ratchet, not by refusing to run.
 BASE="${GATE_BASE:-HEAD}"
 CONFIG_SET=(
-  package.json package-lock.json tsconfig*.json
-  eslint.config.* .eslintrc* .eslintignore knip.json knip.config.*
   scripts/gate.sh scripts/gate-full.sh scripts/fixloop.sh scripts/git-cleanup-check.sh scripts/sync-codex.mjs
   scripts/worktree.sh   # executed below (the node_modules precondition)
   scripts/removal-ratchet.mjs   # executed below (the removal ratchet)
   .claude/hooks .claude/settings.json .claude/agents .claude/commands
   .codex   # Codex mirror — hook symlinks into .claude/hooks + generated agent TOMLs
-  babel.config.js metro.config.js
   build   # the build harness is executed (npm run build, below) — refuse to run tampered build code
   invariants   # owner-authored never-regress suite — a tampered invariant lies at gate-full time
 )

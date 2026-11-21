@@ -10,9 +10,9 @@
 # script runs its git unrestricted — keep it orchestrator-only (do not auto-allow for subagents).
 #
 # Subcommands:
-#   integrity <branch> [allowlist-file]            exit 0 clean | 6 sanctioned Class-1 (⊆ allowlist, needs
-#                                                    ratification) | 3 tamper (Class-2, or ungranted Class-1)
-#                                                    | 4 scope-violation (non-protected file outside allowlist)
+#   integrity <branch> [allowlist-file]            exit 0 clean (Class-1 changes are listed, not blocked)
+#                                                    | 3 tamper (Class-2 touched)
+#                                                    | 4 scope-violation (a file outside the allowlist)
 #   redcheck  <branch> <test-cmd...> -- <prod>...  exit 0 RED (good) | 5 GREEN (vacuous) | 2 error
 #   stale     <evidence-file>                       exit 0 evidence present at HEAD (finding live) | 7 missing
 #                                                    (likely ALREADY FIXED — do not dispatch). Format:
@@ -26,12 +26,12 @@
 #                                                    argument exits 1 via `${N:?}`, as elsewhere here). Absence is
 #                                                    never success; see the arm's comment for the defect it removes.
 #   park      <branch> <reason...>                 rename fix/<id> -> wip/<id>, write a reason note
-#   finish    <branch> [allowlist-file]            re-run integrity (0/6 print the human-gated merge; 6 flags
-#                                                    a Class-1 change to ratify; 3/4 abort), then merge cleanup
+#   finish    <branch> [allowlist-file]            re-run integrity (0 prints the human-gated merge;
+#                                                    3/4 abort), then merge cleanup
 #   status                                         list fix/* and wip/* branches + worktrees
 #
 # Protected files split by blast radius: Class 2 (control plane — TAMPER, never grantable) vs Class 1
-# (config the agent owns — grantable per-task via .claude/fixloop/grants/<id>). See §4.9 + CLASS1/CLASS2.
+# (product config, agent-editable since 2026-11-20; listed for review only). See CLASS1/CLASS2.
 #
 # BASE for a branch is recovered as `git merge-base <branch> $INTEGRATION_BRANCH` — the point it was
 # cut from, immune to the branch advancing. Every integrity question is "diff vs BASE", never "vs HEAD".
@@ -112,29 +112,13 @@ case "$cmd" in
     echo "CHANGED vs BASE ($base):"
     [ -n "$changed" ] && echo "$changed" | sed 's/^/  /' || echo "  (none)"
 
-    # Class 1 — grantable config. SANCTIONED iff every touched Class-1 file is covered by the declared
-    # allowlist (= the plan's declared protected scope / the grant); otherwise TAMPER (ungranted touch).
+    # Class 1 — product config, agent-editable since 2026-11-20 (owner decision). Listed so the
+    # reviewer's check-weakening scan sees it; it neither blocks nor needs ratification. When an
+    # allowlist is given, these files fall under the general scope check below like any other file.
     c1="$(git diff --name-only "$base..$branch" -- "${CLASS1[@]}" 2>/dev/null || true)"
-    sanctioned=0
     if [ -n "$c1" ]; then
-      if [ -z "$allowfile" ]; then
-        echo "CLASS-1 CONFIG TOUCHED but NO allowlist declared — TAMPER (ungranted protected change):"
-        echo "$c1" | sed 's/^/  /'
-        exit 3
-      fi
-      ungranted=""
-      while IFS= read -r f; do
-        [ -z "$f" ] && continue
-        in_allowlist "$f" "$allowfile" || ungranted+="$f"$'\n'
-      done <<< "$c1"
-      if [ -n "$ungranted" ]; then
-        echo "CLASS-1 CONFIG TOUCHED but NOT in the declared allowlist — TAMPER:"
-        printf '%s' "$ungranted" | sed 's/^/  /'
-        exit 3
-      fi
-      echo "CLASS-1 CONFIG CHANGED — SANCTIONED (⊆ declared allowlist); NEEDS HUMAN RATIFICATION:"
+      echo "CLASS-1 CONFIG CHANGED — review the diff for a weakened checker (reviewer step 5):"
       echo "$c1" | sed 's/^/  /'
-      sanctioned=1
     fi
 
     # General scope — every changed file (protected or not) must be in the allowlist when one is given.
@@ -151,10 +135,6 @@ case "$cmd" in
       fi
     fi
 
-    if [ "$sanctioned" = 1 ]; then
-      echo "INTEGRITY OK — but a SANCTIONED Class-1 change is present; human ratifies it at merge."
-      exit 6
-    fi
     echo "INTEGRITY OK"
     exit 0
     ;;
@@ -454,18 +434,10 @@ case "$cmd" in
     branch="${1:?usage: finish <branch> [allowlist-file]}"; allowfile="${2:-}"
     "$ROOT/scripts/fixloop.sh" integrity "$branch" "$allowfile"; rc=$?
     case "$rc" in
-      0|6) : ;;
+      0) : ;;
       *) exit "$rc" ;;   # 3 tamper / 4 scope / 2 error — no merge command
     esac
-    # Resolved ONCE, status-checked, then reused. It used to be called a second time unguarded,
-    # inline inside the ratify string — the same unchecked-`base_of` shape this change exists to
-    # remove, and it would have interpolated an empty baseline into the command a human is told to
-    # run to ratify a protected-config change.
-    base="$(base_of "$branch")" || die "$(no_baseline "$branch")"
-    ratify=""
-    [ "$rc" = 6 ] && ratify="⚠  SANCTIONED Class-1 config change present (listed above) — RATIFY it before merging: git diff $base..$branch"
     echo
-    [ -n "$ratify" ] && { echo "$ratify"; echo; }
     echo "INTEGRITY OK — ready to merge (human-gated, run explicitly):"
     echo "  git switch $INTEGRATION_BRANCH && git merge --no-ff $branch -m \"fix: ${branch#fix/}\""
     echo "after merge, REGATE the merged tip BEFORE the next merge (catches two individually-green"
