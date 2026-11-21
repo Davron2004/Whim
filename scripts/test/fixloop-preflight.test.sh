@@ -717,11 +717,14 @@ JSON
   fgit -C "$fx" commit -qam "fix" >/dev/null 2>&1 || return 1
   fgit -C "$fx" switch -q base >/dev/null 2>&1 || return 1
 
-  # The primary tree's install, shaped like npm's: relative workspace link, a package, a .bin link.
+  # The primary tree's install, shaped like npm's: relative workspace link, a package, a .bin link,
+  # and the install stamp npm writes after the lockfile (node_modules/.package-lock.json), so the
+  # install is current with the checked-out lockfile.
   mkdir -p "$fx/node_modules/@whim" "$fx/node_modules/leftpad" "$fx/node_modules/.bin" || return 1
   ln -s ../../contract "$fx/node_modules/@whim/contract"
   echo 'module.exports = 1;' > "$fx/node_modules/leftpad/index.js"
   ln -s ../leftpad/index.js "$fx/node_modules/.bin/leftpad"
+  echo '{ "lockfileVersion": 3, "fixture": true }' > "$fx/node_modules/.package-lock.json"
   printf '%s' "$fx"
   return 0
 }

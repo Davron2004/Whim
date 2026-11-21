@@ -12,10 +12,41 @@
  * shows (`face`) where it is, never moving, and grows its plate from there (`Sheet`).
  */
 import React, { createContext, useContext, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
-import type { LayoutChangeEvent, View } from 'react-native';
-import { measure, useAnimatedRef } from 'react-native-reanimated';
+import type { LayoutChangeEvent, View, ViewInstance } from 'react-native';
+import { measure, useAnimatedRef, useSharedValue, type SharedValue } from 'react-native-reanimated';
+import { isRNRuntime } from 'react-native-worklets';
 
-export type PlaceRef = ReturnType<typeof useAnimatedRef<View>>;
+/** A view the UI thread measures (`measured`): put `attach` on the view as its ref. */
+export interface PlaceRef {
+  readonly ref: ReturnType<typeof useAnimatedRef<View>>;
+  /** Whether `ref` holds a view, as the UI thread sees it. Reanimated 4.8's `measure` logs a warning
+   *  on every call for a ref that holds none, and a worklet cannot ask the ref (it holds the ref's
+   *  Shareable, no function), so `measured` asks this first. */
+  readonly on: SharedValue<boolean>;
+  readonly attach: (view: ViewInstance | null) => void;
+}
+
+/** A place for one view. `on` turns true only after `ref` holds the view and false before `ref` lets
+ *  it go: the ref's write and the shared value's each go to the UI thread's queue, in the order made,
+ *  so a worklet never reads `on` true while the ref holds nothing. */
+export function usePlace(): PlaceRef {
+  const ref = useAnimatedRef<View>();
+  const on = useSharedValue(false);
+  const [place] = useState<PlaceRef>(() => ({
+    ref,
+    on,
+    attach: (view) => {
+      if (view === null) {
+        on.value = false;
+        ref(null);
+      } else {
+        ref(view);
+        on.value = true;
+      }
+    },
+  }));
+  return place;
+}
 
 /** The name a run's tile is registered under as a sheet's anchor: its making sheet goes back into it. */
 export const tileAnchor = (runId: string): string => `tile:${runId}`;
@@ -82,8 +113,8 @@ const NO_SIZE = { width: 0, height: 0 } as const;
  *  shape the sheet grows from, and `ember` on its ember's view, if any. */
 export function useSheetAnchor(names: string | readonly string[] | undefined, look: SheetAnchorLook) {
   const anchors = useContext(AnchorsContext);
-  const ref = useAnimatedRef<View>();
-  const ember = useAnimatedRef<View>();
+  const ref = usePlace();
+  const ember = usePlace();
   const [size, setSize] = useState<SheetAnchorEntry['size']>(NO_SIZE);
   // One key for the effect below, whatever array the caller builds each render.
   const listed = names === undefined ? [] : ([] as string[]).concat(names);
@@ -103,7 +134,7 @@ export function useSheetAnchor(names: string | readonly string[] | undefined, lo
     const { width, height } = event.nativeEvent.layout;
     setSize((was) => (was.width === width && was.height === height ? was : { width, height }));
   };
-  return { ref, ember, onLayout };
+  return { ref: ref.attach, ember: ember.attach, onLayout };
 }
 
 const none = () => () => {};
@@ -115,20 +146,19 @@ export function useAnchorEntry(name: string | undefined): SheetAnchorEntry | und
   return useSyncExternalStore(anchors?.subscribe ?? none, anchors && name !== undefined ? () => anchors.get(name) : nothing);
 }
 
-/** What `ref` measures, or `null`. On the UI thread an animated ref answers null until it is put on a
- *  view, and Reanimated's `measure` hands that null to the native side, which ends the app: the
- *  composer has no ember place, and a tile whose state has no ember draws none. */
-export function measured(ref: PlaceRef) {
+/** What `place` measures, or `null`, also while it is on no view (the composer has no ember place,
+ *  and a tile whose state has no ember draws none), without asking Reanimated then. */
+export function measured(place: PlaceRef) {
   'worklet';
-  const held: unknown = ref();
-  return held === null ? null : measure(ref);
+  if (isRNRuntime()) return null;
+  return place.on.value ? measure(place.ref) : null;
 }
 
-/** Where `ref` is drawn, from the frame's top-left, or `null` on a frame either cannot be measured. */
-export function placeIn(frame: PlaceRef, ref: PlaceRef) {
+/** Where `place` is drawn, from the frame's top-left, or `null` on a frame either cannot be measured. */
+export function placeIn(frame: PlaceRef, place: PlaceRef) {
   'worklet';
   const origin = measured(frame);
-  const at = measured(ref);
+  const at = measured(place);
   if (origin === null || at === null || at.width === 0) return null;
   return { x: at.pageX - origin.pageX, y: at.pageY - origin.pageY, width: at.width, height: at.height, frameWidth: origin.width, frameHeight: origin.height };
 }

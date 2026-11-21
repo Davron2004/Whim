@@ -5,7 +5,7 @@
  *  attached as plain, capped text, and never a second change while one is being made, Back to your
  *  apps, and crash frames from a replaced realm or without the page's authentication changing nothing. */
 import TestRenderer from 'react-test-renderer';
-import { StyleSheet, type FlexStyle } from 'react-native';
+import { StyleSheet, type ViewStyle } from 'react-native';
 import { Harness } from './harness';
 import { chromeInsetBottom } from '../orb-geometry';
 import { COPY, appCrashedTitle } from '../copy';
@@ -122,21 +122,21 @@ export async function runAppCrashedUiTests(h: Harness): Promise<void> {
       await crashRunningApp(tree);
       const screen = tree.root.findByType(AppCrashed);
       const scroll = screen.find((n) => typeof n.type === 'string' && n.props.contentContainerStyle !== undefined);
-      const content = StyleSheet.flatten(scroll.props.contentContainerStyle) as FlexStyle;
+      const content = StyleSheet.flatten(scroll.props.contentContainerStyle) as ViewStyle;
       h.ok((content.flexGrow ?? 0) >= 1, 'the content fills the screen’s height');
       h.ok(content.paddingBottom === screen.props.bottomClearance && screen.props.bottomClearance >= chromeInsetBottom(0),
         `and ends where the orb’s area begins (${String(content.paddingBottom)})`);
       const blocks = drawnChildren(scroll);
       h.eq(blocks.length, 2, 'two blocks: the message, then the actions');
       const [message, actions] = blocks;
-      const m = StyleSheet.flatten(message.props.style) as FlexStyle;
+      const m = StyleSheet.flatten(message.props.style) as ViewStyle;
       h.ok((m.flexGrow ?? 0) >= 1 && m.justifyContent === 'center' && m.alignItems === 'center',
         'the message takes the height the actions leave and is centred in it');
       h.ok(textOf(message).includes(appCrashedTitle(APP_NAME)) && textOf(message).includes(COPY.appCrashedBody) && message.findAll(isHost('Pressable')).length === 0,
         'it holds the title and body, and no action');
       h.eq(actions.findAll(isHost('Pressable')).map((n) => String(n.props.accessibilityLabel)), [COPY.actionReload, COPY.appCrashedAskFix, COPY.launchFailedBack],
         'the three actions come last, at the bottom');
-      h.ok(!((StyleSheet.flatten(actions.props.style) as FlexStyle).flexGrow ?? 0), 'and take only their own height');
+      h.ok(!((StyleSheet.flatten(actions.props.style) as ViewStyle).flexGrow ?? 0), 'and take only their own height');
     });
   });
 

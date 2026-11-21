@@ -20,7 +20,7 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { Platform, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { WebView } from 'react-native-webview';
+import { WebView } from './webview';
 import { RUNTIME_HTML } from '../runtime/generated/runtime-html';
 import { deliverBySourceJs } from './launcher/deliver';
 import { log } from './logging';

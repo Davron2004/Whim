@@ -111,8 +111,8 @@ function flingOrb(config: PanConfig, dx: number): void {
   config.onBegin?.(at(0));
   config.onActivate?.(at(Math.sign(dx) * 12));
   for (const step of [0.3, 0.7, 1]) config.onUpdate?.(at(dx * step, dx * 4));
-  config.onDeactivate?.(at(dx, dx * 6));
-  config.onFinalize?.(at(dx, dx * 6));
+  config.onDeactivate?.({ ...at(dx, dx * 6), canceled: false });
+  config.onFinalize?.({ ...at(dx, dx * 6), canceled: false });
 }
 
 interface Run {

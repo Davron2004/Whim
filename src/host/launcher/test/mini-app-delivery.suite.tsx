@@ -186,7 +186,7 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
         h.eq(barStyle(tree), 'light-content', 'dragged down 40%, the scrim at 60%: light content still');
         await TestRenderer.act(async () => { drag.onUpdate?.(at(0.6 * tall)); });
         h.eq(barStyle(tree), 'dark-content', 'dragged down 60%, the scrim at 40%: dark content');
-        await TestRenderer.act(async () => { drag.onUpdate?.(at(0)); drag.onDeactivate?.(at(0)); drag.onFinalize?.(at(0)); });
+        await TestRenderer.act(async () => { drag.onUpdate?.(at(0)); drag.onDeactivate?.({ ...at(0), canceled: false }); drag.onFinalize?.({ ...at(0), canceled: false }); });
         h.eq(barStyle(tree), 'light-content', 'let go where it opened: the scrim is full again, light content');
         await held(() => press(button(tree, COPY.sheetClose)), () =>
           h.eq(barStyle(tree), 'light-content', 'the sheet is leaving, its scrim still in: light content'));

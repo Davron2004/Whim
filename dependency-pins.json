@@ -16,5 +16,29 @@
     "range": "^7",
     "reason": "metro-runtime depends on @babel/runtime ^7.25.0, and the helpers @babel/plugin-transform-runtime 7 injects must resolve to @babel/runtime 7; it moves with @babel/core.",
     "lift": "A React Native release whose babel preset and Metro support Babel 8"
+  },
+  {
+    "package": "typescript",
+    "range": "^6.0.3",
+    "reason": "TypeScript 7.0 ships no compiler API, and the server's static checker, checks/, typescript-eslint and knip import `typescript` as a library; the React Native 0.88 template pins ^6.0.3.",
+    "lift": "A stable TypeScript 7.x with a compiler API that typescript-eslint supports"
+  },
+  {
+    "package": "metro-symbolicate",
+    "range": "^0.87",
+    "reason": "It must match the Metro line React Native 0.88.1 resolves: react-native depends on metro-runtime and metro-source-map ^0.87.1, and @react-native/metro-config 0.88.1 on metro ^0.87.1, so metro-symbolicate 0.88 would read source maps from a Metro version the app does not run.",
+    "lift": "A React Native release that moves to Metro 0.88 or newer"
+  },
+  {
+    "package": "@react-native-community/cli",
+    "range": "~20.2.0",
+    "reason": "The React Native 0.88 template pins @react-native-community/cli 20.2.0, and CLI 21 states no React Native 0.88 support.",
+    "lift": "A React Native release whose template pins CLI 21, or CLI release notes stating React Native 0.88 support"
+  },
+  {
+    "package": "@react-native-community/cli-platform-android",
+    "range": "~20.2.0",
+    "reason": "It moves in lockstep with @react-native-community/cli: the React Native 0.88 template pins 20.2.0, and CLI 21 states no React Native 0.88 support.",
+    "lift": "A React Native release whose template pins CLI 21, or CLI release notes stating React Native 0.88 support"
   }
 ]

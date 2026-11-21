@@ -28,7 +28,7 @@ import {
 } from './native-host';
 import { moveKeyboard, resetKeyboard } from './native-keyboard-controller';
 import { animations, isStep, type Animation } from './native-reanimated';
-import type { PanConfig, PanPoint } from './native-gesture-handler';
+import type { PanConfig, PanEnd, PanPoint } from './native-gesture-handler';
 import { hostType, press, renderScreen, unmountScreen } from './react-screen';
 
 type Tree = TestRenderer.ReactTestRenderer;
@@ -86,6 +86,8 @@ const gestureOf = (tree: Tree): PanConfig => {
 };
 
 const at = (translationX: number, translationY = 0, velocityX = 0, velocityY = 0): PanPoint => ({ translationX, translationY, velocityX, velocityY });
+/** The pan's end at `point`, as it reports it: canceled or not. */
+const end = (point: PanPoint, canceled = false): PanEnd => ({ ...point, canceled });
 
 /** A drag on the orb as the pan reports it: activation past the slop, one update per point, release
  *  at `velocityX` (pt/s, positive rightward). */
@@ -96,8 +98,8 @@ async function drag(tree: Tree, xs: readonly number[], velocityX: number, veloci
     g.onActivate?.(at(xs[0] ?? 0));
     for (const x of xs) g.onUpdate?.(at(x, 0, velocityX));
     const last = xs.at(-1) ?? 0;
-    g.onDeactivate?.(at(last, 0, velocityX, velocityY));
-    g.onFinalize?.(at(last, 0, velocityX, velocityY));
+    g.onDeactivate?.(end(at(last, 0, velocityX, velocityY)));
+    g.onFinalize?.(end(at(last, 0, velocityX, velocityY)));
   });
 }
 
@@ -114,8 +116,8 @@ async function jitteredDrag(tree: Tree, xs: readonly number[]): Promise<number> 
     g.onActivate?.(at(0));
     xs.forEach((x, i) => g.onUpdate?.(at(x, 0, (x - (xs[i - 1] ?? 0)) * 60)));
     played = commits();
-    g.onDeactivate?.(at(xs.at(-1) ?? 0));
-    g.onFinalize?.(at(xs.at(-1) ?? 0));
+    g.onDeactivate?.(end(at(xs.at(-1) ?? 0)));
+    g.onFinalize?.(end(at(xs.at(-1) ?? 0)));
   });
   return played;
 }
@@ -237,8 +239,8 @@ export async function runOrbUiTests(h: Harness): Promise<void> {
           g.onBegin?.(at(0));
           g.onActivate?.(at(0));
           for (const [x, vx] of frames) g.onUpdate?.(at(x, 0, vx));
-          g.onDeactivate?.({ ...at(last, 0, release), canceled });
-          g.onFinalize?.(at(last, 0, release));
+          g.onDeactivate?.(end(at(last, 0, release), canceled));
+          g.onFinalize?.(end(at(last, 0, release), canceled));
         });
         h.eq([targetRect(tree).left, commits()], [crosses ? bounds.leading : bounds.trailing, haptics], `${name}: ${crosses ? 'crosses' : 'stays'} with ${haptics} commit haptic(s)`);
       });
@@ -255,7 +257,7 @@ export async function runOrbUiTests(h: Harness): Promise<void> {
         await TestRenderer.act(async () => { g.onBegin?.(at(0)); g.onActivate?.(at(-10)); g.onUpdate?.(at(-90)); });
         h.eq(targetRect(tree).left, bounds.trailing - 80, 'the drag follows the finger 1:1 after the slop');
         const before = animations.length;
-        await TestRenderer.act(async () => { g.onDeactivate?.(at(-90, 0, -1500)); g.onFinalize?.(at(-90, 0, -1500)); });
+        await TestRenderer.act(async () => { g.onDeactivate?.(end(at(-90, 0, -1500))); g.onFinalize?.(end(at(-90, 0, -1500))); });
         h.eq(springs(before).length, 0, 'no spring plays');
         h.eq(targetRect(tree).left, bounds.leading, 'it lands bottom-leading');
         h.eq(flat(frameOf(tree)).opacity, 1, 'faded back in');

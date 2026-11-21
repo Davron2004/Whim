@@ -14,7 +14,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { Linking, View } from 'react-native';
-import type { ScrollView } from 'react-native';
+import type { ScrollViewInstance, ViewInstance } from 'react-native';
 import type { ReportReason, ReportRequest } from '@whim/contract';
 import { LAYOUT, SPACE } from '../../design/tokens';
 import { log } from '../logging';
@@ -174,10 +174,10 @@ function ReportForm({
   const [preview, setPreview] = useState<PreviewState>(PREVIEW_CLOSED);
   // The note and the include switch under it: the block kept in view while the note is focused,
   // so the pinned Send never cuts the switch in half.
-  const noteBlock = useRef<View>(null);
+  const noteBlock = useRef<ViewInstance>(null);
   // A send's notice sits at the end of the scroll, above the pinned footer, and may land below what
   // shows: once the scroll view reports the content with it, it moves to its end (#218).
-  const scroll = useRef<ScrollView>(null);
+  const scroll = useRef<ScrollViewInstance>(null);
   const revealNotice = useRef(false);
   // Leaving mid-send drops the answer: nothing left on screen to show it.
   const live = useRef(true);

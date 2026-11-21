@@ -11,9 +11,9 @@
  *  exit with in `layoutAnimations`; `playedUnder` says what one does under Reduce Motion.
  *  Each mount of an Animated view is a native view of its own (`viewTagOf`).
  *  `useAnimatedReaction` reacts synchronously, `measure` reports `measuredRect` (or a view's own, `measuring`) in a worklet
- *  on the UI thread — a reaction, a native event's handler, a `useAnimatedStyle` run a shared value made — and null on
+ *  on the UI thread (and counts the warning Reanimated logs for a ref on no view, `measureWarnings`) — a reaction, a native event's handler, a `useAnimatedStyle` run a shared value made — and null on
  *  the JS thread, which includes a style's run a render made (Reanimated computes a style on the JS thread only as it
- *  mounts). Springs move and end as Reanimated 4.6's do, the callbacks inside delays, sequences and repeats hear how
+ *  mounts). Springs move and end as Reanimated 4.8's do (spring.ts is unchanged since 4.6), the callbacks inside delays, sequences and repeats hear how
  *  they ended, and a component's shared values cancel their animations as it unmounts. The double's own contract is
  *  `native-reanimated.suite.tsx`. */
 import React from 'react';
@@ -282,6 +282,7 @@ class SharedValue<T> {
   private readonly listeners = new Set<() => void>();
   constructor(initial: T) { this.current = initial; }
   get value(): T {
+    if (!onUiThread) jsThreadReads.count += 1;
     reading?.add(this as SharedValue<unknown>);
     return this.current;
   }
@@ -439,6 +440,11 @@ export function useSharedValue<T>(initial: T): SharedValue<T> {
 /** Code runs as a worklet on the UI thread (a style on a UI frame, a reaction, a native event's
  *  handler): only there does `measure` measure. */
 let onUiThread = false;
+/** Whether code runs on the RN (JS) runtime, as worklets' `isRNRuntime`. */
+export const isRNRuntime = (): boolean => !onUiThread;
+/** How many shared-value reads ran on the JS thread: Reanimated 4 answers a dirty value there with a
+ *  synchronous round trip into the UI runtime. A test reads it before and after. */
+export const jsThreadReads = { count: 0 };
 /** Runs `fn` as a worklet on the UI thread, at once; a test measures through it. */
 export function onUi<R>(fn: () => R): R {
   const outer = onUiThread;
@@ -502,39 +508,67 @@ export function cancelAnimation<T>(value?: SharedValue<T>): void {
 }
 export const Easing = { bezier: (...points: number[]) => ({ bezier: points }), linear: (x: number) => x };
 export const ReduceMotion = { System: 'system', Always: 'always', Never: 'never' } as const;
-/** An animated ref: a ref callback a worklet can scroll through, which tells its observers the
- *  tag of the view it holds (a fresh tag per ref; null once it lets go). Called with no view, as a
- *  worklet reads it, it answers what it holds and changes nothing: null until it is put on a view. */
+/** An animated ref, as Reanimated 4.8 makes one (hook/useAnimatedRefCommon.ts): a ref callback a
+ *  worklet can measure and scroll through, which tells its observers the tag of the view it holds
+ *  (each view its own tag). An observer runs again only for a different tag; once React takes the
+ *  ref off its view, the observer's cleanup runs a microtask later unless a view took it back, and
+ *  the observer is not called with null. Called with no view on the JS thread it answers what it
+ *  holds and changes nothing: null until it is put on a view. A worklet is handed the ref's Shareable
+ *  instead (hook/useAnimatedRef.native.ts), which is no function: calling it on the UI thread throws. */
 type Observer = (tag: number | null) => (() => void) | undefined;
 interface AnimatedRef<T> {
   (node?: T | null): T | null;
   current: T | null;
   observe: (observer: Observer) => () => void;
 }
-/** The refs React has put on a view (or taken one off): any other was never on one. */
-const boundRefs = new WeakSet<object>();
 let nextTag = 1;
+const viewTags = new WeakMap<object, number>();
+const tagOf = (node: unknown): number | null => {
+  if (node === null || node === undefined) return null;
+  if (typeof node !== 'object') return nextTag++;
+  const known = viewTags.get(node);
+  if (known !== undefined) return known;
+  const fresh = nextTag++;
+  viewTags.set(node, fresh);
+  return fresh;
+};
 export function useAnimatedRef<T>(): AnimatedRef<T> {
   const ref = React.useRef<AnimatedRef<T> | null>(null);
   if (!ref.current) {
-    const viewTag = nextTag++;
-    const observers = new Map<Observer, (() => void) | undefined>();
+    const observers = new Map<Observer, { tag: number | null; cleanup: (() => void) | undefined }>();
+    const cleanUpIfDetached = () => {
+      if (animatedRef.current !== null) return;
+      for (const [observer, run] of [...observers]) {
+        if (run.tag === null) continue;
+        run.cleanup?.();
+        observers.set(observer, { tag: null, cleanup: undefined });
+      }
+    };
     const animatedRef = ((...given: [T | null] | []) => {
-      if (given.length === 0) return animatedRef.current;
+      if (given.length === 0) {
+        if (onUiThread) throw new TypeError('animatedRef is not a function');
+        return animatedRef.current;
+      }
       const [node] = given;
-      boundRefs.add(animatedRef);
       animatedRef.current = node;
-      for (const [observer, cleanup] of [...observers]) {
-        cleanup?.();
-        observers.set(observer, observer(node ? viewTag : null));
+      if (node === null) {
+        if (observers.size > 0) queueMicrotask(cleanUpIfDetached);
+        return null;
+      }
+      const viewTag = tagOf(node);
+      for (const [observer, run] of [...observers]) {
+        if (run.tag === viewTag) continue;
+        run.cleanup?.();
+        observers.set(observer, { tag: viewTag, cleanup: observer(viewTag) });
       }
       return node;
     }) as AnimatedRef<T>;
     animatedRef.current = null;
     animatedRef.observe = (observer) => {
-      observers.set(observer, observer(animatedRef.current ? viewTag : null));
+      const viewTag = tagOf(animatedRef.current);
+      observers.set(observer, { tag: viewTag, cleanup: observer(viewTag) });
       return () => {
-        observers.get(observer)?.();
+        observers.get(observer)?.cleanup?.();
         observers.delete(observer);
       };
     };
@@ -641,14 +675,19 @@ export const measuredRect = { x: 0, y: 0, width: 100, height: 100, pageX: 0, pag
 /** Where particular views are now: given what a ref holds (the test's `createNodeMock` output), the
  *  rect it measures, or undefined for `measuredRect`. A test sets `rectOf`, and clears it after. */
 export const measuring: { rectOf: ((node: unknown) => typeof measuredRect | undefined) | null } = { rectOf: null };
-/** Reanimated's synchronous measurement: the view's rect, or null once its ref holds no view. Only a
- *  worklet on the UI thread measures: on the JS thread it answers null (measure.native.ts:35-37).
- *  On a UI frame a ref that was never put on a view throws, as the native `measure` does (it hands
- *  the ref's null to the native side, which ends the app). */
+/** How many times a worklet measured a ref that held no view: Reanimated 4.8 logs a warning on every
+ *  such call (measure.native.ts:35-41, `logger.warn`, never deduplicated). A test zeroes it. */
+export const measureWarnings = { unattached: 0 };
+/** Reanimated's synchronous measurement: the view's rect, or null while its ref holds no view, never
+ *  put on one or taken off it (Reanimated 4.8 answers that null itself, and warns: `measureWarnings`).
+ *  Only a worklet on the UI thread measures: on the JS thread it answers null, without a warning
+ *  (measure.native.ts:31-33). */
 export function measure<T>(ref: AnimatedRef<T>): typeof measuredRect | null {
   if (!onUiThread) return null;
-  if (!boundRefs.has(ref)) throw new Error('Value is null, expected an Object');
-  if (ref.current === null) return null;
+  if (ref.current === null) {
+    measureWarnings.unattached += 1;
+    return null;
+  }
   return { ...(measuring.rectOf?.(ref.current) ?? measuredRect) };
 }
 
@@ -760,12 +799,13 @@ function animatedComponent(name: string) {
         if (isLayoutAnimation(exiting.current)) layoutAnimations.push({ phase: 'exiting', component: name, animation: exiting.current });
       };
     }, []);
-    // Reanimated registers a view's `layout` transition after the commit that sets it: a change of
-    // size committed with this render moves with the one registered before it (`layoutCommits`).
-    const registered = React.useRef<unknown>(undefined);
+    // Reanimated 4.8 registers a view's `layout` transition after the commit that mounts it
+    // (`componentDidMount`), and on every later commit before it is drawn (`getSnapshotBeforeUpdate`):
+    // the mounting commit moves with none, a later change of size with the one that render set.
+    const mounted = React.useRef(false);
     React.useLayoutEffect(() => {
-      layoutCommits.push({ commit: commitNumber(viewTag.current), viewTag: viewTag.current, held: registered.current, layout: props.layout, style: JSON.stringify(props.style), seen: layoutProbe.read?.() });
-      registered.current = props.layout;
+      layoutCommits.push({ commit: commitNumber(viewTag.current), viewTag: viewTag.current, held: mounted.current ? props.layout : undefined, layout: props.layout, style: JSON.stringify(props.style), seen: layoutProbe.read?.() });
+      mounted.current = true;
     });
     return React.createElement(name, { ...props, style, viewTag: viewTag.current }, props.children);
   };

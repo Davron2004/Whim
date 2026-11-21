@@ -9,7 +9,7 @@
 // (the cap-intruder lesson) by construction.
 import React, { useMemo } from 'react';
 import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
-import { WebView } from 'react-native-webview';
+import { WebView } from '../webview';
 import { log } from '../logging';
 import { logWebViewError } from './webview-error';
 import { useMiniAppHost } from './useMiniAppHost';

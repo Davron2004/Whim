@@ -15,7 +15,6 @@ export const TouchableOpacity = host('TouchableOpacity');
 export const Pressable = host('Pressable');
 export const ScrollView = host('ScrollView');
 export const Switch = host('Switch');
-export const KeyboardAvoidingView = host('KeyboardAvoidingView');
 export const InputAccessoryView = host('InputAccessoryView');
 /** Counts `Keyboard.dismiss` calls, so a test can tell putting the keyboard away from submitting.
  *  The keyboard's motion is react-native-keyboard-controller's (`native-keyboard-controller.tsx`);
@@ -44,7 +43,7 @@ export const injectedScripts: string[] = [];
 const WEBVIEW_CONTAINER = { flex: 1, overflow: 'hidden' };
 /** The WebView exposes `injectJavaScript` through its ref, as react-native-webview does, so a
  *  rendered MiniAppView really delivers its bundle; the scripts land in `injectedScripts`, and the
- *  ones each WebView received in its host element's `injected` prop. Like react-native-webview 13
+ *  ones each WebView received in its host element's `injected` prop. Like react-native-webview 14
  *  (`WebView.android.tsx`, `WebView.ios.tsx`), it draws the native view inside a View of its own,
  *  `[{ flex: 1, overflow: 'hidden' }, containerStyle]`: `style` and every other prop reach only the
  *  native view, so the layout and touch handling a parent sees are that container's. */
@@ -240,36 +239,6 @@ export function accessibilityListenerCount(): number {
   return [...accessibilityListeners.values()].reduce((n, listeners) => n + listeners.size, 0);
 }
 export const Dimensions = { get: windowNow };
-class Value {
-  constructor(public value: number) {}
-  setValue(value: number) { this.value = value; }
-  interpolate() { return this.value; }
-}
-const animation = () => ({ start: () => {}, stop: () => {} });
-type AnimationEnd = (result: { finished: boolean }) => void;
-/** Timing animations run until the test says their time has passed: `finishAnimations` ends every
- *  one running, as the native driver reports it (the value at its target, `finished: true`); a
- *  stopped one ends `finished: false`. */
-const runningAnimations = new Set<AnimationEnd>();
-const timing = (value: Value, config: { toValue: number }) => {
-  let end: AnimationEnd | undefined;
-  return {
-    start: (callback?: AnimationEnd) => {
-      end = (result) => {
-        runningAnimations.delete(end!);
-        if (result.finished) value.setValue(config.toValue);
-        callback?.(result);
-      };
-      runningAnimations.add(end);
-    },
-    stop: () => { if (end && runningAnimations.has(end)) end({ finished: false }); },
-  };
-};
-export function finishAnimations(): void {
-  for (const end of [...runningAnimations]) end({ finished: true });
-}
-export const Animated = { Value, View, Text, timing, sequence: animation, loop: animation, parallel: animation };
-export const Easing = { bezier: () => {}, inOut: () => {}, ease: () => {} };
 const backListeners = new Set<() => boolean>();
 export const BackHandler = {
   addEventListener: (_event: string, listener: () => boolean) => {

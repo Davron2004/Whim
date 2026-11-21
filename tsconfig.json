@@ -3,7 +3,6 @@
   "compilerOptions": {
     "types": [],
     "jsx": "react-jsx",
-    "baseUrl": ".",
     "paths": {
       // Mini-app bundles + the SDK-inject entry import `vc-sdk` by name. At type time it
       // resolves here; at build time esbuild marks it external (H1b → host-injected global).

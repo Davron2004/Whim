@@ -136,10 +136,10 @@ const RowsMove = React.createContext<typeof REFLOW | undefined>(undefined);
 /** The window in which the rows move: opened by the person's own action (a row opened or closed,
  *  "Use this version", its Undo) and closed once what it changed has come to rest. Outside it, what
  *  arrives or measures on its own (an open row's added-fields or hidden-data line, a late text
- *  measure, a re-read) lands at once. Reanimated registers a view's transition only after the commit
- *  that sets it, so a change of size committed together with it would jump, and one committed
- *  together with its removal would still move: `act`'s change waits for the commit that opened the
- *  window, and the window closes only after its change. `hold` keeps it open until an action's
+ *  measure, a re-read) lands at once. Reanimated 4.6 registered a view's transition only after the
+ *  commit that set it (4.8 registers it before that commit is drawn), so `act`'s change still waits
+ *  for the commit that opened the window, and the window closes only after its change: either way
+ *  the change moves and nothing after the window does. `hold` keeps it open until an action's
  *  re-read has landed; one that lands after History has gone starts nothing. */
 function usePersonsMove() {
   const [open, setOpen] = useState(false);

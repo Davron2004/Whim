@@ -1307,7 +1307,7 @@ function LauncherShell({
   // same "declared later, reached only through a ref/deferred closure" pattern `runContinuation`
   // already relies on for `onRetryPending`.
   useEffect(() => {
-    const handleIncomingUrl = (url: string | null) => {
+    const handleIncomingUrl = (url: string | null | undefined) => {
       if (!url) return;
       const id = parseAppLink(url);
       if (id == null) {

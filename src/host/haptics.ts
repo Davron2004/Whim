@@ -107,4 +107,4 @@ export function createHaptics(native: Spec | null): Haptics {
 }
 
 /** The shell's haptics, over the installed `WhimHaptics` module. */
-export const haptics: Haptics = createHaptics(WhimHaptics);
+export const haptics: Haptics = createHaptics(WhimHaptics ?? null);

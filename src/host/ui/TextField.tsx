@@ -14,7 +14,7 @@
 
 import React, { useState } from 'react';
 import { Pressable, Text as RNText, View } from 'react-native';
-import type { TextInputProps } from 'react-native';
+import type { TextInputProps, ViewInstance } from 'react-native';
 import { RADII, SPACE, TYPE_SCALE } from '../../design/tokens';
 import { COPY } from '../launcher/copy';
 import { KeyboardTextInput } from '../launcher/KeyboardShell';
@@ -53,7 +53,7 @@ export interface TextFieldProps extends InputProps {
   accessibilityLabel?: string;
   /** The block to keep in view above the keyboard while focused (the field with what belongs to
    *  it); the field itself when left out. */
-  revealTarget?: React.RefObject<View | null>;
+  revealTarget?: React.RefObject<ViewInstance | null>;
   onFocus?: TextInputProps['onFocus'];
   onBlur?: TextInputProps['onBlur'];
 }
