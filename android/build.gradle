@@ -1,11 +1,11 @@
 buildscript {
     ext {
-        buildToolsVersion = "36.0.0"
+        buildToolsVersion = "37.0.0"
         minSdkVersion = 24
-        compileSdkVersion = 36
+        compileSdkVersion = 37
         targetSdkVersion = 36
         ndkVersion = "27.1.12297006"
-        kotlinVersion = "2.1.20"
+        kotlinVersion = "2.2.0"
     }
     repositories {
         google()
@@ -19,3 +19,14 @@ buildscript {
 }
 
 apply plugin: "com.facebook.react.rootproject"
+
+// AGP 9's default NDK (28.2) differs from RN 0.88.1's pinned 27.1, and a
+// library without its own ndkVersion (op-sqlite) would get the default: two
+// STL versions in one APK. Force every library onto the app's NDK.
+subprojects {
+    plugins.withId("com.android.library") {
+        androidComponents {
+            finalizeDsl { ext -> ext.ndkVersion = rootProject.ext.ndkVersion }
+        }
+    }
+}

@@ -23,11 +23,11 @@
 
 ## 4. W3b: React Native 0.88 — Android
 
-- [ ] 4.1 Apply the 0.88 template Android diff: Gradle wrapper 9.4.1, AGP 9.2.1, Kotlin 2.2.0, compile SDK and buildTools 37, and the `android.builtInKotlin=false`/`android.newDsl=false` opt-outs. Keep JDK 21, arm64-only, `newArchEnabled`, `hermesEnabled` and `edgeToEdgeEnabled`. Commit.
-- [ ] 4.2 Make the `offline` build type assemble: `npm run android:release -- --device emulator-5560`. Keep the `usesCleartextTraffic` workaround and the `RelWithDebInfo` CMake pin only if still needed, and say which in a code comment.
-- [ ] 4.3 Re-verify the RN internals `MainActivity.kt` and `MainApplication.kt` rely on against the 0.88 sources: `ReactModalHostView.dialog`, `NativeDeviceInfoSpec` as `LifecycleEventListener`, `RNScreensFragmentFactory`, `DefaultReactActivityDelegate`, the single `RNCWebViewPackage` swap. Fix each at its cause. On device, the "Re-check … after a React Native upgrade" log line stays silent.
-- [ ] 4.4 Keep the fourth containment leg intact. `NetworkDeniedWebViewManager` still subclasses the webview 14 manager and sets `blockNetworkLoads` in `createViewInstance`. `checks/test/release/native-network-deny.suite.ts` passes against the new symbols, and `RUN_NETDENY_PROBE` on Whim_Verify shows every network load refused.
-- [ ] 4.5 Make the Android-reading static checks pass (`checks/test/release/android-project.suite.ts`, `checks/test/repo/android-edge-to-edge.suite.ts`), updating expected values only where the template changed them.
+- [x] 4.1 Apply the 0.88 template Android diff: Gradle wrapper 9.4.1, AGP 9.2.1, Kotlin 2.2.0, compile SDK and buildTools 37, and the `android.builtInKotlin=false`/`android.newDsl=false` opt-outs. Keep JDK 21, arm64-only, `newArchEnabled`, `hermesEnabled` and `edgeToEdgeEnabled`. Commit.
+- [x] 4.2 Make the `offline` build type assemble: `npm run android:release -- --device emulator-5560`. Keep the `usesCleartextTraffic` workaround and the `RelWithDebInfo` CMake pin only if still needed, and say which in a code comment.
+- [x] 4.3 Re-verify the RN internals `MainActivity.kt` and `MainApplication.kt` rely on against the 0.88 sources: `ReactModalHostView.dialog`, `NativeDeviceInfoSpec` as `LifecycleEventListener`, `RNScreensFragmentFactory`, `DefaultReactActivityDelegate`, the single `RNCWebViewPackage` swap. Fix each at its cause. On device, the "Re-check … after a React Native upgrade" log line stays silent.
+- [x] 4.4 Keep the fourth containment leg intact. `NetworkDeniedWebViewManager` still subclasses the webview 14 manager and sets `blockNetworkLoads` in `createViewInstance`. `checks/test/release/native-network-deny.suite.ts` passes against the new symbols, and `RUN_NETDENY_PROBE` on Whim_Verify shows every network load refused.
+- [x] 4.5 Make the Android-reading static checks pass (`checks/test/release/android-project.suite.ts`, `checks/test/repo/android-edge-to-edge.suite.ts`), updating expected values only where the template changed them.
 
 ## 5. W3c: React Native 0.88 — iOS
 
