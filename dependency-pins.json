@@ -40,5 +40,11 @@
     "range": "~20.2.0",
     "reason": "It moves in lockstep with @react-native-community/cli: the React Native 0.88 template pins 20.2.0, and CLI 21 states no React Native 0.88 support.",
     "lift": "A React Native release whose template pins CLI 21, or CLI release notes stating React Native 0.88 support"
+  },
+  {
+    "package": "eslint",
+    "range": "^9.39",
+    "reason": "@react-native/eslint-config 0.88.1 peers eslint ^8.0.0 || ^9.0.0 and eslint-plugin-react-native 5.0.0 (its dependency, also the latest release) peers eslint up to ^9, so ESLint 10 is outside both peer ranges. eslint-plugin-react 7.37.5 (the locked version) peers eslint ^9.7 at most is a third blocker. npm marks eslint 9.39.5 deprecated (\"no longer supported\"), so this pin holds an end-of-life line.",
+    "lift": "An @react-native/eslint-config release that peers ESLint 10"
   }
 ]

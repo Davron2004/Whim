@@ -71,13 +71,14 @@
     "@types/react": "^19.3.0",
     "@types/react-test-renderer": "^19.3.1",
     "esbuild": "^0.28.2",
-    "eslint": "^8.19.0",
+    "eslint": "^9.39.5",
     "eslint-plugin-sonarjs": "^4.2.2",
     "firebase-tools": "15.37.0",
+    "globals": "^17.14.0",
     "knip": "^6.47.0",
     "metro-symbolicate": "0.87.3",
     "playwright": "^1.65.1",
-    "prettier": "2.8.8",
+    "prettier": "3.10.1",
     "react-dom": "19.3.1",
     "react-test-renderer": "19.3.1",
     "typescript": "^6.0.3"
@@ -100,6 +101,9 @@
     }
   },
   "overrides": {
+    "@react-native/eslint-config": {
+      "eslint-plugin-ft-flow": "^3.0.11"
+    },
     "basic-ftp": "^6.2.2",
     "firebase-tools": {
       "gaxios": {
