@@ -12,3 +12,4 @@ Run branch: integration/upgrade-to-latest-dependencies (nested; no second stagin
 - verify: by dispatcher inspection (three one-line structural edits matching the DONE specs exactly); no separate Opus pass for a 5-line diff (deviation, recorded); the full gate-full on the merged staging tip is the full-gate step.
 - merged: lane1 into integration/upgrade-to-latest-dependencies at 0e3958d1 (after c10f1 at 626a926b). Regate: covered by the final gate-full on the staging tip (one gate for c10f1 + lane1 + c10u; deviation, recorded in the change ledger).
 - accepted in SonarCloud: S3 (AaH_W7khBctgcPNri1Mm), S4 (AaH_W7khBctgcPNri1Mn), S5 (AaH_W7jMBctgcPNri1Mk): comment + transition accept, HTTP 200 each; reasons in accepted.md.
+- batch terminal: S1, S2, S6 merged (0e3958d1); S3, S4, S5 accepted. Round 1 closes; PR #297 re-poll after the next push decides whether a round 2 is needed.
