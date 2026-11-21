@@ -196,12 +196,22 @@ function plateCovers(k: number): boolean {
   return k >= 1;
 }
 
+/** Where `place` is drawn in the sheet's frame (`placeIn`), or `null` from the frame the exit ended
+ *  on (`ended`): the window is going, and nothing in it is measured again. React takes a view out of
+ *  the shadow tree as it commits the unmount, while its place's `on` turning false reaches the UI
+ *  thread only after it (a JS write is queued), so a frame in between got null from Reanimated, which
+ *  warns ("undefined, not-yet-computed or meaningless value of `LayoutMetrics`"). */
+function placeInSheet(ended: SharedValue<boolean>, frame: PlaceRef, place: PlaceRef) {
+  'worklet';
+  return ended.value ? null : placeIn(frame, place);
+}
+
 /** Where the page's ember (`from`) and the anchor's ember place (`to`) are, or `null` when either
  *  cannot be measured: then the page's ember stays its own and fades with the card. */
-function leadPlaces(frame: PlaceRef, source: PlaceRef, target: PlaceRef) {
+function leadPlaces(ended: SharedValue<boolean>, frame: PlaceRef, source: PlaceRef, target: PlaceRef) {
   'worklet';
-  const from = placeIn(frame, source);
-  const to = placeIn(frame, target);
+  const from = placeInSheet(ended, frame, source);
+  const to = placeInSheet(ended, frame, target);
   return from === null || to === null ? null : { from, to };
 }
 
@@ -221,6 +231,8 @@ interface SheetMorph {
   readonly grown: SharedValue<number>;
   /** How much of the card shows (0 → 1), never while the plate does not cover it. */
   readonly shown: SharedValue<number>;
+  /** The exit has ended (`placeInSheet`). */
+  readonly ended: SharedValue<boolean>;
   readonly anchored: boolean;
   readonly frame: PlaceRef;
   readonly target: PlaceRef | null;
@@ -249,15 +261,17 @@ export function useSheetLead(ref: PlaceRef, light: EmberLightRef, draw: (from: E
     [store],
   );
   const still = useSharedValue(1);
+  const going = useSharedValue(false);
   const grown = morph?.grown ?? still;
   const shown = morph?.shown ?? still;
+  const ended = morph?.ended ?? going;
   const on = morph?.anchored === true && morph.target !== null;
   const frame = morph?.frame ?? ref;
   const target = morph?.target ?? ref;
   return useAnimatedStyle(() => {
     const whole = shown.value >= 1;
     const away = grown.value < 1 || !whole;
-    return { opacity: on && away && leadPlaces(frame, ref, target) !== null ? 0 : 1 };
+    return { opacity: on && away && leadPlaces(ended, frame, ref, target) !== null ? 0 : 1 };
   });
 }
 
@@ -433,6 +447,8 @@ interface SheetMotion {
   shown: SharedValue<number>;
   /** Where the growth is headed: 1 out to the card, 0 back into the place. */
   toward: SharedValue<number>;
+  /** The exit has ended, as the UI thread saw it (`exitEnded`), until the next entrance. */
+  ended: SharedValue<boolean>;
 }
 
 // Spring configs as module constants: a worklet never calls `springConfig` (motion.ts).
@@ -448,7 +464,8 @@ interface SheetMoves {
 
 /** The entrance: from off screen (or, `fresh` false, from wherever a close has got to). Out of an
  *  anchor, the card fades in once the plate covers it (`useCardReveal`). */
-function playEntrance({ y, height, fade, grown, shown, toward }: SheetMotion, { reduced, anchored }: SheetMoves, fresh: boolean): void {
+function playEntrance({ y, height, fade, grown, shown, toward, ended }: SheetMotion, { reduced, anchored }: SheetMoves, fresh: boolean): void {
+  ended.value = false;
   if (reduced || !anchored) {
     shown.value = 1;
     toward.value = 1;
@@ -503,14 +520,14 @@ const FADED = 1 / 255;
 /** Whether a leaving sheet is drawn where its exit lands, however long its animation has still to
  *  run: faded out (Reduce Motion), every edge of the plate within `LANDED` of its place with the card
  *  gone (an anchor), or the card within `LANDED` of off-screen. */
-function exitLanded({ y, height, fade, grown, shown }: SheetMotion, frame: PlaceRef, place: PlaceRef | null): boolean {
+function exitLanded({ y, height, fade, grown, shown, ended }: SheetMotion, frame: PlaceRef, place: PlaceRef | null): boolean {
   'worklet';
   if (fade.value <= FADED) return true;
   if (place === null) return y.value >= height.value - LANDED;
   if (shown.value > 0) return false;
   const k = Math.max(0, grown.value);
   if (k === 0) return true;
-  const at = placeIn(frame, place);
+  const at = placeInSheet(ended, frame, place);
   // A place that cannot be measured draws no plate and no face: nothing is left to see.
   if (at === null) return true;
   const top = at.frameHeight - height.value + y.value;
@@ -518,12 +535,20 @@ function exitLanded({ y, height, fade, grown, shown }: SheetMotion, frame: Place
   return k * span <= LANDED;
 }
 
+/** The exit has ended, on the UI thread: from this frame on nothing in the window is measured
+ *  (`placeInSheet`), and only then does JS hear it (`settled`) and take the window down. */
+function exitEnded(ended: SharedValue<boolean>, settled: () => void): void {
+  'worklet';
+  ended.value = true;
+  scheduleOnRN(settled);
+}
+
 /** The exit of a tapped close, from where the sheet is; `settled` once it has ended. */
 function playExit(motion: SheetMotion, { reduced, anchored }: SheetMoves, settled: () => void): void {
   const { y, height, fade } = motion;
   const done = (finished?: boolean) => {
     'worklet';
-    if (finished) scheduleOnRN(settled);
+    if (finished) exitEnded(motion.ended, settled);
   };
   if (reduced) fade.value = withTiming(0, timing('fadeOut', true), done);
   else if (anchored) shrinkInto(motion, 0, done);
@@ -572,7 +597,8 @@ export function Sheet({ visible, onClose, title, detent = 'fit', closeLabel = CO
   const grown = useSharedValue(1);
   const shown = useSharedValue(1);
   const toward = useSharedValue(1);
-  const motion = useMemo<SheetMotion>(() => ({ y, height, fade, grown, shown, toward }), [y, height, fade, grown, shown, toward]);
+  const ended = useSharedValue(false);
+  const motion = useMemo<SheetMotion>(() => ({ y, height, fade, grown, shown, toward, ended }), [y, height, fade, grown, shown, toward, ended]);
   const entry = useAnchorEntry(anchor);
   const anchored = entry !== undefined && !t.reduceMotion;
   // A growth or shrink is under way: the sheet draws its ember lead, measured on every frame.
@@ -765,7 +791,7 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
       'worklet';
       const done = (finished?: boolean) => {
         'worklet';
-        if (finished) scheduleOnRN(onSettled);
+        if (finished) exitEnded(motion.ended, onSettled);
       };
       // A drag the system took away (cancelled, failed) never commits, whatever it had felt.
       const released = e.canceled
@@ -795,7 +821,7 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
   useAnimatedReaction(
     () => closing && exitLanded(motion, frame, place),
     (landed, before) => {
-      if (landed && before !== true) scheduleOnRN(onSettled);
+      if (landed && before !== true) exitEnded(motion.ended, onSettled);
     },
     [closing, motion, frame, place, onSettled],
   );
@@ -816,7 +842,7 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
     paddingBottom: sheetBottomPadding(overlap.value, safeBottom),
   }));
   const scrimMotion = useAnimatedStyle(() => ({ opacity: scrimOpacity(y.value, height.value, fade.value, grown.value) }));
-  const morph = useMemo<SheetMorph>(() => ({ grown, shown, anchored, frame, target: anchor?.ember ?? null, lead }), [grown, shown, anchored, frame, anchor?.ember, lead]);
+  const morph = useMemo<SheetMorph>(() => ({ grown, shown, ended: motion.ended, anchored, frame, target: anchor?.ember ?? null, lead }), [grown, shown, motion.ended, anchored, frame, anchor?.ember, lead]);
   const onCardLayout = (event: LayoutChangeEvent) => {
     height.value = event.nativeEvent.layout.height;
   };
@@ -858,7 +884,7 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
           <SheetMorphContext.Provider value={morph}>{children}</SheetMorphContext.Provider>
         </View>
       </Animated.View>
-      {anchor && moving ? <LeadEmber lead={lead} frame={frame} target={anchor.ember} grown={grown} shown={shown} /> : null}
+      {anchor && moving ? <LeadEmber lead={lead} frame={frame} target={anchor.ember} grown={grown} shown={shown} ended={motion.ended} /> : null}
     </View>
   );
 }
@@ -874,9 +900,9 @@ function AnchorMorph({ anchor, frame, motion, closing, drag }: Readonly<{ anchor
   return (
     <>
       <GestureDetector gesture={drag}>
-        <Plate frame={frame} place={ref} radius={look.radius} y={motion.y} height={motion.height} grown={motion.grown} shown={motion.shown} color={t.colors.sheet} shadow={t.shadows.raised} />
+        <Plate frame={frame} place={ref} radius={look.radius} y={motion.y} height={motion.height} grown={motion.grown} shown={motion.shown} ended={motion.ended} color={t.colors.sheet} shadow={t.shadows.raised} />
       </GestureDetector>
-      <Face frame={frame} place={ref} grown={motion.grown} width={size.width} height={size.height} closing={closing} onPress={look.onPress}>
+      <Face frame={frame} place={ref} grown={motion.grown} ended={motion.ended} width={size.width} height={size.height} closing={closing} onPress={look.onPress}>
         {look.face}
       </Face>
     </>
@@ -891,6 +917,7 @@ interface PlateProps {
   height: SharedValue<number>;
   grown: SharedValue<number>;
   shown: SharedValue<number>;
+  ended: SharedValue<boolean>;
   color: string;
   shadow: string;
 }
@@ -898,12 +925,12 @@ interface PlateProps {
 /** The one leaf view whose width, height and corners move (§4.3 rule 4): from the place's measured
  *  rect and radius to the card's, the card's top corners and square bottom. It stays on the card's
  *  rect, under it, until the card shows whole. */
-const Plate = React.memo(function PlateView({ frame, place, radius, y, height, grown, shown, color, shadow }: Readonly<PlateProps>) {
+const Plate = React.memo(function PlateView({ frame, place, radius, y, height, grown, shown, ended, color, shadow }: Readonly<PlateProps>) {
   const style = useAnimatedStyle(() => {
     const k = Math.min(1, grown.value);
     // An open card hides the plate: settled there, a drag moves it without measuring anything.
     if (k >= 1 && shown.value >= 1) return { opacity: 0, width: 0, height: 0 };
-    const at = placeIn(frame, place);
+    const at = placeInSheet(ended, frame, place);
     if (at === null) return { opacity: 0, width: 0, height: 0 };
     const r =Math.min(radius, at.height / 2, at.width / 2);
     const top = lerp(r, RADII.xl.radius, k);
@@ -926,6 +953,7 @@ interface FaceProps {
   frame: PlaceRef;
   place: PlaceRef;
   grown: SharedValue<number>;
+  ended: SharedValue<boolean>;
   width: number;
   height: number;
   closing: boolean;
@@ -937,11 +965,11 @@ interface FaceProps {
  *  leaves it and comes back as the sheet returns. A press or a lift scales the place, and Android
  *  measures what is drawn, so the copy, laid out at the place's own size, is scaled uniformly from its
  *  top-left to what the place measures: it sits exactly on it. */
-function Face({ frame, place, grown, width, height, closing, onPress, children }: Readonly<FaceProps>) {
+function Face({ frame, place, grown, ended, width, height, closing, onPress, children }: Readonly<FaceProps>) {
   const style = useAnimatedStyle(() => {
     const k = grown.value;
     if (k >= 1) return { opacity: 0 };
-    const at = placeIn(frame, place);
+    const at = placeInSheet(ended, frame, place);
     if (at === null) return { opacity: 0 };
     const scale = width > 0 ? at.width / width : 1;
     return { opacity: 1 - clamp01(k / FACE_GONE), transform: [{ translateX: at.x }, { translateY: at.y }, { scale }] };
@@ -958,14 +986,14 @@ function Face({ frame, place, grown, width, height, closing, onPress, children }
 /** The page's ember on its way between its own place and the anchor's ember place, ahead of the card
  *  (`LEAD_SHARE`): drawn at its own size, scaled uniformly to the place's, setting out in the light it
  *  had. Drawn as the move starts and not again until it ends. */
-const LeadEmber = React.memo(function LeadEmberView({ lead: store, frame, target, grown, shown }: Readonly<{ lead: LeadStore; frame: PlaceRef; target: PlaceRef; grown: SharedValue<number>; shown: SharedValue<number> }>) {
+const LeadEmber = React.memo(function LeadEmberView({ lead: store, frame, target, grown, shown, ended }: Readonly<{ lead: LeadStore; frame: PlaceRef; target: PlaceRef; grown: SharedValue<number>; shown: SharedValue<number>; ended: SharedValue<boolean> }>) {
   const [lead] = useState(() => store.current);
   const [node] = useState(() => lead?.draw(lead.light.current?.() ?? null) ?? null);
   const source = lead?.ref ?? target;
   const style = useAnimatedStyle(() => {
     const k = Math.min(1, grown.value);
     const whole = shown.value >= 1;
-    const places = leadPlaces(frame, source, target);
+    const places = leadPlaces(ended, frame, source, target);
     if (places === null || (k >= 1 && whole)) return { opacity: 0 };
     const e = clamp01((1 - k) / LEAD_SHARE);
     const { from: a, to: b } = places;

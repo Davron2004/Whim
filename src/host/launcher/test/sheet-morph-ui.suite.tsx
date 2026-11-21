@@ -21,7 +21,7 @@ import { useTokens } from '../../ui/tokens';
 import { emberLook, springConfig, timingOf } from '../../ui/tokens-pure';
 import { StyleSheet, accessibilitySettings, emitAccessibility, holdModalDismissals } from './native-host';
 import { pan } from './native-gesture-handler';
-import { animations, elapse, elapseSprings, frameStyles, holdAnimations, isStep, jsThreadReads, measuredRect, measureWarnings, measuring, onUi, ReduceMotion, runningAnimations } from './native-reanimated';
+import { animations, elapse, elapseSprings, frameStyles, holdAnimations, holdHops, isStep, jsThreadReads, measuredRect, measureWarnings, measuring, onUi, ReduceMotion, runningAnimations } from './native-reanimated';
 import { androidBack, button, hostType, isHost, press, renderScreen, textOf, unmountScreen } from './react-screen';
 
 type Tree = TestRenderer.ReactTestRenderer;
@@ -228,6 +228,63 @@ async function closeIntoTile(h: Harness, turn: 'none' | 'fading' | 'shrinking'):
   } finally { await leave(tree, release); }
 }
 
+/** A close (`closeIt`) of the making sheet over Home (`start`), in 16 ms frames until its window hides,
+ *  or, `ending` given, with hops to the JS thread held from that frame on and three frames run past it
+ *  before they are let go. How many frames ran, how often the sheet's frame and the Making page's
+ *  ember (views in the window) were measured before and after `ending`, and, held: the hops waiting,
+ *  the window still up, a spring still running, and the window gone once the hops ran. */
+async function closeFrames(start: 'making' | 'describe', closeIt: (tree: Tree) => Promise<void>, ending: number | null) {
+  const { tree, release } = await rig(start);
+  const reported = holdModalDismissals();
+  const seenSoFar = { frames: 0, before: 0, after: 0, waiting: 0, up: false, still: false, gone: false };
+  let hops: ReturnType<typeof holdHops> | null = null;
+  try {
+    await run(release);
+    await cardLaidOut(tree);
+    let past = false;
+    measuring.rectOf = (node) => {
+      const at = placeOf(node);
+      if (at === FRAME || at === MAKING_EMBER) seenSoFar[past ? 'after' : 'before'] += 1;
+      return at;
+    };
+    const hold = holdAnimations();
+    await closeIt(tree);
+    while (seenSoFar.frames < 120 && modal(tree)?.props.visible === true && seenSoFar.frames !== ending) {
+      if (seenSoFar.frames + 1 === ending) hops = holdHops();
+      await run(() => { elapseSprings(16); elapse(16); });
+      seenSoFar.frames += 1;
+    }
+    if (hops) {
+      past = true;
+      seenSoFar.waiting = hops.waiting();
+      seenSoFar.up = modal(tree)?.props.visible === true;
+      for (let i = 0; i < 3; i++) await run(() => { elapseSprings(16); elapse(16); stylesOnUi(tree); });
+      seenSoFar.still = runningAnimations() > 0;
+      const held = hops;
+      hops = null;
+      await run(held.release);
+      seenSoFar.gone = modal(tree)?.props.visible !== true;
+    }
+    await run(hold);
+    return seenSoFar;
+  } finally {
+    if (hops) await run(hops.release);
+    await run(reported);
+    await leave(tree, release);
+  }
+}
+/** The frame after four consecutive frames `[a, b, c, d]` of a critically damped spring on equal
+ *  frames, (α + β·n)·qⁿ: `ca − b²` and `db − c²` are −β²·q^(2n) one frame apart, so their ratio is q²,
+ *  and the next frame is 2q·d − q²·c. */
+function carriedOn([a, b, c, d]: readonly number[]): number {
+  const q = Math.sqrt((d * b - c * c) / (c * a - b * b));
+  return 2 * q * d - q * q * c;
+}
+/** A UI frame of the plate's and the face's styles, whatever they read last. */
+function stylesOnUi(tree: Tree): void {
+  for (const node of [plate(tree), face(tree)]) if (node) frameStyles(node.props.style);
+}
+
 export async function runSheetMorphUiTests(h: Harness): Promise<void> {
   await h.test('M6: tapping the composer grows the sheet out of the capsule on morph, from its measured rect to the card, the placeholder still where it was, the card fading in at the end', async () => {
     const { tree, release } = await rig(null);
@@ -388,28 +445,80 @@ export async function runSheetMorphUiTests(h: Harness): Promise<void> {
         await cardLaidOut(tree);
         const hold = holdAnimations();
         await closeIt(tree);
-        const inPlace = () => {
+        // How far the plate as drawn is from the place, at its furthest edge; null while none is drawn.
+        const gap = () => {
           const p = plate(tree);
-          if (p === null || seen(card(tree)).opacity > 0) return false;
+          if (p === null || seen(card(tree)).opacity > 0 || ((flat(p).width as number | undefined) ?? 0) <= 0) return null;
           const at = transformOf(p);
           const [w, ht] = [flat(p).width as number, flat(p).height as number];
           const edges = [at.translateX - place.pageX, at.translateY - place.pageY, at.translateX + w - place.pageX - place.width, at.translateY + ht - place.pageY - place.height];
-          return edges.every((d) => Math.abs(d) <= 0.5);
+          return Math.max(...edges.map(Math.abs));
         };
-        const steps: { visible: boolean; landed: boolean; still: boolean }[] = [];
+        const steps: { visible: boolean; gap: number | null; still: boolean }[] = [];
         for (let i = 0; i < 120 && steps.at(-1)?.visible !== false; i++) {
           await run(() => { elapseSprings(16); elapse(16); });
-          steps.push({ visible: modal(tree)?.props.visible === true, landed: inPlace(), still: runningAnimations() > 0 });
+          steps.push({ visible: modal(tree)?.props.visible === true, gap: gap(), still: runningAnimations() > 0 });
         }
         const hidden = steps.findIndex((f) => !f.visible);
-        h.ok(hidden > 5 && steps.slice(0, hidden).every((f) => !f.landed), `${name}: the window stays up on every frame the plate is still on its way (${hidden} frames)`);
-        h.ok(hidden >= 0 && steps[hidden].landed && steps[hidden].still, `${name}: and hides on the first frame it is in its place, its spring still formally running (${JSON.stringify(steps.slice(Math.max(0, hidden - 2), hidden + 1))})`);
+        h.ok(hidden > 5 && steps.slice(0, hidden).every((f) => f.gap === null || f.gap > 0.5), `${name}: the window stays up on every frame the plate is still on its way (${hidden} frames)`);
+        // The frame the exit ends on draws no plate (nothing in the window is measured from then on), so
+        // where it got to is carried on from the frames drawn before it: the gap follows the smooth
+        // spring, critically damped, so on equal frames it is (a + b·n)·qⁿ, and four drawn frames give
+        // the next one. Carried onto the last drawn frame it must hit it; onto the hidden one, it is
+        // within half a point, short only of rounding (one frame early it is more than half a point).
+        const drawn = steps.slice(Math.max(0, hidden - 5), Math.max(0, hidden)).map((f) => f.gap);
+        const tail = drawn.length === 5 && drawn.every((g): g is number => g !== null) ? drawn : null;
+        const check = tail && carriedOn(tail.slice(0, 4));
+        const next = tail && carriedOn(tail.slice(1));
+        const rounding = 1e-9;
+        h.ok(tail !== null && check !== null && Math.abs(check - tail[4]) <= rounding, `${name}: the drawn gaps follow the spring, carried on to the last drawn one (${JSON.stringify(tail)}, carried on: ${check})`);
+        h.ok(hidden >= 0 && steps[hidden].still && next !== null && next <= 0.5 + rounding, `${name}: and hides on the first frame it is in its place, its spring still formally running (${JSON.stringify(steps.slice(Math.max(0, hidden - 2), hidden + 1))}, carried on: ${next})`);
         await run(hold);
       } finally {
         await run(reported);
         await leave(tree, release);
       }
     }
+  });
+
+  await h.test('M5 and M6: from the frame the exit lands on, while the JS thread has yet to hear it and take the window down, no UI frame measures a view in the sheet’s window (on a phone React takes the window out of the shadow tree before its places’ `on` turns false on the UI thread, and a frame in between got null and a Reanimated `LayoutMetrics` warning), by X into the tile and by a drag into the capsule', async () => {
+    const cases: [string, 'making' | 'describe', (tree: Tree) => Promise<void>][] = [
+      ['M5 by X', 'making', (tree) => press(button(tree, COPY.sheetClose))],
+      ['M6 by a drag', 'describe', (tree) => TestRenderer.act(async () => pan(sheetDrag(tree), [40, 120, 200], 1500))],
+    ];
+    for (const [name, start, closeIt] of cases) {
+      const ends = await closeFrames(start, closeIt, null);
+      h.ok(ends.frames > 5, `${name}: unheld, the window hides on frame ${ends.frames}`);
+      const held = await closeFrames(start, closeIt, ends.frames);
+      h.ok(held.waiting > 0 && held.up && held.before > 0, `${name}: held from that frame on, the exit ended with the window still up, the frames on its way having measured the window (${held.before})`);
+      h.ok(held.still, `${name}: its spring still runs on the frames after`);
+      h.eq(held.after, 0, `${name}: and not one of them measured a view in the window`);
+      h.ok(held.gone, `${name}: once the JS thread hears the end, the window goes`);
+    }
+  });
+
+  await h.test('M6: a sheet closed all the way into the capsule grows out of it again when the composer is tapped once more, the plate and the face drawn on the capsule as it sets out', async () => {
+    const { tree, release } = await rig(null);
+    try {
+      await press(composerButton(tree));
+      await run(release);
+      await cardLaidOut(tree);
+      const hold = holdAnimations();
+      await press(button(tree, COPY.sheetClose));
+      for (let i = 0; i < 120 && modal(tree) !== undefined; i++) await run(() => { elapseSprings(16); elapse(16); });
+      h.eq(modal(tree), undefined, 'closed: the sheet has left');
+      await run(hold);
+      const again = holdAnimations();
+      await press(composerButton(tree));
+      await run(() => elapseSprings(0));
+      const p = plate(tree);
+      const at = p ? transformOf(p) : null;
+      h.eq(at && [at.translateX, at.translateY, flat(p!).width, flat(p!).opacity], [CAPSULE.pageX, CAPSULE.pageY, CAPSULE.width, 0], 'the plate sets out on the capsule’s measured rect again');
+      h.ok(face(tree) !== null && seen(face(tree)!).opacity === 1, 'with the capsule’s face drawn over it');
+      await run(() => elapseSprings(60));
+      h.ok(flat(plate(tree)!).opacity as number > 0 && grownOf(tree, CAPSULE) > 0, 'and grows from there, drawn');
+      await run(again);
+    } finally { await leave(tree, release); }
   });
 
   await h.test('M6: a drag of the open sheet measures nothing on the UI thread: the plate, hidden under a card shown whole, runs on every frame the card moves (its style captures the card’s place) and never measures its place', async () => {
