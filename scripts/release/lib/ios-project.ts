@@ -474,10 +474,10 @@ function checkSceneManifest(plist: { [key: string]: PlistValue }): IosProjectFin
     findings.push({ file: INFO_PLIST_PATH, message: 'must declare UIApplicationSceneManifest' });
     return findings;
   }
-  if (sceneManifest.UISupportsMultipleScenes !== false) {
+  if (sceneManifest.UIApplicationSupportsMultipleScenes !== false) {
     findings.push({
       file: INFO_PLIST_PATH,
-      message: 'UIApplicationSceneManifest UISupportsMultipleScenes must be false',
+      message: 'UIApplicationSceneManifest UIApplicationSupportsMultipleScenes must be false',
     });
   }
   const configurations = sceneManifest.UISceneConfigurations;

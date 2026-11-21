@@ -42,6 +42,7 @@ The owner's standing policy is that every dependency sits on its latest stable r
 ### Modified Capabilities
 - `generation-server`: the server workspace is a Node 26 service; it was Node 22. The rest of the "Server workspace and runtime" requirement is unchanged.
 - `server-deployment`: the runtime container image is built on a Node 26 base; it was Node 22.
+- `app-links`: on iOS the SceneDelegate's scene callbacks forward links to React Native, because RN 0.88 ignores the AppDelegate forwards in a scene-based app.
 
 ## Impact
 

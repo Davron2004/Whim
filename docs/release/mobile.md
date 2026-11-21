@@ -164,6 +164,9 @@ commit is its release tag: `git rev-parse 'release/1.0.0+382511^{commit}'` gives
    A fresh worktree has no `vendor/bundle` (gems are never committed), so `bundle exec pod install`
    fails there until it borrows the repo's gems. The symlink is safe while both checkouts have the
    same `Gemfile.lock`; if they differ, run `bundle install` in the worktree instead.
+   Since React Native 0.88, `pod install` generates the React Native core pods (`React-Core` among
+   them) under the gitignored `ios/build/rncore-facades/` and `Podfile.lock` points at that path,
+   so after deleting `ios/build` the next `xcodebuild` fails until `pod install` runs again.
    The simulator app is `ios/build/sim/Build/Products/Release-iphonesimulator/Whim.app`. Android
    takes the `offline` build: it's debug-signed (so the upgrade installs) and debuggable (so the
    script can read the app's store with `run-as`).
