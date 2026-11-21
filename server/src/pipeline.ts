@@ -4,7 +4,10 @@
  */
 import type { GenerateRequest, GenerationEvent, WireAppRecord } from '@whim/contract';
 import { buildCandidateSource } from '../../synthrun/builder';
-import { stubFutureEvent, stubFutureFallback } from './stub-markers';
+import { runStaticChecks } from '../../checks/index';
+import { assembleRecord } from './generation/record';
+import { storageFixtureVersion, stubFutureEvent, stubFutureFallback, type StorageFixtureVersion } from './stub-markers';
+import { storageFixtureSource } from './stub-storage-fixture';
 
 /** The app every stub build delivers: a day checklist (the stub rewrite's canned plan describes it).
  *  Its one screen is taller than a phone, so the last element, the Clear done button, has to scroll
@@ -91,6 +94,34 @@ function buildStubRecord(): Promise<{ js: string; map: string }> {
   return stubBuildPromise;
 }
 
+/** The storage fixture's records, built once per version on first use (memoized like the stub app). */
+const fixtureRecords = new Map<StorageFixtureVersion, Promise<WireAppRecord>>();
+
+/** A storage fixture version's record, assembled as the real pipeline assembles one: `name`,
+ *  `manifest` and `schema` from the checker's one extraction of the source (`record.ts`), the bundle
+ *  from the production builder. A fixture the checker faults is a bug in this file, so it throws. */
+async function buildFixtureRecord(version: StorageFixtureVersion): Promise<WireAppRecord> {
+  const source = storageFixtureSource(version);
+  const report = runStaticChecks(source);
+  if (report.diagnostics.length > 0 || report.manifest === undefined) {
+    throw new Error(`the ${version} storage fixture fails the static checks: ${report.diagnostics.map((d) => d.kind).join(', ')}`);
+  }
+  const { name, schema, ...manifest } = report.manifest;
+  const { js, map } = await buildCandidateSource(source, { filenameHint: `storage-fixture-${version}` });
+  return assembleRecord(source, { name, manifest, schema: (schema as Record<string, unknown> | undefined) ?? {} }, { bundle: js, sourceMap: map });
+}
+
+function fixtureRecord(version: StorageFixtureVersion): Promise<WireAppRecord> {
+  let record = fixtureRecords.get(version);
+  if (record === undefined) {
+    record = buildFixtureRecord(version);
+    fixtureRecords.set(version, record);
+    // A failed build is not kept: the next request builds again instead of replaying the rejection.
+    record.catch(() => fixtureRecords.delete(version));
+  }
+  return record;
+}
+
 /** Factory for the stub pipeline with injectable inter-event delay. */
 export function createStubPipeline(delayMs = 200): Pipeline {
   return {
@@ -150,10 +181,12 @@ async function* emitStage(
   return false;
 }
 
-/** Emits the usage event followed by the single terminal (failure or result) event. */
+/** Emits the usage event followed by the single terminal (failure or result) event: the storage
+ *  fixture version the prompt names, else the day checklist. */
 async function* emitTerminal(
   delayMs: number,
   isFailure: boolean,
+  fixture: StorageFixtureVersion | undefined,
   signal?: AbortSignal,
 ): AsyncGenerator<GenerationEvent, void> {
   // Usage event always precedes the terminal
@@ -174,6 +207,8 @@ async function* emitTerminal(
       attempts: 3,
       diagnostics: [{ kind: 'BUILD_FAILURE', hint: 'Try a simpler description.' }],
     };
+  } else if (fixture !== undefined) {
+    yield { type: 'result', app: await fixtureRecord(fixture) };
   } else {
     const { js, map } = await buildStubRecord();
     const app: WireAppRecord = {
@@ -218,5 +253,5 @@ async function* stubRun(
     }
   }
 
-  yield* emitTerminal(delayMs, isFailure, signal);
+  yield* emitTerminal(delayMs, isFailure, storageFixtureVersion(request.prompt), signal);
 }

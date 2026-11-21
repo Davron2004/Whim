@@ -1,0 +1,143 @@
+# Storage seed for a storage upgrade check (upgrade-to-latest-dependencies 7.1): make the stub's
+# storage fixture app (server/src/stub-storage-fixture.ts) and open it, which writes its v1 seed;
+# change it to v2 and open it again, which burns v1's `legacy` field id and writes v2's row. The
+# store then holds every field type, a burned field id with data and two collections
+# (`node scripts/release/run.mjs storage-seed-check`).
+#
+# Needs: Whim already pointed at a stub server built from a commit that has the storage fixture
+# (WHIM_PIPELINE=stub; seed.yaml's step 1 sets the address), on any build that can make and change
+# an app. The consent steps are taken if they are still ahead. Steps 1-2 follow seed.yaml's steps
+# 3-4, whose idioms (the emoji keyboard on iOS, tapping the headline to drop the keyboard, the tile
+# menu rows by position on 382511's iOS build) are explained there.
+#
+#   -e STORAGE_APP=Storage Fixture   the name the fixture app declares
+#   -e SCREEN_HEIGHT=<points>        iOS on 382511 only: the screen's height, for the tile menu's rows
+appId: com.anycognition.whim
+env:
+  STORAGE_APP: ${STORAGE_APP || 'Storage Fixture'}
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "Your apps"
+    timeout: 60000
+
+# 1. Make the fixture (v1) and open it: its first open writes the v1 seed.
+- tapOn: "Describe an app…|Make an app…"
+- extendedWaitUntil:
+    visible: "Accept|I accept the Terms of use|Agree and continue|Agree to send descriptions|What should it do\\?"
+    timeout: 60000
+- runFlow:
+    when:
+      visible: "Accept|I accept the Terms of use"
+    commands:
+      - tapOn: "Accept|I accept the Terms of use"
+      - extendedWaitUntil:
+          visible: "Agree and continue|Agree to send descriptions|What should it do\\?"
+          timeout: 60000
+- runFlow:
+    when:
+      visible: "Agree and continue|Agree to send descriptions"
+    commands:
+      - tapOn: "Agree and continue|Agree to send descriptions"
+- extendedWaitUntil:
+    visible: "What should it do\\?"
+    timeout: 30000
+- tapOn: "Describe an app…|Make an app…"
+- inputText: "A storage seed [[fixture:storage-v1]]"
+- runFlow:
+    when:
+      platform: iOS
+      visible:
+        id: "emoji"
+    commands:
+      - tapOn:
+          id: "emoji"
+- tapOn: "What should it do\\?"
+- tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "Continue|Build it|Make it"
+    timeout: 180000
+- runFlow:
+    when:
+      visible: "Continue"
+    commands:
+      - tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "Build it|Make it"
+    timeout: 180000
+- tapOn: "Build it|Make it"
+- extendedWaitUntil:
+    visible: "Back to your apps"
+    timeout: 300000
+- tapOn: "Back to your apps"
+- extendedWaitUntil:
+    visible: "(.*, )?${STORAGE_APP}(, .*)?"
+    timeout: 30000
+- tapOn: "(.*, )?${STORAGE_APP}(, .*)?"
+- extendedWaitUntil:
+    visible: "Wrote the v1 seed\\.|The v1 seed was already there\\."
+    timeout: 60000
+- launchApp
+- extendedWaitUntil:
+    visible: "Your apps"
+    timeout: 30000
+
+# 2. Change it to v2 and open it: the engine burns f7 and the app writes the v2 seed.
+- longPressOn: "(.*, )?${STORAGE_APP}(, .*)?"
+- extendedWaitUntil:
+    visible: "Prompt again|Change it|.*, Prompt again, .*"
+    timeout: 15000
+- runFlow:
+    when:
+      visible: "Prompt again|Change it"
+    commands:
+      - tapOn: "Prompt again|Change it"
+- runFlow:
+    when:
+      platform: iOS
+      visible: ".*, Prompt again, .*"
+    commands:
+      - tapOn:
+          point: ${'50%,' + Math.round(100 * (SCREEN_HEIGHT - 63 - 58 * 3) / SCREEN_HEIGHT) + '%'}
+- extendedWaitUntil:
+    visible: "What should change\\?"
+    timeout: 30000
+- tapOn: "Add, change, or remove something…|Describe a change…"
+- inputText: "Version two [[fixture:storage-v2]]"
+- runFlow:
+    when:
+      platform: iOS
+      visible:
+        id: "emoji"
+    commands:
+      - tapOn:
+          id: "emoji"
+- tapOn: "What should change\\?"
+- tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "Continue|Make the change"
+    timeout: 180000
+- runFlow:
+    when:
+      visible: "Continue"
+    commands:
+      - tapOn: "Continue"
+- extendedWaitUntil:
+    visible: "Make the change"
+    timeout: 180000
+- tapOn: "Make the change"
+- extendedWaitUntil:
+    visible: "Back to your apps"
+    timeout: 300000
+- tapOn: "Back to your apps"
+- extendedWaitUntil:
+    visible: "(.*, )?${STORAGE_APP}(, .*)?"
+    timeout: 30000
+- tapOn: "(.*, )?${STORAGE_APP}(, .*)?"
+- extendedWaitUntil:
+    visible: "Wrote the v2 seed\\.|The v2 seed was already there\\."
+    timeout: 60000
+- launchApp
+- extendedWaitUntil:
+    visible: "Your apps"
+    timeout: 30000

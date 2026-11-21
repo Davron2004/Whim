@@ -13,6 +13,7 @@ import { run as runDisclosure } from './disclosure.suite';
 import { run as runSourceMaps } from './source-maps.suite';
 import { run as runUpgradeCheck } from './upgrade-check.suite';
 import { run as runAndroidDevScript } from './android-dev-script.suite';
+import { run as runStorageDump } from './storage-dump.suite';
 
 export async function runReleaseSuites(): Promise<void> {
   await runNativeConfig();
@@ -28,4 +29,5 @@ export async function runReleaseSuites(): Promise<void> {
   await runSourceMaps();
   await runUpgradeCheck();
   await runAndroidDevScript();
+  await runStorageDump();
 }

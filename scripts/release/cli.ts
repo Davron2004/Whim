@@ -26,6 +26,7 @@ import { buildAssociationFiles, UPLOAD_FINGERPRINT_PATH } from './lib/associatio
 import { ensureReleaseTag, realGitRunner } from './lib/release-tag';
 import { checkDisclosureRelease } from './lib/disclosure-check';
 import { buildRecord, diffRecords, readCapture, seedFindings, tilesOnGrid, type UpgradeRecord } from './lib/upgrade-record';
+import { diffFileListings, diffStorageDumps, dumpStorage, parseFileListing, readStorageDump, storageSeedCheck } from './lib/storage-dump';
 import {
   fetchSourceMap,
   makeScratchDir,
@@ -338,6 +339,87 @@ function runUpgradeDiff(args: string[]): number {
   }
 }
 
+function runStorageDump(args: string[]): number {
+  const out = readFlag(args, '--out');
+  const targets = args.filter((a, i) => !a.startsWith('--') && args[i - 1] !== '--out');
+  if (targets.length !== 1 || (hasFlag(args, '--out') && !out)) {
+    process.stderr.write('storage-dump: usage: storage-dump <db-file | dir of *.db> [--out <file>]\n');
+    return 2;
+  }
+  try {
+    const text = `${JSON.stringify(dumpStorage(targets[0]), null, 2)}\n`;
+    if (out) fs.writeFileSync(out, text, 'utf8');
+    else process.stdout.write(text);
+    return 0;
+  } catch (err) {
+    return reportError('storage-dump', err);
+  }
+}
+
+function runStorageDiff(args: string[]): number {
+  const files = args.filter((a) => !a.startsWith('--'));
+  if (files.length !== 2) {
+    process.stderr.write('storage-diff: usage: storage-diff <before-dump.json> <after-dump.json>\n');
+    return 2;
+  }
+  try {
+    const [before, after] = files.map(readStorageDump);
+    const lines = diffStorageDumps(before, after);
+    for (const line of lines) process.stdout.write(`${line}\n`);
+    if (lines.length > 0) {
+      process.stdout.write(`storage-diff: FAIL (${lines.length} difference${lines.length === 1 ? '' : 's'})\n`);
+      return 1;
+    }
+    const dbs = Object.values(before.databases);
+    const rows = dbs.reduce((sum, db) => sum + Object.values(db.tables).reduce((n, t) => n + t.rows.length, 0), 0);
+    process.stdout.write(`storage-diff: PASS: ${dbs.length} database(s), ${rows} rows, every table, schema object and value identical\n`);
+    return 0;
+  } catch (err) {
+    return reportError('storage-diff', err);
+  }
+}
+
+function runStorageSeedCheck(args: string[]): number {
+  const files = args.filter((a) => !a.startsWith('--'));
+  if (files.length !== 1) {
+    process.stderr.write('storage-seed-check: usage: storage-seed-check <dump.json>\n');
+    return 2;
+  }
+  try {
+    const { seeds, gaps } = storageSeedCheck(readStorageDump(files[0]));
+    if (seeds.length === 0) {
+      for (const gap of gaps) process.stdout.write(`${gap}\n`);
+      process.stdout.write('storage-seed-check: FAIL: no database is a complete upgrade seed\n');
+      return 1;
+    }
+    process.stdout.write(`storage-seed-check: PASS: ${seeds.join(', ')} (every field type, a burned field id holding data, two collections with rows)\n`);
+    return 0;
+  } catch (err) {
+    return reportError('storage-seed-check', err);
+  }
+}
+
+function runStorageFilesDiff(args: string[]): number {
+  const files = args.filter((a) => !a.startsWith('--'));
+  if (files.length !== 2) {
+    process.stderr.write('storage-files-diff: usage: storage-files-diff <before-listing.txt> <after-listing.txt>\n');
+    return 2;
+  }
+  try {
+    const [before, after] = files.map((file) => parseFileListing(fs.readFileSync(file, 'utf8')));
+    const lines = diffFileListings(before, after);
+    for (const line of lines) process.stdout.write(`${line}\n`);
+    if (lines.length > 0) {
+      process.stdout.write(`storage-files-diff: FAIL (${lines.length} difference${lines.length === 1 ? '' : 's'})\n`);
+      return 1;
+    }
+    process.stdout.write(`storage-files-diff: PASS: the same ${before.length} file(s) before and after\n`);
+    return 0;
+  } catch (err) {
+    return reportError('storage-files-diff', err);
+  }
+}
+
 export const COMMANDS: Record<string, CliCommand> = {
   'build-number': {
     summary: 'build-number [--at <iso>] — prints the release build number for an instant (default: now).',
@@ -402,6 +484,22 @@ export const COMMANDS: Record<string, CliCommand> = {
   'upgrade-diff': {
     summary: 'upgrade-diff <seed-record.json> <after-record.json> — the upgrade check verdict: every gap in the seed and every difference after the upgrade.',
     run: runUpgradeDiff,
+  },
+  'storage-dump': {
+    summary: 'storage-dump <db-file | dir of *.db> [--out <file>] — an exact dump of pulled storage-engine databases (every table, row and schema object).',
+    run: runStorageDump,
+  },
+  'storage-diff': {
+    summary: 'storage-diff <before-dump.json> <after-dump.json> — every difference between two storage dumps; exits 1 on any.',
+    run: runStorageDiff,
+  },
+  'storage-files-diff': {
+    summary: "storage-files-diff <before-listing.txt> <after-listing.txt> — compares two `find . -name '*.db*'` listings; exits 1 on any file that appeared or disappeared.",
+    run: runStorageFilesDiff,
+  },
+  'storage-seed-check': {
+    summary: 'storage-seed-check <dump.json> — passes when a database holds every field type, a burned field id with data and two collections with rows.',
+    run: runStorageSeedCheck,
   },
 };
 

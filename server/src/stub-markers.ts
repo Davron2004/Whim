@@ -36,11 +36,28 @@ const FUTURE_NOTICES: Readonly<Record<Exclude<CompatFallback, 'skip'>, string>> 
   update: 'Update Whim to finish making this app.',
 };
 
-/** Whether `prompt` carries a marker the stub PIPELINE reads — its own `[[fail]]` or a
- *  `[[future:*]]` — which the stub rewrite must pass through raw, since the pipeline only ever sees
- *  the rewritten prompt. */
+/** The two versions of the stub's storage fixture app (`stub-storage-fixture.ts`): v1 seeds every
+ *  field type, v2 burns one of v1's field ids. */
+export type StorageFixtureVersion = 'v1' | 'v2';
+
+/** The markers that make the stub pipeline deliver a storage fixture version instead of its day
+ *  checklist. Test-only seed for storage upgrade checks (a database written by one build, read by
+ *  the next). */
+export const STORAGE_FIXTURE_MARKERS: Readonly<Record<StorageFixtureVersion, string>> = Object.freeze({
+  v1: '[[fixture:storage-v1]]',
+  v2: '[[fixture:storage-v2]]',
+});
+
+/** The storage fixture version a prompt's marker names, or `undefined` when it carries none. */
+export function storageFixtureVersion(prompt: string): StorageFixtureVersion | undefined {
+  return (Object.keys(STORAGE_FIXTURE_MARKERS) as StorageFixtureVersion[]).find((version) => prompt.includes(STORAGE_FIXTURE_MARKERS[version]));
+}
+
+/** Whether `prompt` carries a marker the stub PIPELINE reads — its own `[[fail]]`, a
+ *  `[[future:*]]` or a storage fixture marker — which the stub rewrite must pass through raw, since
+ *  the pipeline only ever sees the rewritten prompt. */
 export function carriesStubPipelineMarker(prompt: string): boolean {
-  return prompt.includes('[[fail]]') || stubFutureFallback(prompt) !== undefined;
+  return prompt.includes('[[fail]]') || stubFutureFallback(prompt) !== undefined || storageFixtureVersion(prompt) !== undefined;
 }
 
 /** The fallback a prompt's `[[future:*]]` marker names, or `undefined` when it carries none. */
