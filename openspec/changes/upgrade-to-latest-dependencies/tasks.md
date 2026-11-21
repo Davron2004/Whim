@@ -31,25 +31,25 @@
 
 ## 5. W3c: React Native 0.88 — iOS
 
-- [ ] 5.1 Apply the 0.88 template iOS diff: Podfile, `Info.plist` keys (`RCTNewArchEnabled`, scene manifest), `AppDelegate.swift`/`SceneDelegate.swift` shape, `<React/RCTAppDelegate.h>` header paths. Run `bundle exec pod install` and commit `Podfile.lock`.
-- [ ] 5.2 Build for the iOS simulator using the docs/release/mobile.md recipe, then restore any incidental `Podfile.lock` churn.
-- [ ] 5.3 Re-verify the `WhimStatusBar` swizzle targets (`RCTStatusBarManager` selectors, `RCTFabricModalHostViewController`) and `WhimWebViewNetworkDeny.m`'s `WKWebView` initializer swizzle against 0.88 and webview 14. Keep `UIViewControllerBasedStatusBarAppearance` at the value that preserves today's status-bar behavior (design D8). The DEBUG assert stays silent on launch.
-- [ ] 5.4 Make the five `.mm` TurboModules compile and register. Make `checks/test/release/ios-project.suite.ts` pass.
+- [x] 5.1 Apply the 0.88 template iOS diff: Podfile, `Info.plist` keys (`RCTNewArchEnabled`, scene manifest), `AppDelegate.swift`/`SceneDelegate.swift` shape, `<React/RCTAppDelegate.h>` header paths. Run `bundle exec pod install` and commit `Podfile.lock`.
+- [x] 5.2 Build for the iOS simulator using the docs/release/mobile.md recipe, then restore any incidental `Podfile.lock` churn.
+- [x] 5.3 Re-verify the `WhimStatusBar` swizzle targets (`RCTStatusBarManager` selectors, `RCTFabricModalHostViewController`) and `WhimWebViewNetworkDeny.m`'s `WKWebView` initializer swizzle against 0.88 and webview 14. Keep `UIViewControllerBasedStatusBarAppearance` at the value that preserves today's status-bar behavior (design D8). The DEBUG assert stays silent on launch.
+- [x] 5.4 Make the five `.mm` TurboModules compile and register. Make `checks/test/release/ios-project.suite.ts` pass.
 
 ## 6. W3d: React Native 0.88 — device verification
 
-- [ ] 6.1 On Whim_Verify, with the offline build and Settings → Advanced → own server pointed at a local stub, generate a mini-app end to end. Logcat shows the XHR SSE path (`fetchCanStream` false) and exactly one generation POST.
-- [ ] 6.2 Run the on-device containment verdict and record CONTAINED with the probe count.
-- [ ] 6.3 Run `RUN_VSTORE_PROBE`, `RUN_STORAGE_PROBE`, `RUN_BRIDGE_PROBE` and `RUN_DATA_COPY_PROBE`, one at a time, and record each result.
-- [ ] 6.4 On the iOS simulator, launch, open a mini-app, and confirm it renders, haptics and cues fire, and the status bar matches the pre-upgrade build in screenshots.
+- [x] 6.1 On Whim_Verify, with the offline build and Settings → Advanced → own server pointed at a local stub, generate a mini-app end to end. Logcat shows the XHR SSE path (`fetchCanStream` false) and exactly one generation POST.
+- [x] 6.2 Run the on-device containment verdict and record CONTAINED with the probe count.
+- [x] 6.3 Run `RUN_VSTORE_PROBE`, `RUN_STORAGE_PROBE`, `RUN_BRIDGE_PROBE` and `RUN_DATA_COPY_PROBE`, one at a time, and record each result.
+- [x] 6.4 On the iOS simulator, launch, open a mini-app, and confirm it renders, haptics and cues fire, and the status bar matches the pre-upgrade build in screenshots.
 - [ ] 6.5 Record every finding as a fix task in the change's progress file. Resolve each before W4 starts.
 
 ## 7. W4: op-sqlite 19
 
-- [ ] 7.1 Before bumping, write a fixture database with op-sqlite 16.2.0 on Whim_Verify through the storage engine (tables, every field type, a burned field id) and pull the file into the change folder.
-- [ ] 7.2 Move `@op-engineering/op-sqlite` to its `latest` 19.x. `npm install`, `pod install`, commit.
-- [ ] 7.3 Adapt `src/host/storage-engine/bindings/op-sqlite.ts` to any changed result shape (`executeSync` rows, async API). `npm run storage:test` passes.
-- [ ] 7.4 On Whim_Verify, open the 16.2.0 fixture with the 19.x build and confirm every row, field and `_meta` schema reads back identically. Run `RUN_STORAGE_PROBE`.
+- [x] 7.1 Before bumping, write a fixture database with op-sqlite 16.2.0 on Whim_Verify through the storage engine (tables, every field type, a burned field id) and pull the file into the change folder.
+- [x] 7.2 Move `@op-engineering/op-sqlite` to its `latest` 19.x. `npm install`, `pod install`, commit.
+- [x] 7.3 Adapt `src/host/storage-engine/bindings/op-sqlite.ts` to any changed result shape (`executeSync` rows, async API). `npm run storage:test` passes.
+- [x] 7.4 On Whim_Verify, open the 16.2.0 fixture with the 19.x build and confirm every row, field and `_meta` schema reads back identically. Run `RUN_STORAGE_PROBE`.
 
 ## 8. W5: esbuild, Playwright, CI
 

@@ -20,22 +20,14 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
     appDelegate.startReactNative(in: window, launchOptions: launchOptions)
   }
 
+  // A link that arrives while the app runs. Since React Native 0.88 the linking manager's
+  // `application(...)` entry points do nothing in a scene-based app, so these use its scene ones.
   func scene(_ scene: UIScene, continue userActivity: NSUserActivity) {
-    RCTLinkingManager.application(
-      UIApplication.shared,
-      continue: userActivity,
-      restorationHandler: { _ in }
-    )
+    RCTLinkingManager.scene(scene, continue: userActivity)
   }
 
   func scene(_ scene: UIScene, openURLContexts URLContexts: Set<UIOpenURLContext>) {
-    for context in URLContexts {
-      RCTLinkingManager.application(
-        UIApplication.shared,
-        open: context.url,
-        options: Self.applicationOpenOptions(from: context.options)
-      )
-    }
+    RCTLinkingManager.scene(scene, openURLContexts: URLContexts)
   }
 
   private static func launchOptions(
@@ -55,18 +47,5 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
       return [UIApplication.LaunchOptionsKey.url: context.url]
     }
     return nil
-  }
-
-  private static func applicationOpenOptions(
-    from sceneOptions: UIScene.OpenURLOptions
-  ) -> [UIApplication.OpenURLOptionsKey: Any] {
-    var options: [UIApplication.OpenURLOptionsKey: Any] = [
-      .annotation: sceneOptions.annotation,
-      .openInPlace: sceneOptions.openInPlace,
-    ]
-    if let sourceApplication = sceneOptions.sourceApplication {
-      options[.sourceApplication] = sourceApplication
-    }
-    return options
   }
 }

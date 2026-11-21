@@ -141,6 +141,8 @@ interface InfoPlistFixtureOpts {
   emptyUsageDescriptionKey?: string;
   includeSceneManifest?: boolean;
   supportsMultipleScenes?: boolean;
+  /** The manifest key carrying `supportsMultipleScenes`. */
+  multipleScenesKey?: string;
   sceneClassName?: string;
   sceneDelegateClassName?: string;
   sceneConfigurationCount?: number;
@@ -156,6 +158,7 @@ function infoPlistFixture(opts: InfoPlistFixtureOpts = {}): string {
   const its = opts.itsAppUsesNonExemptEncryption ?? false;
   const includeSceneManifest = opts.includeSceneManifest ?? true;
   const supportsMultipleScenes = opts.supportsMultipleScenes ?? false;
+  const multipleScenesKey = opts.multipleScenesKey ?? 'UIApplicationSupportsMultipleScenes';
   const sceneClassName = opts.sceneClassName ?? 'UIWindowScene';
   const sceneDelegateClassName = opts.sceneDelegateClassName ?? '$(PRODUCT_MODULE_NAME).SceneDelegate';
   const sceneConfigurationCount = opts.sceneConfigurationCount ?? 1;
@@ -190,7 +193,7 @@ function infoPlistFixture(opts: InfoPlistFixtureOpts = {}): string {
     ? `
 \t<key>UIApplicationSceneManifest</key>
 \t<dict>
-\t\t<key>UISupportsMultipleScenes</key>
+\t\t<key>${multipleScenesKey}</key>
 \t\t<${supportsMultipleScenes}/>
 \t\t<key>UISceneConfigurations</key>
 \t\t<dict>
@@ -324,7 +327,12 @@ const MUTATION_CASES: readonly MutationCase[] = [
   {
     name: 'a scene manifest that permits multiple scenes fails',
     overrides: { infoPlist: infoPlistFixture({ supportsMultipleScenes: true }) },
-    expect: ['UISupportsMultipleScenes'],
+    expect: ['UIApplicationSupportsMultipleScenes'],
+  },
+  {
+    name: 'a scene manifest saying false under UISupportsMultipleScenes, a key UIKit does not read, fails',
+    overrides: { infoPlist: infoPlistFixture({ multipleScenesKey: 'UISupportsMultipleScenes' }) },
+    expect: ['UIApplicationSupportsMultipleScenes'],
   },
   {
     name: 'a non-UIWindowScene application configuration fails',
