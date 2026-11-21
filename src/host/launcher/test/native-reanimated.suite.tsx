@@ -28,7 +28,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Harness } from './harness';
 import { accessibilitySettings, emitAccessibility } from './native-host';
-import { animations, cancelAnimation, cancelled, elapse, elapseSprings, emitNativeEvent, holdAnimations, useEvent, isLayoutAnimation, layoutAnimations, layoutCommits, makeMutable, measuredRect, measureWarnings, onUi, playedUnder, viewTagOf, type LayoutAnimation } from './native-reanimated';
+import { scheduleOnRN } from 'react-native-worklets';
+import { animations, cancelAnimation, cancelled, elapse, elapseSprings, emitNativeEvent, holdAnimations, holdHops, useEvent, isLayoutAnimation, layoutAnimations, layoutCommits, makeMutable, measuredRect, measureWarnings, onUi, playedUnder, viewTagOf, type LayoutAnimation } from './native-reanimated';
 import { hostType, renderScreen, unmountScreen } from './react-screen';
 import { useTokens } from '../../ui/tokens';
 import { springConfig, staggerDelay, timingOf } from '../../ui/tokens-pure';
@@ -423,6 +424,27 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
       h.eq(widths, [measuredRect.width, measuredRect.width], 'the reaction and the event handler each measure the view');
     } finally {
       await unmountScreen(tree);
+    }
+  });
+
+  await h.test('reanimated double: a hop to the RN thread runs at once; held, it waits while UI frames run on, and the release runs every held hop in order', async () => {
+    const heard: string[] = [];
+    const value = makeMutable(0);
+    const hop = (what: string) => heard.push(what);
+    scheduleOnRN(hop, 'unheld');
+    const hops = holdHops();
+    let released = false;
+    try {
+      onUi(() => scheduleOnRN(hop, 'first'));
+      value.value = 1;
+      onUi(() => scheduleOnRN(hop, 'second'));
+      h.eq([heard, hops.waiting(), value.value], [['unheld'], 2, 1], 'held, the two hops wait while the UI thread moves on');
+      hops.release();
+      released = true;
+      scheduleOnRN(hop, 'after');
+      h.eq(heard, ['unheld', 'first', 'second', 'after'], 'released, they run oldest first, and a later hop runs at once');
+    } finally {
+      if (!released) hops.release();
     }
   });
 

@@ -1,4 +1,4 @@
-/** react-native-reanimated (and react-native-worklets' `scheduleOnRN`) for React interaction tests. Nothing runs on a UI thread: assigning an
+/** react-native-reanimated (and react-native-worklets' `scheduleOnRN`, held by `holdHops`) for React interaction tests. Nothing runs on a UI thread: assigning an
  *  animation to a shared value records it in `animations` (oldest first) and jumps the value to
  *  where the animation ends, so a test reads what motion a control asked for — the target, the
  *  spring or timing config, delays, sequences and repeats — and the style it settles in.
@@ -606,8 +606,27 @@ export function emitNativeEvent(name: string, payload: Record<string, unknown>):
     for (const { handler, names } of [...set]) if (names.includes(name)) onUi(() => handler({ ...payload, eventName: `${viewTag}${name}` }));
   }
 }
-/** react-native-worklets' hop back to the React Native thread: there is only one thread here. */
-export function scheduleOnRN<A extends unknown[]>(fn: (...args: A) => void, ...args: A): void { fn(...args); }
+/** While a test holds them, the hops made to the React Native thread since, oldest first. */
+let hops: (() => void)[] | null = null;
+/** react-native-worklets' hop back to the React Native thread: at once, unless the test holds hops. */
+export function scheduleOnRN<A extends unknown[]>(fn: (...args: A) => void, ...args: A): void {
+  if (hops === null) fn(...args);
+  else hops.push(() => fn(...args));
+}
+/** From now on a hop to the React Native thread waits, as on a phone, where `scheduleOnRN` only
+ *  queues the call and UI frames run on before the JS thread takes it: a test looks at those frames.
+ *  `waiting` counts the hops queued; `release` runs them, oldest first, and stops holding. */
+export function holdHops(): { waiting: () => number; release: () => void } {
+  const queue: (() => void)[] = [];
+  hops = queue;
+  return {
+    waiting: () => queue.length,
+    release: () => {
+      hops = null;
+      for (const hop of queue) hop();
+    },
+  };
+}
 
 /** Reanimated's `interpolate` over piecewise-linear segments, with its extrapolation modes. */
 export const Extrapolation = { IDENTITY: 'identity', CLAMP: 'clamp', EXTEND: 'extend' } as const;
