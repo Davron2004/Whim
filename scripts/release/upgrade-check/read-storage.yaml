@@ -1,0 +1,21 @@
+# Storage upgrade check, read step (upgrade-to-latest-dependencies 7.4): open the storage fixture
+# seeded by seed-storage.yaml and wait until it has read its store back. It passes only on "The v2
+# seed was already there."; "Wrote the v2 seed." (the new build opened an empty store) and "Storage
+# failed: ..." fail it. It writes nothing on a pass; its second line ("Read back <digest>: <n> rows, <m> keys") is then read off the screen
+# (`maestro hierarchy` or a screenshot) and must equal the same line before the upgrade.
+#
+#   -e STORAGE_APP=Storage Fixture   the name the fixture app declares
+appId: com.anycognition.whim
+env:
+  STORAGE_APP: ${STORAGE_APP || 'Storage Fixture'}
+---
+- launchApp
+- extendedWaitUntil:
+    visible: "(.*, )?${STORAGE_APP}(, .*)?"
+    timeout: 60000
+- tapOn: "(.*, )?${STORAGE_APP}(, .*)?"
+- extendedWaitUntil:
+    visible: "The v2 seed was already there\\."
+    timeout: 60000
+- assertNotVisible: "Wrote the v2 seed\\."
+- assertNotVisible: "Storage failed: .*"

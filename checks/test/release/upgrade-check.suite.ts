@@ -33,6 +33,7 @@ import {
 } from '../../../scripts/release/lib/upgrade-record';
 import { COPY, historyVersionCount } from '../../../src/host/launcher/copy';
 import { RELEASE } from '../../../src/host/launcher/release-config';
+import { storageFixtureStatus } from '../../../server/src/stub-storage-fixture';
 
 const REPO_ROOT = process.cwd();
 const CAPTURE = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check');
@@ -193,6 +194,8 @@ function appStrings(): string[] {
     RELEASE.serverUrl,
     RELEASE.serverUrl.replace(/^https?:\/\//, ''),
     ...literalsIn('fixtures/water-counter.app.tsx'),
+    // The stub storage fixture's status lines, which seed-storage.yaml and read-storage.yaml wait for.
+    ...(['v1', 'v2'] as const).flatMap((version) => [true, false].map((wrote) => storageFixtureStatus(version, wrote))),
   ];
 }
 
@@ -480,6 +483,20 @@ async function runCases(): Promise<void> {
       }
     }
     nodeAssert.deepStrictEqual(misses, []);
+  });
+
+  await test("flows: read-storage passes only on the fixture's 'already there' status, never on 'Wrote' or on a failure", () => {
+    const yaml = fs.readFileSync(path.join(FLOWS, 'read-storage.yaml'), 'utf8');
+    const matches = (selector: string, text: string) => new RegExp(`^(?:${selector.replace(/\\(.)/g, '$1')})$`).test(text);
+    const waits = [...yaml.matchAll(/extendedWaitUntil:\n +visible: "((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
+    const status = waits[waits.length - 1];
+    const refused = [...yaml.matchAll(/assertNotVisible: "((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]);
+    nodeAssert.ok(matches(status, storageFixtureStatus('v2', false)), `the last wait ("${status}") finds the 'already there' status`);
+    nodeAssert.ok(!matches(status, storageFixtureStatus('v2', true)), `the last wait ("${status}") must not also pass on "Wrote the v2 seed."`);
+    nodeAssert.ok(!matches(status, 'Storage failed: Error: disk I/O error'), `the last wait ("${status}") must not also pass on a failure`);
+    nodeAssert.ok(refused.some((selector) => matches(selector, storageFixtureStatus('v2', true))), 'the flow asserts "Wrote the v2 seed." is not shown');
+    nodeAssert.ok(refused.some((selector) => matches(selector, 'Storage failed: Error: disk I/O error')), 'the flow asserts a storage failure is not shown');
+    nodeAssert.ok(!refused.some((selector) => matches(selector, storageFixtureStatus('v2', false))), 'the flow must not refuse the status it waits for');
   });
 
   await test("flows: the seed's composer selector finds the earlier releases' composer on their real grids and matches this build's", () => {

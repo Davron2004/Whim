@@ -42,6 +42,7 @@ import { runWireLevelTests } from './wire-level.suite';
 import { runStoreConformanceTests } from './store-conformance.suite';
 import { runDeviceTextTests } from './device-text.suite';
 import { runProviderBreakerTests } from './provider-breaker.suite';
+import { runStubStorageFixtureTests } from './stub-storage-fixture.suite';
 
 runContractTests();
 await runServerCoreTests();
@@ -80,5 +81,6 @@ await runWireLevelTests();
 await runStoreConformanceTests();
 await runDeviceTextTests();
 await runProviderBreakerTests();
+await runStubStorageFixtureTests();
 
 report();
