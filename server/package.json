@@ -11,10 +11,10 @@
     "@google-cloud/firestore": "9.4.1",
     "@hono/node-server": "^2.1.11",
     "@whim/contract": "*",
-    "esbuild": "0.25.12",
+    "esbuild": "0.28.2",
     "hono": "^4.13.19",
     "pino": "10.4.0",
-    "playwright": "1.60.0",
+    "playwright": "1.65.1",
     "typescript": "6.0.3"
   },
   "devDependencies": {

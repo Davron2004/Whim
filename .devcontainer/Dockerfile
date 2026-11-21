@@ -41,10 +41,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Playwright Chromium lives OUTSIDE node_modules so the read-only node_modules
 # mount (the run-time node_modules-poison guard) does not hide the browser.
-# Pin to the lockfile-resolved playwright version (package-lock.json: 1.60.0).
+# Pin to the lockfile-resolved playwright version (package-lock.json: 1.65.1).
 # --with-deps pulls the Chromium apt libraries; must run as root at build time.
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN npx -y --ignore-scripts playwright@1.60.0 install --with-deps chromium \
+RUN npx -y --ignore-scripts playwright@1.65.1 install --with-deps chromium \
     && chmod -R a+rX /ms-playwright \
     && git config --system --add safe.directory /workspace \
     && mkdir -p /etc/claude-code \
