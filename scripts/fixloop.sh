@@ -55,6 +55,7 @@ INTEGRATION_BRANCH="${FIXLOOP_INTEGRATION_BRANCH:-main}"
 CLASS2=(
   scripts/gate.sh scripts/gate-full.sh scripts/fixloop.sh scripts/git-cleanup-check.sh scripts/sync-codex.mjs
   scripts/worktree.sh   # executed by gate.sh (check) and by redcheck (create) — same reason as build/
+  scripts/removal-ratchet.mjs   # executed by gate.sh (the removal ratchet)
   .claude/hooks .claude/settings.json .claude/agents .claude/commands .claude/fixloop/grants
   .codex   # Codex mirror — its hooks are SYMLINKS to .claude/hooks, so an edit via this path IS a control-plane edit
   invariants

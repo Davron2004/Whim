@@ -28,7 +28,7 @@ CONFIG_SET=(
   scripts/gate.sh scripts/gate-full.sh scripts/fixloop.sh scripts/git-cleanup-check.sh scripts/sync-codex.mjs
   scripts/worktree.sh   # executed below (the node_modules precondition)
   scripts/removal-ratchet.mjs   # executed below (the removal ratchet)
-  .claude/hooks .claude/settings.json .claude/agents .claude/commands
+  .claude/hooks .claude/settings.json .claude/agents .claude/commands .claude/fixloop/grants
   .codex   # Codex mirror — hook symlinks into .claude/hooks + generated agent TOMLs
   build   # the build harness is executed (npm run build, below) — refuse to run tampered build code
   invariants   # owner-authored never-regress suite — a tampered invariant lies at gate-full time

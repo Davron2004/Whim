@@ -243,8 +243,12 @@ cmd_provision() {
   # --ignore-scripts: no dependency lifecycle script runs here (supply chain). The only packages
   # with install scripts are esbuild (its binary ships in an optional platform package, so the
   # postinstall check is not needed), fsevents (optional) and the openspec CLI.
-  if ! cmp -s "$src/package-lock.json" "$top/package-lock.json"; then
-    echo "package-lock.json differs from $src; running npm ci in $top"
+  # The clone copies what is INSTALLED in $src, which lags its checked-out lockfile after a merge
+  # (the primary tree never reinstalls mid-run). npm stamps node_modules/.package-lock.json at
+  # install time, so a lockfile newer than that stamp means the clone is stale too.
+  if [[ "$src/package-lock.json" -nt "$src/node_modules/.package-lock.json" ]] \
+     || ! cmp -s "$src/package-lock.json" "$top/package-lock.json"; then
+    echo "package-lock.json differs from what $src has installed; running npm ci in $top"
     (cd "$top" && npm ci --ignore-scripts --no-audit --no-fund) || die "npm ci failed in $top"
   fi
 
