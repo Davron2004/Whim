@@ -46,12 +46,12 @@ npm run bridge:test        # capability-bridge acceptance suite under Node
 npm run launcher:test      # launcher acceptance suite under Node
 npm run server:test        # generation-server acceptance suite under Node
 npm run sdk:test           # independently-discovered vc-sdk acceptance suites under Node
-npm run lint               # eslint
+npm run lint               # eslint 9 (flat `eslint.config.mjs`)
 ```
 
 The launcher, bridge, checks, server, vstore, storage, sdk and synthrun runners take `--only <pattern>` (repeatable or comma-separated; matches a suite name, or a test title written in the entry file itself; sdk:test: a suite file name) to run just that suite — `npm run launcher:test -- --only haptic-moments-ui`; a pattern that matches nothing exits non-zero.
 
-`npm test` is the untouched RN template jest script — there are no jest tests; the real suites are the ones above. `npm run guard:metro` is a CI-only check that the `contract`/`server` npm workspaces don't change what Metro resolves for the RN bundle (byte-size assertion). CI is effectively `gate-full.sh` on every push — see `docs/harness.md` §4.
+There is no `npm test` or jest; the real suites are the ones above. `npm run guard:metro` is a CI-only check that the `contract`/`server` npm workspaces don't change what Metro resolves for the RN bundle (byte-size assertion). CI is effectively `gate-full.sh` on every push — see `docs/harness.md` §4.
 
 ### Test assertions
 
@@ -63,10 +63,10 @@ Regenerate after editing anything in `src/runtime/web/`, `src/sdk/`, `build/`, o
 
 ### Android build & run
 
-- **Node 22 required** (`engines: >=22.11`). Watch out: Homebrew's node sits ahead of the nvm shim in PATH, so `nvm use 22` may not actually switch — verify with `node -v`.
+- **Node 26 required** (`engines: >=26`, `.nvmrc`). Watch out: Homebrew's node sits ahead of the nvm shim in PATH, so `nvm use` may not actually switch — verify with `node -v`.
 - Gradle is pinned to **JDK 21** via `org.gradle.java.home` in `android/gradle.properties` (JDK 24 breaks RN's C++ codegen). Builds are **arm64-v8a only** (`reactNativeArchitectures`).
 - The emulator's NAT route to Metro is dead on this machine — use the **offline build**: `npm run android:release -- --device emulator-5560` (debug-signed, no Metro dependency; installs on that one device, refuses without `--device`/`ANDROID_SERIAL`; `npm run android` is the same for the debug build against your own `npm start`; neither opens a packager window, `--no-packager`, and a script running bare `run-android`/`run-ios` fails the release check). Store builds: `docs/release/mobile.md`.
-- RN 0.85 is bridgeless: JS `console` output goes to **logcat (`ReactNativeJS`)**, not Metro stdout, and logcat truncates at ~4 KB — the on-screen diagnostics render is the source of truth for full probe JSON.
+- RN 0.88 is bridgeless: JS `console` output goes to **logcat (`ReactNativeJS`)**, not Metro stdout, and logcat truncates at ~4 KB — the on-screen diagnostics render is the source of truth for full probe JSON.
 - `App.tsx` renders `LauncherRoot` by default (the product shell), not a probe screen. On-device acceptance probes are flag-gated, default `false`: `RUN_VSTORE_PROBE` (version store), `RUN_STORAGE_PROBE` (storage engine, decision #40), `RUN_BRIDGE_PROBE` (capability bridge, decision #41).
 - Desktop Chromium (the invariants suites) is the fast pre-check only; the authoritative containment verdict is the real Android System WebView on-device.
 

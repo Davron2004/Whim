@@ -67,8 +67,8 @@
 
 ## 10. W7: docs and closure
 
-- [ ] 10.1 Update CLAUDE.md (RN version, Node 26, the removed `npm test` line, the ESLint config name), docs/release/mobile.md and docs/harness.md wherever they name a changed version or command.
-- [ ] 10.2 Append a decision-log entry recording the policy (latest stable or a documented pin), the waves, and the initial pin register.
-- [ ] 10.3 Run `npm run deps:audit`. It exits 0, with every remaining lag covered by a pin entry.
+- [x] 10.1 Update CLAUDE.md (RN version, Node 26, the removed `npm test` line, the ESLint config name), docs/release/mobile.md and docs/harness.md wherever they name a changed version or command.
+- [x] 10.2 Append a decision-log entry recording the policy (latest stable or a documented pin), the waves, and the initial pin register.
+- [x] 10.3 Run `npm run deps:audit`. It exits 0, with every remaining lag covered by a pin entry.
 - [ ] 10.4 Check whether any tester has a build (the latest TestFlight / Play internal-track build distributed to testers). If one does, run the release upgrade check (spec `release-upgrade-check`) from it to the final candidate on Whim_Verify: tiles, version counts, saved data, consent and device id unchanged. If none does, skip the check and record that in the progress file (owner decision 2026-11-20).
 - [ ] 10.5 File the follow-ups as `ai-proposed` GitHub issues: OpenSpec 2.x spec-corpus migration, native CI build job, and any pin whose lift condition is already met. Then propose the WebView provenance change against the merged versions.
