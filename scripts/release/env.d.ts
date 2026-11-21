@@ -2,7 +2,7 @@
  * Ambient surface for the small slice of Node's built-ins and process I/O the release tooling
  * uses. Declared locally so the project needs no `@types/node` dependency (mirrors
  * `synthrun/env.d.ts` / `evals/env.d.ts` / `src/host/storage-engine/env.d.ts`'s identical
- * precedent/rationale — the app's tsconfig pins `types: ["jest"]`) — the device/runtime
+ * precedent/rationale — the app's tsconfig pins `types: []`) — the device/runtime
  * bundles never import anything under `scripts/` and are unaffected. `declare module` blocks
  * and the `WhimProcess` interface merge additively across every env.d.ts in the program, so a
  * later `scripts/release/lib/*.ts` file needing a Node built-in or a `process` member this file

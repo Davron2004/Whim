@@ -137,7 +137,3 @@ export class MapKVBackend implements KVBackend {
     return this.map;
   }
 }
-
-// dirnameOf is re-exported here only to keep the persistence layer self-describing
-// for callers that walk the KV namespace; it is the same helper MemoryFs uses.
-export { dirnameOf } from './memory-fs';

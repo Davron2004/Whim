@@ -39,6 +39,8 @@ import { run as runDesignSystem } from './repo/design-system.suite';
 import { run as runBindingProvenance } from './repo/binding-provenance.suite';
 import { run as runOnlyFilter } from './repo/only-filter.suite';
 import { run as runWebviewFloor } from './repo/webview-floor.suite';
+import { run as runDependencyPins } from './repo/dependency-pins.suite';
+import { run as runDepsAudit } from './repo/deps-audit.suite';
 import {
   CheckReport,
   DIAGNOSTIC_KINDS,
@@ -1372,6 +1374,8 @@ async function main(): Promise<void> {
   await runDesignSystem();
   await runBindingProvenance();
   await runWebviewFloor();
+  await runDependencyPins();
+  await runDepsAudit();
   await runOnlyFilter();
 }
 

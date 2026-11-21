@@ -1,10 +1,10 @@
 ## 1. W1: removals, low-risk bumps, pin register
 
-- [ ] 1.1 Remove jest, `@types/jest`, `@react-native/jest-preset`, `pako`, `@babel/preset-env` and the `test` script. Drop `"jest"` from `tsconfig` `types`. Grep for `@react-native/new-app-screen` imports and remove it if none exist (design D5). Clean `knip.json` of the removed names. `npm install` and commit.
-- [ ] 1.2 Bump every minor/patch-only package to its `latest` in all three workspaces: zod, hono, `@hono/node-server`, pino, pino-pretty, `@google-cloud/firestore`, firebase-tools, react-error-boundary, eslint-plugin-sonarjs, knip. `npm install` and commit.
-- [ ] 1.3 Fix every new knip 6.47 finding so `npx knip` exits 0 with no suppression added to `knip.json`.
-- [ ] 1.4 Add `dependency-pins.json` with the design D4 entries that apply today (`@fission-ai/openspec`, `@babel/core`, `@babel/runtime`), plus a static check under `checks/` wired through `checks/test/acceptance.ts`. It covers the spec `dependency-currency` scenarios: stale entry, reasonless pin, duplicate entry, lockfile outside the range. Red-check it against a register missing each field.
-- [ ] 1.5 Add `npm run deps:audit`. It queries the registry for every workspace dependency, exits non-zero on undeclared lag, and prints each pin beside its current `latest` and its lift condition. Add a test that drives it with a stubbed registry response for the "undeclared lag" and "fully current" scenarios. Confirm neither gate script calls it.
+- [x] 1.1 Remove jest, `@types/jest`, `@react-native/jest-preset`, `pako`, `@babel/preset-env` and the `test` script. Drop `"jest"` from `tsconfig` `types`. Grep for `@react-native/new-app-screen` imports and remove it if none exist (design D5). Clean `knip.json` of the removed names. `npm install` and commit.
+- [x] 1.2 Bump every minor/patch-only package to its `latest` in all three workspaces: zod, hono, `@hono/node-server`, pino, pino-pretty, `@google-cloud/firestore`, firebase-tools, react-error-boundary, eslint-plugin-sonarjs, knip. `npm install` and commit.
+- [x] 1.3 Fix every new knip 6.47 finding so `npx knip` exits 0 with no suppression added to `knip.json`.
+- [x] 1.4 Add `dependency-pins.json` with the design D4 entries that apply today (`@fission-ai/openspec`, `@babel/core`, `@babel/runtime`), plus a static check under `checks/` wired through `checks/test/acceptance.ts`. It covers the spec `dependency-currency` scenarios: stale entry, reasonless pin, duplicate entry, lockfile outside the range. Red-check it against a register missing each field.
+- [x] 1.5 Add `npm run deps:audit`. It queries the registry for every workspace dependency, exits non-zero on undeclared lag, and prints each pin beside its current `latest` and its lift condition. Add a test that drives it with a stubbed registry response for the "undeclared lag" and "fully current" scenarios. Confirm neither gate script calls it.
 
 ## 2. W2: Node 26
 

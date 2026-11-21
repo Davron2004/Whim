@@ -14,7 +14,6 @@ import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 import { resolveTokens, type ShellTokens } from './tokens-pure';
 
-export { makeStyles } from './tokens-pure';
 export type { ShellTokens } from './tokens-pure';
 
 interface AccessibilityFlags {

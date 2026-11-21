@@ -6,11 +6,8 @@
   "ignoreDependencies": [
     "buffer",
     "crc-32",
-    "pako",
     "sha.js",
-    "@babel/preset-env",
     "@babel/runtime",
-    "@react-native/new-app-screen",
     "metro-symbolicate"
   ],
   "ignoreExportsUsedInFile": true,
@@ -34,7 +31,8 @@
         "fixtures/**/*.app.tsx",
         "checks/test/**",
         "evals/test/**",
-        "evals/tiers/case.ts"
+        "evals/tiers/case.ts",
+        "evals/adapters/synthetic-run.ts"
       ],
       "project": [
         "App.tsx",
@@ -54,7 +52,8 @@
         "test/**",
         "src/main.ts",
         "src/admin/main.ts",
-        "src/loadtest/drive.ts"
+        "src/loadtest/drive.ts",
+        "src/flowbench/drive.ts"
       ],
       "project": "{src,test}/**/*.{ts,mjs}",
       "ignoreDependencies": [

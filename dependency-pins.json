@@ -1,0 +1,20 @@
+[
+  {
+    "package": "@fission-ai/openspec",
+    "range": "^1",
+    "reason": "Under 2.x, `openspec validate --all --strict` (gate-full.sh) fails 66 of 67 specs (302 requirements over 500 characters, 46 placeholder Purposes), and 2.x moves skill delivery to .agents/skills/, so `openspec update` would overwrite the repo's customized skills and commands.",
+    "lift": "The follow-up change that migrates the spec corpus to OpenSpec 2.x validation"
+  },
+  {
+    "package": "@babel/core",
+    "range": "^7",
+    "reason": "@react-native/babel-preset and Metro (metro-transform-worker) depend on @babel/core ^7.25.2; Babel 8 is ESM-only and its presets and plugins peer @babel/core ^8.",
+    "lift": "A React Native release whose babel preset and Metro support Babel 8"
+  },
+  {
+    "package": "@babel/runtime",
+    "range": "^7",
+    "reason": "metro-runtime depends on @babel/runtime ^7.25.0, and the helpers @babel/plugin-transform-runtime 7 injects must resolve to @babel/runtime 7; it moves with @babel/core.",
+    "lift": "A React Native release whose babel preset and Metro support Babel 8"
+  }
+]
