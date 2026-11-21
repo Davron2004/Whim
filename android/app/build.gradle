@@ -180,7 +180,7 @@ android {
             signingConfig signingConfigs.release
             debuggable false
             minifyEnabled enableProguardInReleaseBuilds
-            proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
+            proguardFiles getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro"
         }
         offline {
             initWith release
@@ -190,6 +190,8 @@ android {
             // The RN plugin sets this placeholder in `finalizeDsl`, on build types it knows by name
             // only, after `initWith release` has already copied release's placeholders. The value
             // is inert (the network security config wins on API 24+) and matches old `release`.
+            // Still needed on RN 0.88.1 (AgpConfiguratorUtils.configureBuildTypesForApp): without
+            // it `processOfflineMainManifest` fails, no value for <usesCleartextTraffic>.
             manifestPlaceholders.usesCleartextTraffic = "false"
             // AGP picks the CMake build type from the variant name ("*release" → RelWithDebInfo,
             // "*debug" → Debug) and falls back to `debuggable` for any other name, so `offline`
@@ -198,6 +200,8 @@ android {
             // the release react-android AAR picked by `matchingFallbacks` doesn't export. Pinning
             // the type keeps the old `release` build's native flags (RN's own `debugOptimized`
             // build type pairs its release fallback with a pinned CMake type the same way).
+            // Still needed on RN 0.88.1 / AGP 9.2.1: without it the app's native link fails on
+            // Sealable::Sealable(), the DebugStringConvertible vtable and the like.
             externalNativeBuild {
                 cmake {
                     arguments "-DCMAKE_BUILD_TYPE=RelWithDebInfo"

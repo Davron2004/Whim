@@ -19,7 +19,6 @@ import com.facebook.react.ReactActivity
 import com.facebook.react.ReactActivityDelegate
 import com.facebook.react.ReactApplication
 import com.facebook.react.bridge.LifecycleEventListener
-import com.facebook.react.defaults.DefaultNewArchitectureEntryPoint.fabricEnabled
 import com.facebook.react.defaults.DefaultReactActivityDelegate
 import com.facebook.react.views.modal.ReactModalHostView
 import com.swmansion.rnscreens.fragment.restoration.RNScreensFragmentFactory
@@ -334,11 +333,11 @@ class MainActivity : ReactActivity() {
   override fun getMainComponentName(): String = "Whim"
 
   /**
-   * Returns the instance of the [ReactActivityDelegate]. We use [DefaultReactActivityDelegate]
-   * which allows you to enable New Architecture with a single boolean flags [fabricEnabled]
+   * Returns the instance of the [ReactActivityDelegate]. Fabric is always on, so the
+   * [DefaultReactActivityDelegate] takes no architecture flags.
    */
   override fun createReactActivityDelegate(): ReactActivityDelegate =
-      DefaultReactActivityDelegate(this, mainComponentName, fabricEnabled)
+      DefaultReactActivityDelegate(this, mainComponentName)
 
   private companion object {
     const val TAG = "Whim"

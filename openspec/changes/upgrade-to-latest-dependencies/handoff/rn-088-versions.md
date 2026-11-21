@@ -99,3 +99,9 @@ build question: chain-4/5 add a pin entry with the observed failure if it does n
 - `npm run bridge:invariants`: 14/14 PASS; the broken-gate negative control is flagged.
 - `npm run guard:metro`: Metro v0.87.3, Android release bundle 4,005,738 bytes (floor 500,000);
   `npm ls react react-dom react-native --all`: every dependent dedupes to the single root copy.
+
+## Android toolchain (chain-4, merged 2eab7497; for chains 5–7)
+- Gradle wrapper 9.4.1 (jar == official sha256; `distributionSha256Sum` 2ab2958f…c6cb), AGP 9.2.1, Kotlin 2.2.0, compileSdk/buildTools 37, targetSdk 36, minSdk 24, NDK 27.1.12297006, JDK 21 (`org.gradle.java.home`), arm64-v8a only; `android.builtInKotlin=false`, `android.newDsl=false`.
+- `android/build.gradle` forces every `com.android.library` subproject's `ndkVersion` to `rootProject.ext.ndkVersion` (AGP 9's default NDK is 28.2; op-sqlite sets none). After any native build, every fresh `.cxx/**/arm64-v8a/CMakeCache.txt` must show `ndk/27.1.12297006` (ignore stale `.cxx/<hash>` dirs by mtime). Prebuilt `libmmkv.so` (mmkv AAR 2.4.1) is r28-era clang on the app's libc++ via pickFirst: not app-controllable.
+- `offline` build type still needs the `usesCleartextTraffic` placeholder and the `RelWithDebInfo` CMake pin (each proved by removal). A first clean native build exceeds 6 GB RSS: build under an 8192 MB cap with `GRADLE_OPTS=-Dorg.gradle.workers.max=4`; never `gradlew clean <task>` in one invocation.
+- Device: launch with `adb -s emulator-5560 shell am start -n com.anycognition.whim/com.whim.MainActivity` (`monkey` exits -5 on Whim_Verify); boot the emulator before `npm run android:release -- --device emulator-5560` (it refuses without an attached device).
