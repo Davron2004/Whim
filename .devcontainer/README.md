@@ -30,7 +30,7 @@ that the no-prompt finding exposed as illusory is **gone**.
 
 ## What's in the image
 
-Node 22 · the repo's `node_modules` (incl. workspaces `contract`, `server`) ·
+Node 26 · the repo's `node_modules` (incl. workspaces `contract`, `server`) ·
 Playwright Chromium (in `/ms-playwright`, outside `node_modules`) · `git` · the
 Claude Code CLI · Temurin 21's JRE and the Firestore emulator JAR (in
 `/opt/firebase-emulators`, `FIREBASE_EMULATORS_PATH`), fetched at image build so

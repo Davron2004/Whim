@@ -10,11 +10,11 @@
 #   Threats A (hooks) and B (integrity / redcheck / fresh-gate / reviewer)
 #   are UNCHANGED — they run inside, exactly as on the host.
 #
-# Toolchain is the fix loop's ONLY: Node 22 + Chromium + the repo's own
+# Toolchain is the fix loop's ONLY: Node 26 + Chromium + the repo's own
 # node_modules, plus a Java 21 runtime and the Firestore emulator JAR for gate-full's
 # firestore-stores step. NO Android SDK / Android emulator — the loop never builds the device app.
 
-FROM node:22-bookworm
+FROM node:26-bookworm
 
 # --- OS packages -----------------------------------------------------------
 #   git                      : worktrees, merges, the deterministic checks

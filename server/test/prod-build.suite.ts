@@ -858,7 +858,7 @@ async function testInlinedBuildModuleBuildsNothing(): Promise<void> {
     const entry = path.join(dir, 'entry.tmp.mjs');
     const outfile = path.join(dir, 'bundle.tmp.mjs');
     fs.writeFileSync(entry, `import { devBundleExternals } from ${JSON.stringify(path.join(ROOT, 'server', 'build.mjs'))};\nconsole.log(devBundleExternals().length > 0);\n`);
-    await build({ entryPoints: [entry], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node22', logLevel: 'silent', external: devBundleExternals() });
+    await build({ entryPoints: [entry], outfile, bundle: true, platform: 'node', format: 'esm', target: 'node26', logLevel: 'silent', external: devBundleExternals() });
     check('setup: the bundle inlines build.mjs', fs.readFileSync(outfile, 'utf8').includes('buildRuntimeTree'));
     const run = spawnSync(process.execPath, [outfile], { cwd: ROOT, encoding: 'utf8', timeout: PROCESS_WAIT_MS });
     eq('it runs its own code and exits 0, building no tree', [run.status, run.stdout, run.stderr], [0, 'true\n', '']);

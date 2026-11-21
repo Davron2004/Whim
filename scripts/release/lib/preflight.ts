@@ -113,8 +113,8 @@ function fileFindings(findings: PreflightFinding[], entries: readonly { readonly
 
 function toolchainFindings(snapshot: PreflightSnapshot): PreflightFinding[] {
   const findings: PreflightFinding[] = [];
-  if (snapshot.nodeMajorVersion !== 22) {
-    findings.push({ reason: `Node is major version ${snapshot.nodeMajorVersion}, not 22`, fix: 'run under Node 22 (nvm use 22; check PATH ordering against Homebrew\'s node)' });
+  if (snapshot.nodeMajorVersion !== 26) {
+    findings.push({ reason: `Node is major version ${snapshot.nodeMajorVersion}, not 26`, fix: 'run under Node 26 (nvm use 26; check PATH ordering against Homebrew\'s node)' });
   }
   if (snapshot.platform === 'android' && snapshot.jdkMajorVersion !== 21) {
     const found = snapshot.jdkMajorVersion === undefined ? 'not found' : `major version ${snapshot.jdkMajorVersion}`;

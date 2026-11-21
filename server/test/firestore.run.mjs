@@ -33,7 +33,7 @@ await build({
   bundle: true,
   platform: 'node',
   format: 'esm',
-  target: 'node22',
+  target: 'node26',
   logLevel: 'warning',
   // As in `server/test/e2e.run.mjs` (the firestore boot case reaches `synthrun/` through
   // `lifecycle.ts`): the declared runtime packages and the tool packages (`server/build.mjs`).

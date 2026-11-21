@@ -570,7 +570,7 @@ async function spawnDrainServer(dataDir: string): Promise<DrainServer> {
     bundle: true,
     platform: 'node',
     format: 'esm',
-    target: 'node22',
+    target: 'node26',
     external: devBundleExternals(path.join(ROOT, 'server')),
     logLevel: 'warning',
   });
