@@ -26,7 +26,7 @@
 import { Harness } from './harness';
 import { MapKVBackend } from '../../version-store';
 import { getDeviceId } from '../device-id';
-import { GenerationClientError, clarifyPrompt, generateApp, rewritePrompt, sendReport } from '../generation-client';
+import { GenerationClientError, clarifyPrompt, generateApp, openGenerateStream, rewritePrompt, sendReport } from '../generation-client';
 import { buildRewriteAppContext } from '../generation-request';
 import type { ConsentedClientOptions } from '../generation-client';
 import type { InstalledApp } from '../app-index';
@@ -46,6 +46,7 @@ import { TEST_APP_INFO, grantedOptions, streamResponse } from './client-fixtures
 import { holdTimers, realSetTimeout, untilSettled } from './fake-xhr';
 import { fillRing, recordsSince } from './log-ring';
 import { CHANNELS } from '../../logging/channels';
+import { log } from '../../logging';
 
 function sseFrame(event: GenerationEvent, id: number): string {
   return `event: ${event.type}\ndata: ${JSON.stringify(event)}\nid: ${id}\n\n`;
@@ -861,5 +862,32 @@ export async function runGenerationClientTests(h: Harness): Promise<void> {
       h.eq(err instanceof GenerationClientError ? err.kind : err, 'client', `${name}: a client error, not a crash or a hang`);
     }
     h.eq(fetched, 0, 'and not one request left the phone, with or without an envelope');
+  });
+
+  // The transport choice is invisible server-side (RN's fetch is XHR underneath), so the device
+  // ladder reads it from logcat: one `info` record per stream open, naming the path taken.
+  const transportRecords = (since: () => ReturnType<typeof log.buffer.snapshot>) =>
+    since().filter((r) => r.channel === CHANNELS.gen && r.message === 'generate stream transport');
+
+  await h.test('openGenerateStream: a runtime that cannot stream opens the XHR path and logs exactly one transport line saying so', async () => {
+    const aborted = new AbortController();
+    aborted.abort();
+    const newRecords = recordsSince();
+    const opened = await openGenerateStream(BASE, { prompt: 'p' }, aborted.signal, false);
+    h.eq(opened, 'aborted', 'the built-in XHR transport ran (an already-aborted signal opens nothing)');
+    const lines = transportRecords(newRecords);
+    h.eq(lines.map((r) => [r.level, r.fields]), [['info', { transport: 'xhr', fetchCanStream: false }]], 'one info line names xhr and fetchCanStream=false');
+  });
+
+  await h.test('openGenerateStream: a streaming runtime logs the fetch path, an injected transport logs "injected", once per open', async () => {
+    const refused = (async () => { throw new Error('offline'); }) as typeof fetch;
+    const newRecords = recordsSince();
+    await h.throws(() => openGenerateStream({ ...BASE, fetchImpl: refused }, { prompt: 'p' }, undefined, true), '', 'the fetch path ran (and its refused fetch surfaced)');
+    const injected = { ...BASE, streamTransport: async () => ({ read: async () => ({ done: true }), cancel: () => undefined }) } as ConsentedClientOptions;
+    await collect(generateApp(injected, { prompt: 'p' }));
+    const lines = transportRecords(newRecords);
+    h.eq(lines.map((r) => r.fields.transport), ['fetch', 'injected'], 'fetch then injected, one line each');
+    h.eq(lines.map((r) => typeof r.fields.fetchCanStream), ['boolean', 'boolean'], 'each carries the capability value');
+    h.eq(lines[0]?.fields.fetchCanStream, true, 'the fetch line records fetchCanStream=true');
   });
 }

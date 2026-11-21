@@ -707,12 +707,23 @@ const fetchCanStream = typeof Response !== 'undefined' && Response.prototype !==
  *  when this runtime's `fetch` can stream, the XHR transport (`xhr-transport.ts`) otherwise.
  *  `readNext`/`generateApp`/`parseSseBlock` below consume whichever `ResponseBodyReader` comes
  *  back identically — they never know which transport produced it. */
-async function openGenerateStream(
+export async function openGenerateStream(
   opts: ClientOptions,
   request: GenerateRequest,
   signal: AbortSignal | undefined,
+  canStream: boolean = fetchCanStream,
 ): Promise<ResponseBodyReader | 'aborted'> {
-  const transport = opts.streamTransport ?? (fetchCanStream ? openFetchGenerateStream : openXhrGenerateStream);
+  const builtIn = canStream ? openFetchGenerateStream : openXhrGenerateStream;
+  const transport = opts.streamTransport ?? builtIn;
+  // Once per stream open: on RN `fetch` is whatwg-fetch over XHR, so the server cannot tell the two
+  // paths apart and a silent switch to `fetch` (a newer RN's `Response.prototype` gaining `body`)
+  // would otherwise be invisible. `info` is emitted in a release build: the seam's default
+  // threshold is `debug` and it mirrors to the console, which is logcat's `ReactNativeJS`.
+  let chosen = canStream ? 'fetch' : 'xhr';
+  if (opts.streamTransport) {
+    chosen = 'injected';
+  }
+  log.info(CHANNELS.gen, 'generate stream transport', { transport: chosen, fetchCanStream: canStream });
   return transport(opts, request, signal);
 }
 
