@@ -31,7 +31,7 @@ export function createLaunchScreen(native: Spec | null): LaunchScreen {
   };
 }
 
-const launchScreen = createLaunchScreen(WhimLaunchScreen);
+const launchScreen = createLaunchScreen(WhimLaunchScreen ?? null);
 
 /** Ends the native launch screen's cold-start hold. The launcher shell calls it once its first screen is up. */
 export function hideLaunchScreen(): void {

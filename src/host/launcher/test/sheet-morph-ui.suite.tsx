@@ -15,13 +15,13 @@ import { MakingSheet } from '../MakingSheet';
 import { AppTile } from '../../ui/AppTile';
 import { gridLayout } from '../../ui/AppTile-geometry';
 import { Ember } from '../../ui/Ember';
-import { SheetAnchors, tileAnchor } from '../../ui/SheetAnchor';
+import { measured as measuredPlace, SheetAnchors, tileAnchor, usePlace, type PlaceRef } from '../../ui/SheetAnchor';
 import { Text } from '../../ui/Text';
 import { useTokens } from '../../ui/tokens';
 import { emberLook, springConfig, timingOf } from '../../ui/tokens-pure';
 import { StyleSheet, accessibilitySettings, emitAccessibility, holdModalDismissals } from './native-host';
 import { pan } from './native-gesture-handler';
-import { animations, elapse, elapseSprings, frameStyles, holdAnimations, isStep, measuring, ReduceMotion, runningAnimations } from './native-reanimated';
+import { animations, elapse, elapseSprings, frameStyles, holdAnimations, isStep, jsThreadReads, measuredRect, measureWarnings, measuring, onUi, ReduceMotion, runningAnimations } from './native-reanimated';
 import { androidBack, button, hostType, isHost, press, renderScreen, textOf, unmountScreen } from './react-screen';
 
 type Tree = TestRenderer.ReactTestRenderer;
@@ -150,6 +150,7 @@ function lead(tree: Tree) {
 }
 const springsTo = (to: number, config: object) => animations.filter((a) => isStep(a) && a.kind === 'spring' && a.to === to && same({ ...a.config, velocity: undefined }, { ...config, velocity: undefined }));
 const composerButton = (tree: Tree) => tree.root.findAll((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === COPY.homeComposerPlaceholder)[0];
+const tileButton = (tree: Tree) => tree.root.findAll((n) => hostType(n) === 'Pressable' && n.props.delayLongPress !== undefined)[0];
 const sheetDrag = (tree: Tree) => tree.root.findAll((n) => hostType(n) === 'GestureDetector')[0].props.gesture;
 /** No transform in the sheet's window stretches a shape one way more than the other. */
 const uniform = (tree: Tree) => {
@@ -434,7 +435,7 @@ export async function runSheetMorphUiTests(h: Harness): Promise<void> {
           const cardAt = (frameStyles(card(tree).props.style).transform as Record<string, number>[])[0];
           plateFrames.push({ plate: frameStyles(plate(tree)!.props.style), cardY: cardAt.translateY });
         }
-        drag.onDeactivate(at(120));
+        drag.onDeactivate({ ...at(120), canceled: false });
       });
       h.eq(plateFrames.map((f) => [f.cardY, f.plate.opacity]), [[20, 0], [60, 0], [100, 0]], 'the drag moved the card 1:1 past the slop, the plate hidden under it');
       h.eq(measured, [], 'and the plate measured nothing on its frames');
@@ -503,5 +504,71 @@ export async function runSheetMorphUiTests(h: Harness): Promise<void> {
         await run(hold);
       } finally { await leave(tree, release); }
     }
+  });
+
+  await h.test('M6 and M5: no frame of a morph measures a place that is on no view (Reanimated 4.8 logs a warning on each such call, ~60 a second through a morph): the composer, which has no ember place, still grows its sheet from the capsule and takes it back; the tile still grows its sheet and takes it back, the ember leading', async () => {
+    const plateAt = (tree: Tree) => {
+      const p = plate(tree)!;
+      return [transformOf(p).translateX, transformOf(p).translateY, flat(p).width, flat(p).height];
+    };
+    const opened = (tree: Tree) => () => seen(card(tree)).opacity === 1 && !frameOf(tree).drawn;
+    // Describe has no ember to lead with; the Making page leads with its own.
+    const cases: [string, Rect, (tree: Tree) => Node, (tree: Tree) => Promise<void>, boolean][] = [
+      ['M6, the composer', CAPSULE, composerButton, (tree) => TestRenderer.act(async () => pan(sheetDrag(tree), [40, 120, 200], 1500)), false],
+      ['M5, the tile', TILE, tileButton, (tree) => press(button(tree, COPY.sheetClose)), true],
+    ];
+    for (const [name, place, opener, closeIt, leads] of cases) {
+      const { tree, release } = await rig(null);
+      try {
+        measureWarnings.unattached = 0;
+        await press(opener(tree));
+        await cardLaidOut(tree);
+        await run(() => elapseSprings(0));
+        h.eq(plateAt(tree), [place.pageX, place.pageY, place.width, place.height], `${name}: the plate sets out on the place’s measured rect`);
+        await frames(tree, 120, () => {}, opened(tree));
+        h.ok(opened(tree)(), `${name}: open, the card shows whole`);
+        await closeIt(tree);
+        let led = 0;
+        await frames(tree, 120, () => {
+          if ((lead(tree)?.opacity ?? 0) === 1) led += 1;
+        });
+        h.eq(modal(tree), undefined, `${name}: back in its place, the sheet has left`);
+        h.eq(led > 5, leads, `${name}: ${leads ? 'the page’s ember led it in' : 'no ember led it'} (${led} frames)`);
+        h.eq(measureWarnings.unattached, 0, `${name}: and not one frame measured a place on no view`);
+      } finally { await leave(tree, release); }
+    }
+  });
+
+  await h.test('a place measures its view on the UI thread while it is on one, and answers null without asking Reanimated (no warning) before it is put on one and once it is taken off', async () => {
+    let place!: PlaceRef;
+    function Probe({ shown }: Readonly<{ shown: boolean }>) {
+      place = usePlace();
+      return shown ? <View ref={place.attach} /> : null;
+    }
+    const tree = await renderScreen(<Probe shown={false} />, { createNodeMock: nodeMock });
+    measureWarnings.unattached = 0;
+    try {
+      const before = onUi(() => measuredPlace(place));
+      await TestRenderer.act(async () => tree.update(<Probe shown />));
+      const held = onUi(() => measuredPlace(place));
+      await TestRenderer.act(async () => tree.update(<Probe shown={false} />));
+      const after = onUi(() => measuredPlace(place));
+      h.eq([before, held, after, measureWarnings.unattached], [null, measuredRect, null, 0], 'null, then the view’s rect, then null again, and no warning');
+    } finally { await unmountScreen(tree); }
+  });
+
+  await h.test('a place asked on the JS thread (a style’s first run, during render) answers null without reading its shared value, which would round-trip into the UI runtime', async () => {
+    let place!: PlaceRef;
+    function Probe() {
+      place = usePlace();
+      return <View ref={place.attach} />;
+    }
+    const tree = await renderScreen(<Probe />, { createNodeMock: nodeMock });
+    try {
+      const reads = jsThreadReads.count;
+      const onJs = measuredPlace(place);
+      h.eq([onJs, jsThreadReads.count - reads], [null, 0], 'null, and not one JS-thread read of the place’s shared value');
+      h.eq(onUi(() => measuredPlace(place)), measuredRect, 'while on the UI thread the same attached place still measures');
+    } finally { await unmountScreen(tree); }
   });
 }

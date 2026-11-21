@@ -28,7 +28,7 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Harness } from './harness';
 import { accessibilitySettings, emitAccessibility } from './native-host';
-import { animations, cancelAnimation, cancelled, elapse, elapseSprings, emitNativeEvent, holdAnimations, useEvent, isLayoutAnimation, layoutAnimations, makeMutable, measuredRect, onUi, playedUnder, viewTagOf, type LayoutAnimation } from './native-reanimated';
+import { animations, cancelAnimation, cancelled, elapse, elapseSprings, emitNativeEvent, holdAnimations, useEvent, isLayoutAnimation, layoutAnimations, layoutCommits, makeMutable, measuredRect, measureWarnings, onUi, playedUnder, viewTagOf, type LayoutAnimation } from './native-reanimated';
 import { hostType, renderScreen, unmountScreen } from './react-screen';
 import { useTokens } from '../../ui/tokens';
 import { springConfig, staggerDelay, timingOf } from '../../ui/tokens-pure';
@@ -398,16 +398,19 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
     }
     const before = { ...measuredRect };
     const tree = await renderScreen(<Probe />, { createNodeMock: () => ({}) });
+    measureWarnings.unattached = 0;
     try {
-      h.eq(measure(ref), null, 'called on the JS thread, it answers null (measure.native.ts:35-37)');
+      h.eq(measure(ref), null, 'called on the JS thread, it answers null (measure.native.ts:31-33)');
       h.eq(onUi(() => measure(ref)), measuredRect, 'in a worklet, the default rect');
       Object.assign(measuredRect, { pageX: 24, pageY: 300, width: 96, height: 96 });
       h.eq(onUi(() => measure(ref)), { x: 0, y: 0, width: 96, height: 96, pageX: 24, pageY: 300 }, 'the rect the test set');
+      h.eq(measureWarnings.unattached, 0, 'a mounted view, or any call on the JS thread, warns nothing');
     } finally {
       await unmountScreen(tree);
       Object.assign(measuredRect, before);
     }
     h.eq(onUi(() => measure(ref)), null, 'an unmounted view measures null');
+    h.eq(measureWarnings.unattached, 1, 'and warns, as Reanimated 4.8 does on every such call');
   });
 
   await h.test('reanimated double: a reaction and a native event’s handler run on the UI thread, where measure measures', async () => {
@@ -423,16 +426,76 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
     }
   });
 
-  await h.test('reanimated double: a ref never put on a view answers null when read and throws when measured on a UI frame, as on Android', async () => {
+  await h.test('reanimated double: a ref never put on a view answers null when read on the JS thread and measures null on a UI frame; a worklet cannot call it, as on Reanimated 4.8', async () => {
     let ref!: ReturnType<typeof useAnimatedRef<View>>;
     function Probe() {
       ref = useAnimatedRef<View>();
       return <Animated.View />;
     }
     const tree = await renderScreen(<Probe />, { createNodeMock: () => ({}) });
+    measureWarnings.unattached = 0;
     try {
       h.eq(ref() as unknown, null, 'read with no view, it answers null');
-      await h.throws(() => onUi(() => measure(ref)), 'expected an Object', 'measuring it on the UI thread throws');
+      h.eq([onUi(() => measure(ref)), onUi(() => measure(ref)), measureWarnings.unattached], [null, null, 2], 'measuring it on the UI thread answers null, with a warning on every call');
+      await h.throws(() => onUi(() => ref()), 'not a function', 'a worklet holds the ref’s Shareable, which is no function');
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
+  await h.test('reanimated double: a ref’s observer runs again only for another view; taken off its view, the cleanup runs a microtask later and the observer hears no null', async () => {
+    let ref!: ReturnType<typeof useAnimatedRef<View>>;
+    function Probe() {
+      ref = useAnimatedRef<View>();
+      return null;
+    }
+    const tree = await renderScreen(<Probe />);
+    try {
+      const heard: (number | null)[] = [];
+      const cleaned: number[] = [];
+      const stop = ref.observe((tag) => {
+        heard.push(tag);
+        return tag === null ? undefined : () => { cleaned.push(tag); };
+      });
+      // What React hands a ref for a mounted view: here a bare object, as `createNodeMock` makes.
+      const view = () => ({}) as unknown as Parameters<typeof ref>[0];
+      const first = view();
+      const second = view();
+      ref(first);
+      ref(first);
+      h.eq([heard.length, cleaned], [2, []], 'the observer heard null, then the view’s tag once: the same view again starts nothing');
+      ref(second);
+      h.ok(heard.length === 3 && heard[2] !== heard[1] && cleaned.length === 1 && cleaned[0] === heard[1], 'another view: the first view’s cleanup, then the observer with the new tag');
+      ref(null);
+      h.eq([heard.length, cleaned.length], [3, 1], 'taken off its view: nothing yet, and the observer is not called with null');
+      await Promise.resolve();
+      h.eq(cleaned, [heard[1], heard[2]], 'a microtask later the cleanup runs');
+      ref(second);
+      ref(null);
+      ref(second);
+      await Promise.resolve();
+      h.eq([heard.length, cleaned.length], [4, 2], 'put back before the microtask: the view keeps its run, cleaned only when it is really gone');
+      stop();
+      h.eq(cleaned.length, 3, 'unsubscribing runs the last cleanup');
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
+  await h.test('reanimated double: a view’s layout transition moves none of the commit that mounts it, and every later commit with the one that render set', async () => {
+    const SLOW = LinearTransition.duration(400);
+    function Probe({ layout }: Readonly<{ layout: typeof SLOW | undefined }>) {
+      return <Animated.View layout={layout} />;
+    }
+    const tree = await renderScreen(<Probe layout={SLOW} />);
+    try {
+      const tag = viewTagOf(tree.root.findAll((n) => hostType(n) === 'Animated.View')[0]);
+      const mount = layoutCommits.filter((c) => c.viewTag === tag);
+      h.eq(mount.map((c) => c.held), [undefined], 'the mounting commit moves with none: Reanimated registers it once mounted');
+      await act(() => tree.update(<Probe layout={undefined} />));
+      await act(() => tree.update(<Probe layout={SLOW} />));
+      const later = layoutCommits.filter((c) => c.viewTag === tag).slice(1);
+      h.ok(later.length === 2 && later[0].held === undefined && Object.is(later[1].held, SLOW), 'each later commit moves with the transition its own render set, registered before it is drawn');
     } finally {
       await unmountScreen(tree);
     }

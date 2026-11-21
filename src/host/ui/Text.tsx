@@ -5,7 +5,7 @@
  */
 
 import React from 'react';
-import { Text as RNText, type AccessibilityRole, type NativeSyntheticEvent, type StyleProp, type TextLayoutEventData, type TextStyle } from 'react-native';
+import { Text as RNText, type AccessibilityRole, type StyleProp, type TextLayoutEvent, type TextStyle } from 'react-native';
 import type { ColorRole, TypeToken } from '../../design/tokens';
 import { useTokens } from './tokens';
 import { MAX_FONT_SCALE, TABULAR, typeStyle, type ShellTokens, type TypeStyle } from './tokens-pure';
@@ -60,7 +60,7 @@ export interface TextProps {
    *  Omitted, the text follows the phone. */
   tokens?: ShellTokens;
   /** The lines the text was laid out in, after each layout. */
-  onTextLayout?: (event: NativeSyntheticEvent<TextLayoutEventData>) => void;
+  onTextLayout?: (event: TextLayoutEvent) => void;
 }
 
 export function Text({ children, type = 'body', color = 'text', header = false, tabular = false, italic = false, numberOfLines, accessibilityRole, style, tokens, onTextLayout }: Readonly<TextProps>) {

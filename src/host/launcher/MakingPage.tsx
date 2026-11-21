@@ -244,7 +244,7 @@ export default function MakingPage({
   const light: EmberLightRef = useRef<(() => EmberLight) | null>(null);
   const source = useTravelSource('ember', light);
   // M5: the ember leads the sheet into its tile as it closes, and back out of it.
-  const lead = useSheetLead(source.ref, light, (from) => <Ember size={128} state={ember.state} activity={ember.activity} flicker={flicker} from={from ?? undefined} />);
+  const lead = useSheetLead(source.place, light, (from) => <Ember size={128} state={ember.state} activity={ember.activity} flicker={flicker} from={from ?? undefined} />);
   const reduced = useRef(t.reduceMotion).current;
   const shown = useSharedValue(arrival.arrived ? 0 : 1);
   // Before the page's first frame, so it fades in from the frame the ember sets out.

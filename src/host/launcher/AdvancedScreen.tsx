@@ -14,6 +14,7 @@
  */
 import React, { useEffect, useRef, useState } from 'react';
 import { Clipboard, View } from 'react-native';
+import type { ViewInstance } from 'react-native';
 import { LAYOUT, SPACE, TYPE_SCALE } from '../../design/tokens';
 import type { ColorRole } from '../../design/tokens';
 import { ConfirmSheet } from '../ui/ConfirmSheet';
@@ -119,7 +120,7 @@ export default function AdvancedScreen({
   const [confirmingNewId, setConfirmingNewId] = useState(false);
   const [confirmingOwnServer, setConfirmingOwnServer] = useState(false);
   // The field with the lines under it: the block kept in view above the keyboard while typing.
-  const addressBlock = useRef<View>(null);
+  const addressBlock = useRef<ViewInstance>(null);
   useSystemBack(onBack);
 
   // The save settles once typing pauses, through the latest `onServerUrlChange`, and only for an

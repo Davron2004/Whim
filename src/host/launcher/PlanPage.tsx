@@ -22,6 +22,7 @@
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { Keyboard, Pressable, StyleSheet, View } from 'react-native';
+import type { ViewInstance } from 'react-native';
 import Animated, { Easing, FadeIn, ReduceMotion, useAnimatedStyle, useSharedValue, withDelay, withSpring, withTiming } from 'react-native-reanimated';
 import { LAYOUT, RADII, SPACE } from '../../design/tokens';
 import { Button } from '../ui/Button';
@@ -391,7 +392,7 @@ function RowEditor({ row, onSave, onCancel }: Readonly<Pick<PlanRowViewProps, 'r
   const t = useTokens();
   const s = styles(t);
   const [draft, setDraft] = useState(row.text);
-  const block = useRef<View>(null);
+  const block = useRef<ViewInstance>(null);
   return (
     <View ref={block} style={s.rowEditing}>
       {row.label.length > 0 ? (

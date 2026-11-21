@@ -49,8 +49,8 @@
 
 import React, { createContext, useCallback, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { AccessibilityInfo, Keyboard, Pressable, StyleSheet, Text as RNText, useWindowDimensions, View } from 'react-native';
-import type { LayoutChangeEvent } from 'react-native';
-import Animated, { useAnimatedReaction, useAnimatedRef, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
+import type { LayoutChangeEvent, TextInstance } from 'react-native';
+import Animated, { useAnimatedReaction, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { GestureDetector, usePanGesture } from 'react-native-gesture-handler';
 import { KeyboardController, KeyboardEvents } from 'react-native-keyboard-controller';
@@ -65,7 +65,7 @@ import type { EmberLight, EmberLightRef } from './Ember';
 import { Icon } from './Icon';
 import { timing, usePressFeedback } from './motion';
 import { OverlayModal, useOverlayTurn, useScrimCount } from './OverlayModal';
-import { placeIn, useAnchorEntry, type PlaceRef, type SheetAnchorEntry } from './SheetAnchor';
+import { placeIn, useAnchorEntry, usePlace, type PlaceRef, type SheetAnchorEntry } from './SheetAnchor';
 import { TopHighlight } from './TopHighlight';
 import { TravelLayer } from './TravelLayer';
 import { wrappingType } from './Text';
@@ -729,9 +729,9 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
   const insets = useSafeAreaInsets();
   const { y, height, fade, grown, shown } = motion;
   const anchored = anchor !== undefined;
-  const frame = useAnimatedRef<View>();
-  const titleRef = useRef<RNText>(null);
-  const { overlap, onLayout: onFrameLayout } = useKeyboardOverlap(frame, true);
+  const frame = usePlace();
+  const titleRef = useRef<TextInstance>(null);
+  const { overlap, onLayout: onFrameLayout } = useKeyboardOverlap(frame.ref, true);
   const safeBottom = insets.bottom;
 
   useEffect(() => {
@@ -825,7 +825,7 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
   // for what is under it would otherwise land on a row still sliding out. It does not reach what is
   // under it either: the presented `Modal` takes every touch until the exit lands (above).
   return (
-    <View ref={frame} collapsable={false} onLayout={onFrameLayout} style={s.frame} pointerEvents={closing ? 'box-none' : 'auto'}>
+    <View ref={frame.attach} collapsable={false} onLayout={onFrameLayout} style={s.frame} pointerEvents={closing ? 'box-none' : 'auto'}>
       <Animated.View style={[s.scrim, scrimMotion]} pointerEvents={closing ? 'none' : 'box-none'}>
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessible={false} accessibilityRole="none" importantForAccessibility="no" />
       </Animated.View>

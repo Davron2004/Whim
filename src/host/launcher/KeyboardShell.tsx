@@ -37,9 +37,12 @@ import type {
   LayoutChangeEvent,
   NativeScrollEvent,
   NativeSyntheticEvent,
+  ScrollViewInstance,
   ScrollViewProps,
   StyleProp,
+  TextInputInstance,
   TextInputProps,
+  ViewInstance,
   ViewStyle,
 } from 'react-native';
 import Animated, { scrollTo, useAnimatedRef, useAnimatedStyle, useEvent, useSharedValue, type SharedValue } from 'react-native-reanimated';
@@ -90,7 +93,7 @@ export interface KeyboardShellProps {
   style?: StyleProp<ViewStyle>;
   contentContainerStyle?: StyleProp<ViewStyle>;
   /** The content scroll view, for a screen that scrolls it itself. */
-  scrollRef?: React.Ref<ScrollView>;
+  scrollRef?: React.Ref<ScrollViewInstance>;
   /** Called when the scrolling content changes size. */
   onContentSizeChange?: ScrollViewProps['onContentSizeChange'];
   /** Called with the content's vertical offset as it scrolls. */
@@ -102,7 +105,7 @@ export interface KeyboardShellProps {
 }
 
 /** A view the shell can measure inside its scroll view: a field, or the block a field names. */
-type RevealTarget = React.RefObject<View | TextInput | null>;
+type RevealTarget = React.RefObject<ViewInstance | TextInputInstance | null>;
 
 /** How a shell's fields tell it which block to keep in view. */
 interface RevealRegistry {
@@ -125,7 +128,7 @@ const DONE_BAR_HEIGHT = 44;
 /** Where the view `frame` holds ends, measured from the top of its root (the app's, or a Modal's),
  *  which fills its window wherever a frame pads, just as the keyboard's height is reported from that
  *  window's bottom. `measureInWindow` would not do on Android, which measures from below the status bar. */
-function measureBottom(frame: React.RefObject<View | null>, done: (bottom: number) => void): void {
+function measureBottom(frame: React.RefObject<ViewInstance | null>, done: (bottom: number) => void): void {
   frame.current?.measure((_x, _y, _width, height, _pageX, pageY) => done(pageY + height));
 }
 
@@ -176,7 +179,7 @@ export interface KeyboardOverlap {
  * read 2420 in an 874-high window) and would put its bottom at the window's: the frame was then
  * padded by the home indicator's inset on top of what the keyboard covers.
  */
-export function useKeyboardOverlap(frame: React.RefObject<View | null>, active: boolean, clearBelow = 0): KeyboardOverlap {
+export function useKeyboardOverlap(frame: React.RefObject<ViewInstance | null>, active: boolean, clearBelow = 0): KeyboardOverlap {
   const overlap = useSharedValue(0);
   const height = useSharedValue(0);
   const frameBottom = useSharedValue(0);
@@ -284,7 +287,7 @@ export function useKeyboardOverlap(frame: React.RefObject<View | null>, active: 
  * mini-app's WebView, which would lay its page out again on every frame). The view's bottom edge
  * must not move with the padding this feeds.
  */
-export function useKeyboardInset(frame: React.RefObject<View | null>, active: boolean): number {
+export function useKeyboardInset(frame: React.RefObject<ViewInstance | null>, active: boolean): number {
   const [inset, setInset] = useState(0);
   const { height: windowHeight } = useKeyboardWindow();
   useEffect(() => {
@@ -347,15 +350,15 @@ interface NativeEventHandler {
  *  is the height that padding is figured from now (`KeyboardOverlap.height`): a keyboard changing
  *  height starts from what is padded, not from what the library last reported. */
 function useRevealingScroll(
-  scrollRef: React.Ref<ScrollView> | undefined,
+  scrollRef: React.Ref<ScrollViewInstance> | undefined,
   onContentSizeChange: ScrollViewProps['onContentSizeChange'],
   onScrollOffset: ((offset: number) => void) | undefined,
   shrinkAt: (keyboardHeight: number) => number,
   keyboardHeight: SharedValue<number>,
 ) {
-  const scroll = useRef<ScrollView | null>(null);
+  const scroll = useRef<ScrollViewInstance | null>(null);
   const scrollOnUI = useAnimatedRef<ScrollView>();
-  const inner = useRef<View>(null);
+  const inner = useRef<ViewInstance>(null);
   const metrics = useRef<ScrollMetrics>({ offset: 0, viewport: 0, content: 0 });
   const focusedTarget = useRef<RevealTarget | null>(null);
   const [below, setBelow] = useState(false);
@@ -548,7 +551,7 @@ function useRevealingScroll(
   );
 
   const setScroll = useCallback(
-    (node: ScrollView | null) => {
+    (node: ScrollViewInstance | null) => {
       scroll.current = node;
       scrollOnUI(node);
       assignRef(scrollRef, node);
@@ -558,8 +561,7 @@ function useRevealingScroll(
 
   const scrollProps = {
     ref: setScroll,
-    // RN types this prop as never-null; React 19's `useRef(null)` is nullable until mounted.
-    innerViewRef: inner as React.RefObject<View>,
+    innerViewRef: inner,
     scrollEventThrottle: 16,
     onScroll: (event: NativeSyntheticEvent<NativeScrollEvent>) => {
       settle({ offset: event.nativeEvent.contentOffset.y });
@@ -638,7 +640,7 @@ export default function KeyboardShell({
   children,
 }: Readonly<KeyboardShellProps>) {
   const inSheet = host === 'sheet';
-  const frameRef = useRef<View>(null);
+  const frameRef = useRef<ViewInstance>(null);
   // iOS screens sit above the home indicator (`NativeStack`'s `SafeAreaView`); Android's frame
   // measures true and is left to its own measure.
   const { bottom: safeBottom } = useSafeAreaInsets();
@@ -756,7 +758,7 @@ const KEYBOARD_RISE_FRAMES = 30;
  * frames run out (a blur and refocus while the field is revealed). It stops at once if the keyboard
  * is already up. Returns the stop.
  */
-function askForKeyboard(input: React.RefObject<TextInput | null>, blurred: { current: boolean }): () => void {
+function askForKeyboard(input: React.RefObject<TextInputInstance | null>, blurred: { current: boolean }): () => void {
   blurred.current = false;
   input.current?.focus();
   if (settledUp && KeyboardController.isVisible()) return () => {};
@@ -799,7 +801,7 @@ function askForKeyboard(input: React.RefObject<TextInput | null>, blurred: { cur
 export interface KeyboardTextInputProps extends TextInputProps {
   /** The block to keep in view while this field is focused (a plan row with its Save and Cancel);
    *  the field itself when left out. */
-  revealTarget?: React.RefObject<View | null>;
+  revealTarget?: React.RefObject<ViewInstance | null>;
 }
 
 /**
@@ -819,7 +821,7 @@ export function KeyboardTextInput({
   ...props
 }: Readonly<KeyboardTextInputProps>) {
   const tokens = useTokens();
-  const input = useRef<TextInput>(null);
+  const input = useRef<TextInputInstance>(null);
   const shell = useContext(KeyboardShellContext);
   const doneBarId = useId();
   const target = revealTarget ?? input;

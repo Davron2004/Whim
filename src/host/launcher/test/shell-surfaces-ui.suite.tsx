@@ -794,7 +794,7 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
       });
       const played = commits();
       const last = frames.at(-1)![0];
-      await act(() => { drag.onDeactivate!(at(last, release)); drag.onFinalize?.(at(last, release)); });
+      await act(() => { drag.onDeactivate!({ ...at(last, release), canceled: false }); drag.onFinalize?.({ ...at(last, release), canceled: false }); });
       h.eq([count.n, modalShown(tree)], [closes ? 1 : 0, !closes], `${name}: ${closes ? 'closes' : 'springs back'}`);
       h.eq(played, before ? 1 : 0, `${name}: ${before ? 'one commit haptic during the drag' : 'no commit haptic during the drag'}`);
       h.eq(commits(), before || closes ? 1 : 0, `${name}: exactly one commit haptic when it closed or armed, none otherwise`);
@@ -812,7 +812,7 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     const at = (translationY: number, velocityY: number) => ({ translationX: 0, translationY, velocityX: 0, velocityY });
     await act(() => { drag.onBegin!(at(0, 0)); drag.onActivate!(at(0, 0)); drag.onUpdate!(at(120, 0)); drag.onUpdate!(at(260, 600)); });
     h.eq(hapticCalls.filter((c) => c === 'impact:rigid,0.6,GESTURE_THRESHOLD_ACTIVATE').length, 1, 'the drag had committed');
-    await act(() => { drag.onDeactivate!({ ...at(260, 600), canceled: true }); drag.onFinalize?.(at(260, 600)); });
+    await act(() => { drag.onDeactivate!({ ...at(260, 600), canceled: true }); drag.onFinalize?.({ ...at(260, 600), canceled: true }); });
     h.eq([count.n, modalShown(tree)], [0, true], 'cancelled, it stays open');
     h.eq(cardY(tree), 0, 'and the card springs back to its open place');
     await act(() => tree.unmount());

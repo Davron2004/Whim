@@ -20,15 +20,13 @@
  */
 import React, { createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, View, type StyleProp, type ViewStyle } from 'react-native';
-import Animated, { makeMutable, useAnimatedRef, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
+import Animated, { makeMutable, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import type { EmberLight, EmberLightRef } from './Ember';
 import { timing } from './motion';
-import { measured } from './SheetAnchor';
+import { measured, usePlace, type PlaceRef } from './SheetAnchor';
 import { useTokens } from './tokens';
 import { springConfig } from './tokens-pure';
-
-type PlaceRef = ReturnType<typeof useAnimatedRef<View>>;
 
 // A spring config as a module constant: a worklet never calls `springConfig` (motion.ts).
 const MORPH = springConfig('morph');
@@ -85,7 +83,7 @@ const DrawnContext = createContext<Drawn | null>(null);
 
 /** What the layer, the source and the target measure now, or `null` on a frame any of them cannot be
  *  measured: the style's first run on the JS thread, before the views are laid out, or once one has
- *  gone (`measured`: a ref not on a view is never handed to the native `measure`). */
+ *  gone (`measured`: a place on no view is never handed to Reanimated's `measure`). */
 function placesOf(layer: PlaceRef, source: PlaceRef, target: PlaceRef) {
   'worklet';
   const origin = measured(layer);
@@ -130,7 +128,7 @@ const without = (ref: PlaceRef) => (set: ReadonlySet<PlaceRef>): ReadonlySet<Pla
 
 /** Hosts travels between the places inside it, drawing each above them. */
 export function TravelLayer({ children }: Readonly<{ children: React.ReactNode }>) {
-  const layer = useAnimatedRef<View>();
+  const layer = usePlace();
   const [flight, setFlight] = useState<Flight | null>(null);
   const [left, setLeft] = useState<ReadonlySet<PlaceRef>>(new Set());
   const state = useRef({ flight: null as Flight | null, sources: new Map<string, Source>(), next: 1, handedOff: false, listeners: new Set<() => void>() });
@@ -206,7 +204,7 @@ export function TravelLayer({ children }: Readonly<{ children: React.ReactNode }
     <TravelContext.Provider value={travel}>
       <DrawnContext.Provider value={drawn}>
         {children}
-        <View ref={layer} style={StyleSheet.absoluteFill} pointerEvents="none" collapsable={false}>
+        <View ref={layer.attach} style={StyleSheet.absoluteFill} pointerEvents="none" collapsable={false}>
           {flight ? <Flying key={flight.id} flight={flight} layer={layer} /> : null}
         </View>
       </DrawnContext.Provider>
@@ -264,33 +262,33 @@ export function useTravel(): Travel | null {
  *  good, so it is always seen once — never twice, and never on no frame at all as the travel sets out.
  *  A place that shows no element of its own until it sends one (Make it) puts `departing` on the
  *  element instead: it shows it only on the frames a travel from here has set out and the layer
- *  cannot draw it yet. */
+ *  cannot draw it yet. `place` is that view as the UI thread measures it. */
 export function useTravelSource(name: string, light?: EmberLightRef) {
   const travel = useTravel();
   const drawn = useContext(DrawnContext);
-  const ref = useAnimatedRef<View>();
-  useEffect(() => travel?.register(name, ref, light), [travel, name, ref, light]);
+  const place = usePlace();
+  useEffect(() => travel?.register(name, place, light), [travel, name, place, light]);
   const fallback = useSharedValue(0);
   const flight = drawn?.flight ?? null;
-  const mine = flight !== null && flight.source === ref;
-  const gone = drawn?.left.has(ref) ?? false;
-  const layer = drawn?.layer ?? ref;
-  const target = flight?.target ?? ref;
+  const mine = flight !== null && flight.source === place;
+  const gone = drawn?.left.has(place) ?? false;
+  const layer = drawn?.layer ?? place;
+  const target = flight?.target ?? place;
   const progress = flight?.progress ?? fallback;
   const hidden = useAnimatedStyle(() => {
     // Read so this runs on every frame of the travel, as the element's own style does.
     progress.get();
-    return { opacity: gone || (mine && placesOf(layer, ref, target) !== null) ? 0 : 1 };
+    return { opacity: gone || (mine && placesOf(layer, place, target) !== null) ? 0 : 1 };
   });
   const departing = useAnimatedStyle(() => {
     progress.get();
-    return { opacity: !gone && mine && placesOf(layer, ref, target) === null ? 1 : 0 };
+    return { opacity: !gone && mine && placesOf(layer, place, target) === null ? 1 : 0 };
   });
-  return { ref, hidden, departing };
+  return { ref: place.attach, place, hidden, departing };
 }
 
 export interface TravelTarget {
-  ref: PlaceRef;
+  ref: PlaceRef['attach'];
   /** On its way: hide the caller's own element. */
   travelling: boolean;
   /** It has arrived: at once when nothing left from `name`, or under `instant`. */
@@ -308,7 +306,7 @@ export interface TravelTarget {
  *  own element in, and hide that element while `travelling`. */
 export function useTravelTarget(name: string, draw: (light: EmberLight | null) => React.ReactNode, instant: boolean): TravelTarget {
   const travel = useTravel();
-  const ref = useAnimatedRef<View>();
+  const place = usePlace();
   const [arrived] = useState(() => travel?.hasSource(name) === true);
   const [landed, setLanded] = useState(!arrived || instant);
   const [light, setLight] = useState<EmberLight | null>(null);
@@ -316,13 +314,13 @@ export function useTravelTarget(name: string, draw: (light: EmberLight | null) =
   // Before the frame the caller is first drawn on, so the element sets out on that same frame.
   useLayoutEffect(() => {
     if (!arrived || travel === null) return;
-    handed.current = travel.fly(name, ref, draw, instant, () => setLanded(true));
+    handed.current = travel.fly(name, place, draw, instant, () => setLanded(true));
     if (handed.current === null) setLanded(true);
     else setLight(handed.current.light);
     // Asked for once, as the caller mounts.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  return { ref, travelling: !landed, landed, arrived, light, land: () => handed.current?.land() };
+  return { ref: place.attach, travelling: !landed, landed, arrived, light, land: () => handed.current?.land() };
 }
 
 const styles = StyleSheet.create({

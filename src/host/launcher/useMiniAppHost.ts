@@ -13,7 +13,7 @@
 // back-policy. The guaranteed-exit invariant lives here and in the floating affordance.
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BackHandler } from 'react-native';
-import type { WebView } from 'react-native-webview';
+import type { WebView } from '../webview';
 import { RUNTIME_HTML } from '../../runtime/generated/runtime-html';
 import {
   createDefaultRegistry,

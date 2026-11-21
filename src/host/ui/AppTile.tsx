@@ -23,6 +23,7 @@
 
 import React, { useEffect, useRef, useState } from 'react';
 import { Pressable, StyleSheet, View } from 'react-native';
+import type { PressableInstance } from 'react-native';
 import Animated, {
   FadingTransition,
   LinearTransition,
@@ -141,7 +142,7 @@ export interface TilePlateProps {
   /** Draws no ember: a sheet's own ember stands in for it (M5). Default true. */
   ember?: boolean;
   /** The view its ember is drawn in, for a sheet's ember to land on (M5). */
-  emberPlace?: PlaceRef;
+  emberPlace?: PlaceRef['attach'];
 }
 
 const plateStyles = makeStyles((t) => ({
@@ -533,7 +534,7 @@ export function AppTile({
   const t = useTokens();
   const s = cellStyles(t);
   const press = usePressFeedback('chip', t);
-  const ref = useRef<View>(null);
+  const ref = useRef<PressableInstance>(null);
   const line: StateLine | null = stateLine(state, { example, copy, count, stuck });
 
   const lift = useSharedValue(1);

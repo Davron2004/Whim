@@ -15,17 +15,18 @@
 // fresh WebView starts waiting, unseen, once the launch has painted, so the next is warm too.
 import React, { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import { Platform, StyleSheet, View } from 'react-native';
-import Animated, { useAnimatedReaction, useAnimatedRef, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
+import type { ViewInstance } from 'react-native';
+import Animated, { useAnimatedReaction, useAnimatedStyle, useSharedValue, withSpring, withTiming, type SharedValue } from 'react-native-reanimated';
 import { scheduleOnRN } from 'react-native-worklets';
 import { useSafeAreaInsets } from 'react-native-safe-area-context';
-import { WebView } from 'react-native-webview';
+import { WebView } from '../webview';
 import type { AppRecord } from '../bridge';
 import { RUNTIME_HTML } from '../../runtime/generated/runtime-html';
 import { LAYOUT, SPACE } from '../../design/tokens';
 import { TilePlate } from '../ui/AppTile';
 import { TILE, TILE_SIDE } from '../ui/AppTile-geometry';
 import { timing } from '../ui/motion';
-import { appAnchor, placeIn, useAnchorEntry, type PlaceRef } from '../ui/SheetAnchor';
+import { appAnchor, placeIn, useAnchorEntry, usePlace, type PlaceRef } from '../ui/SheetAnchor';
 import { Button } from '../ui/Button';
 import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
@@ -201,13 +202,13 @@ export function MiniAppStage({ launch, onFrame, children }: Readonly<MiniAppStag
   // The keyboard (beta-1 D3): the page ends at its top edge on Android, where no window resizes for
   // it, so the page's viewport shrinks and the runtime scrolls the focused field into view
   // (`loader.js`). iOS's WebView avoids the keyboard itself (`padsWebViewForKeyboard`).
-  const frame = useRef<View>(null);
+  const frame = useRef<ViewInstance>(null);
   const keyboard = useKeyboardInset(frame, launch !== null && padsWebViewForKeyboard(Platform.OS));
   // The same view, for what the app's opening and closing measure on the UI thread.
-  const place = useAnimatedRef<View>();
-  const setFrame = useCallback((view: View | null) => {
+  const place = usePlace();
+  const setFrame = useCallback((view: ViewInstance | null) => {
     frame.current = view;
-    place(view);
+    place.attach(view);
   }, [place]);
   // Home under an app sits where it sits on its own, at the window's top: the app's frame starts below
   // the status-bar strip, Home's above it.
