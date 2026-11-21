@@ -13,38 +13,59 @@
  */
 import React, { createContext, useContext, useEffect, useLayoutEffect, useState, useSyncExternalStore } from 'react';
 import type { LayoutChangeEvent, View, ViewInstance } from 'react-native';
-import { measure, useAnimatedRef, useSharedValue, type SharedValue } from 'react-native-reanimated';
-import { isRNRuntime } from 'react-native-worklets';
+import { measure, useAnimatedRef } from 'react-native-reanimated';
+import { createSynchronizable, isRNRuntime, scheduleOnUI, type FixedSynchronizable } from 'react-native-worklets';
 
 /** A view the UI thread measures (`measured`): put `attach` on the view as its ref. */
 export interface PlaceRef {
   readonly ref: ReturnType<typeof useAnimatedRef<View>>;
-  /** Whether `ref` holds a view, as the UI thread sees it. Reanimated 4.8's `measure` logs a warning
-   *  on every call for a ref that holds none, and a worklet cannot ask the ref (it holds the ref's
-   *  Shareable, no function), so `measured` asks this first. */
-  readonly on: SharedValue<boolean>;
+  /** Whether the UI thread may measure `ref`'s view (`measured` asks this first): positive while the
+   *  ref holds a view that is in the tree React committed. Reanimated 4.8's `measure` logs a warning on
+   *  every call for a ref that holds no view, and for a view that has left the committed tree, and a
+   *  worklet cannot ask the ref (it holds the ref's Shareable, no function). */
+  readonly on: FixedSynchronizable<number>;
   readonly attach: (view: ViewInstance | null) => void;
 }
 
-/** A place for one view. `on` turns true only after `ref` holds the view and false before `ref` lets
- *  it go: the ref's write and the shared value's each go to the UI thread's queue, in the order made,
- *  so a worklet never reads `on` true while the ref holds nothing. */
+/** The view put on a place (`-view` while it is being put on, `view` once it is on) is on for the UI
+ *  thread, unless the place has let it go or taken another since. */
+function viewOn(on: FixedSynchronizable<number>, view: number): void {
+  'worklet';
+  on.setBlocking((now) => (now === -view ? view : now));
+}
+
+/**
+ * A place for one view. `on` turns off at once, on both threads, as React takes the view off the ref,
+ * which it does as it commits the view's removal, before the tree without it is the committed one: the
+ * window in which a UI frame can measure a view that has left the tree shrinks from a frame to the
+ * gap between `measured`'s read of `on` and its `measure` (React can commit between the two). A write
+ * to a shared value would only be queued for the UI thread (mutables.native.ts, `scheduleOnUI`), and
+ * frames run between the commit and the write (the exit's ceiling taking a sheet's window down, a
+ * travel's page dropped as it lands). It turns on
+ * only from the UI thread's queue, after the ref's own write (useAnimatedRef.native.ts, `scheduleOnUI`),
+ * so a worklet never finds it on while the ref holds nothing.
+ */
 export function usePlace(): PlaceRef {
   const ref = useAnimatedRef<View>();
-  const on = useSharedValue(false);
-  const [place] = useState<PlaceRef>(() => ({
-    ref,
-    on,
-    attach: (view) => {
-      if (view === null) {
-        on.value = false;
-        ref(null);
-      } else {
+  const [place] = useState<PlaceRef>(() => {
+    const on = createSynchronizable(0, { fixedType: true });
+    let views = 0;
+    return {
+      ref,
+      on,
+      attach: (view) => {
+        if (view === null) {
+          on.setBlocking(0);
+          ref(null);
+          return;
+        }
+        views += 1;
+        on.setBlocking(-views);
         ref(view);
-        on.value = true;
-      }
-    },
-  }));
+        scheduleOnUI(viewOn, on, views);
+      },
+    };
+  });
   return place;
 }
 
@@ -151,7 +172,7 @@ export function useAnchorEntry(name: string | undefined): SheetAnchorEntry | und
 export function measured(place: PlaceRef) {
   'worklet';
   if (isRNRuntime()) return null;
-  return place.on.value ? measure(place.ref) : null;
+  return place.on.getDirty() > 0 ? measure(place.ref) : null;
 }
 
 /** Where `place` is drawn, from the frame's top-left, or `null` on a frame either cannot be measured. */

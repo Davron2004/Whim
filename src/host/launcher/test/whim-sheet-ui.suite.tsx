@@ -21,6 +21,7 @@ import MakingPage from '../MakingPage';
 import FailurePage from '../FailurePage';
 import { toastDuration } from '../../ui/Toast';
 import { Sheet } from '../../ui/Sheet';
+import { MakingSheet } from '../MakingSheet';
 import { PendingBuildStore } from '../pending-builds';
 import type { InstalledApp } from '../app-index';
 import type { StoreAccess } from '../store-access';
@@ -416,6 +417,34 @@ export async function runWhimSheetUiTests(h: Harness): Promise<void> {
       h.ok(!showing(tree, HomeScreen), 'not Home');
       await openSheet(tree);
       h.eq(field(tree).props.value, '', 'the words went with the change: the field starts empty again');
+    });
+  });
+
+  await h.test('whim sheet: a close that lands before the app is drawn again (Make it, then the close control, both on the change’s plan as drawn) keeps no draft: the change runs on detached from one request, and the next Change it starts afresh instead of on the plan Make it already took', async () => {
+    const streams: ReturnType<typeof sseStream>[] = [];
+    await withLauncher({ examples: true, server: streamingServer(streams) }, async ({ tree, kv, sent }) => {
+      const app = await openTipSplitter(tree);
+      const launch = runningApp(tree).props.tappedAt;
+      await openSheet(tree);
+      await typeWords(tree, 'Add a tip slider');
+      await press(button(tree, COPY.whimSheetSend));
+      await waitFor(() => planLoaded(tree), 'the change’s plan');
+      const make = tree.root.findByType(PlanPage).props.onMake;
+      const close = tree.root.findByType(MakingSheet).props.onClose;
+      await tap(() => { make(); close(); });
+      await waitFor(() => streams.length === 1, 'the change being made');
+      h.ok(!makingSheetOpen(tree) && showing(tree, MiniAppView) && runningApp(tree).props.tappedAt === launch, 'the sheet closed onto the same running app');
+      h.eq(sent.filter((r) => r.path === '/v1/generate').length, 1, 'with one request for the change');
+      streams[0].push(resultEvent(APP_NAME));
+      streams[0].end();
+      await waitFor(() => new PendingBuildStore(kv).list().length === 0, 'the change delivered');
+      await settle();
+      h.ok(showing(tree, MiniAppView) && !makingSheetOpen(tree), 'it ended under the running app, which never left it');
+      await openSheet(tree);
+      await press(button(tree, COPY.whimSheetBackToApps));
+      await TestRenderer.act(async () => home(tree).props.onPromptAgain(app));
+      h.ok(showing(tree, DescribePage) && !showing(tree, PlanPage), 'asking to change the app again opens Describe, not the spent plan');
+      h.eq(tree.root.findByType(DescribePage).props.text, '', 'with no words kept');
     });
   });
 

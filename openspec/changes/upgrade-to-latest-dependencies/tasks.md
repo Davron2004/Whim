@@ -42,7 +42,7 @@
 - [x] 6.2 Run the on-device containment verdict and record CONTAINED with the probe count.
 - [x] 6.3 Run `RUN_VSTORE_PROBE`, `RUN_STORAGE_PROBE`, `RUN_BRIDGE_PROBE` and `RUN_DATA_COPY_PROBE`, one at a time, and record each result.
 - [x] 6.4 On the iOS simulator, launch, open a mini-app, and confirm it renders, haptics and cues fire, and the status bar matches the pre-upgrade build in screenshots.
-- [ ] 6.5 Record every finding as a fix task in the change's progress file. Resolve each before W4 starts.
+- [x] 6.5 Record every finding as a fix task in the change's progress file. Resolve each before W4 starts.
 
 ## 7. W4: op-sqlite 19
 

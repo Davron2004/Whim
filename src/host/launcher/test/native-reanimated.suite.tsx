@@ -28,8 +28,8 @@ import Animated, {
 } from 'react-native-reanimated';
 import { Harness } from './harness';
 import { accessibilitySettings, emitAccessibility } from './native-host';
-import { scheduleOnRN } from 'react-native-worklets';
-import { animations, cancelAnimation, cancelled, elapse, elapseSprings, emitNativeEvent, holdAnimations, holdHops, useEvent, isLayoutAnimation, layoutAnimations, layoutCommits, makeMutable, measuredRect, measureWarnings, onUi, playedUnder, viewTagOf, type LayoutAnimation } from './native-reanimated';
+import { createSynchronizable, scheduleOnRN, scheduleOnUI } from 'react-native-worklets';
+import { animations, cancelAnimation, cancelled, elapse, elapseSprings, emitNativeEvent, holdAnimations, holdHops, holdWrites, useEvent, isLayoutAnimation, layoutAnimations, layoutCommits, makeMutable, measuredRect, measureWarnings, onUi, playedUnder, viewTagOf, type LayoutAnimation } from './native-reanimated';
 import { hostType, renderScreen, unmountScreen } from './react-screen';
 import { useTokens } from '../../ui/tokens';
 import { springConfig, staggerDelay, timingOf } from '../../ui/tokens-pure';
@@ -445,6 +445,56 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
       h.eq(heard, ['unheld', 'first', 'second', 'after'], 'released, they run oldest first, and a later hop runs at once');
     } finally {
       if (!released) hops.release();
+    }
+  });
+
+  await h.test('reanimated double: the JS thread’s writes for the UI thread (a shared value, `scheduleOnUI`, a ref put on or taken off a view) reach it at once; held, they wait in order while UI frames run on, and a Synchronizable is seen by both threads at once, held or not', async () => {
+    const value = makeMutable(0);
+    const flag = createSynchronizable(0, { fixedType: true });
+    const seen: string[] = [];
+    scheduleOnUI((what: string) => seen.push(`${what}:${value.value}`), 'unheld');
+    const writes = holdWrites();
+    let released = false;
+    try {
+      value.value = 1;
+      scheduleOnUI((what: string) => seen.push(`${what}:${value.value}`), 'queued');
+      flag.setBlocking(7);
+      onUi(() => { value.value = 5; });
+      h.eq([onUi(() => value.value), seen, onUi(() => flag.getDirty()), writes.waiting()], [5, ['unheld:0'], 7, 2], 'held: a UI-thread write lands at once, the JS ones wait, the Synchronizable is seen at once');
+      writes.release();
+      released = true;
+      h.eq([onUi(() => value.value), seen], [1, ['unheld:0', 'queued:1']], 'released: the JS thread’s writes land in the order made, after the UI thread’s');
+      flag.setBlocking((now) => now + 1);
+      h.eq(flag.getDirty(), 8, 'a write from what it holds now is one step');
+    } finally {
+      if (!released) writes.release();
+    }
+  });
+
+  await h.test('reanimated double: while the JS thread’s writes are held, a ref React took off a view (the view left the tree) still holds it on the UI thread, and measuring it answers null with the `LayoutMetrics` warning; a ref put on a view holds none on the UI thread until the write lands', async () => {
+    let ref!: ReturnType<typeof useAnimatedRef<View>>;
+    function Probe({ shown }: Readonly<{ shown: boolean }>) {
+      ref = useAnimatedRef<View>();
+      return shown ? <Animated.View ref={ref} /> : null;
+    }
+    const tree = await renderScreen(<Probe shown />, { createNodeMock: () => ({}) });
+    measureWarnings.unattached = 0;
+    measureWarnings.outOfTree = 0;
+    let writes: ReturnType<typeof holdWrites> | null = holdWrites();
+    try {
+      await act(() => tree.update(<Probe shown={false} />));
+      h.eq([onUi(() => measure(ref)), measureWarnings.outOfTree, measureWarnings.unattached], [null, 1, 0], 'out of the tree, still held on the UI thread: null, with the LayoutMetrics warning');
+      await act(writes.release);
+      h.eq([onUi(() => measure(ref)), measureWarnings.outOfTree, measureWarnings.unattached], [null, 1, 1], 'once the write lands, the ref holds no view: null, with the tag-null warning');
+      writes = holdWrites();
+      await act(() => tree.update(<Probe shown />));
+      h.eq([onUi(() => measure(ref)), measureWarnings.unattached], [null, 2], 'put on a view, it holds none on the UI thread until the write lands');
+      await act(writes.release);
+      writes = null;
+      h.eq(onUi(() => measure(ref)), measuredRect, 'then it measures the view');
+    } finally {
+      if (writes) await act(writes.release);
+      await unmountScreen(tree);
     }
   });
 

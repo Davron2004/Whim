@@ -197,10 +197,9 @@ function plateCovers(k: number): boolean {
 }
 
 /** Where `place` is drawn in the sheet's frame (`placeIn`), or `null` from the frame the exit ended
- *  on (`ended`): the window is going, and nothing in it is measured again. React takes a view out of
- *  the shadow tree as it commits the unmount, while its place's `on` turning false reaches the UI
- *  thread only after it (a JS write is queued), so a frame in between got null from Reanimated, which
- *  warns ("undefined, not-yet-computed or meaningless value of `LayoutMetrics`"). */
+ *  on (`ended`): the window is going, and nothing in it is drawn or measured again. A place whose view
+ *  has left the tree is never measured (`usePlace`), however the window goes: also when the overlay's
+ *  ceiling takes it down mid-exit, which no `ended` precedes. */
 function placeInSheet(ended: SharedValue<boolean>, frame: PlaceRef, place: PlaceRef) {
   'worklet';
   return ended.value ? null : placeIn(frame, place);
