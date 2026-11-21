@@ -32,11 +32,13 @@ env:
 
 # 1. Settings → Advanced → Server address. A build with beta-1 D20 shows "Use your own server"
 #    under Advanced first, and the field only once that is confirmed; an older build shows the
-#    field at once. The field saves as it is typed. While the keyboard is up on Android, its own
-#    back key is labelled "Back" too (android:id/input_method_nav_back), and Maestro taps that one:
-#    it only drops the keyboard. So drop the keyboard first, with a tap on a plain label in the
-#    ScrollView (the field and its label sit under the keyboard there), and tap the header's Back
-#    once the keyboard's key is gone.
+#    field at once. From design-system-v1 (437758) Advanced is a screen of its own, whose Server
+#    rows offer "Your own server" with the same confirmation. The field saves as it is typed. While
+#    the keyboard is up on Android, its own back key is labelled "Back" too
+#    (android:id/input_method_nav_back), and Maestro taps that one: it only drops the keyboard. So
+#    drop the keyboard first, with a tap on a plain label in the ScrollView (the field and its
+#    label sit under the keyboard there), and tap the header's Back ("Navigate up" on 437758's
+#    Android header) once the keyboard's key is gone.
 - tapOn: "Settings"
 # Advanced is the last row of Settings and, on a build whose Settings is taller than the screen
 # (397438, iPhone 15 Plus), sits on the bottom edge where a tap does not expand it. Scroll it to the
@@ -54,30 +56,79 @@ env:
 - runFlow:
     when:
       platform: iOS
-      notVisible: "Use your own server|Server address"
+      notVisible: "Use your own server|Your own server|Server address"
     commands:
       - tapOn:
           point: ${'50%,' + Math.round(100 * 895 / SCREEN_HEIGHT) + '%'}
 - extendedWaitUntil:
-    visible: "Use your own server|Server address"
+    visible: "Use your own server|Your own server|Server address"
     timeout: 15000
 - runFlow:
     when:
-      visible: "Use your own server"
+      visible: "Use your own server|Your own server"
     commands:
-      - tapOn: "Use your own server"
+      - tapOn: "Use your own server|Your own server"
       - tapOn: "Use my own server"
 - tapOn: "(https://)?api\\.whim\\..*"
 # After typing, tap the hint under the field: it stays in view with the keyboard up (the shell scrolls
 # the field's block into view, which pushes the About section off the top on a tall Settings screen).
 # The alternation names the 397438 wording and today's.
 - inputText: ${SERVER_URL}
-- tapOn: "Where Whim sends (your prompts to build apps|what you describe to make apps)\\."
-- extendedWaitUntil:
-    notVisible:
-      id: "android:id/input_method_nav_back"
-    timeout: 10000
-- tapOn: "Back"
+- runFlow:
+    when:
+      platform: Android
+    commands:
+      - tapOn: "Where Whim sends (your prompts to build apps|what you describe to make apps)\\."
+      - extendedWaitUntil:
+          notVisible:
+            id: "android:id/input_method_nav_back"
+          timeout: 10000
+      - tapOn: "Back|Navigate up"
+      # Earlier builds go back to the grid from there; 437758 goes back to Settings (its "Version"
+      # row shows), and one more Back reaches the grid.
+      - extendedWaitUntil:
+          visible: "Your apps|Version"
+          timeout: 15000
+      - runFlow:
+          when:
+            visible: "Version"
+          commands:
+            - tapOn: "Back|Navigate up"
+# On iOS, 437758's hint under the field is hidden from accessibility (the field reads it as its
+# hint), so the keyboard is dropped with the probe line under it instead. 437758 pushes Advanced
+# and Settings on a native stack whose back button (id BackButton) is labelled with the previous
+# screen's title ("Settings", then "Your apps", which the grid waits would take for the grid), and
+# a Settings row reads as "Version, <version>". So go back by id until the grid's Water Counter
+# tile shows. Earlier builds have a "Back" that reaches the grid at once.
+- runFlow:
+    when:
+      platform: iOS
+    commands:
+      - tapOn: "Where Whim sends (your prompts to build apps|what you describe to make apps)\\.|Checked once AI features are on"
+      - runFlow:
+          when:
+            visible:
+              id: "BackButton"
+          commands:
+            - tapOn:
+                id: "BackButton"
+            - extendedWaitUntil:
+                visible: "(.*, )?Water Counter(, .*)?|Version(, .*)?"
+                timeout: 15000
+            - runFlow:
+                when:
+                  visible: "Version(, .*)?"
+                commands:
+                  - tapOn:
+                      id: "BackButton"
+      - runFlow:
+          when:
+            visible: "Back"
+          commands:
+            - tapOn: "Back"
+      - extendedWaitUntil:
+          visible: "(.*, )?Water Counter(, .*)?"
+          timeout: 15000
 # Maestro matches text case-insensitively, so "Your apps" also finds earlier builds' "YOUR APPS".
 - extendedWaitUntil:
     visible: "Your apps"
@@ -105,7 +156,8 @@ env:
 #    asks in two full screens ("Accept", then "Agree and continue") and shows the questions as a
 #    step of their own; this build asks in one sheet (a terms checkbox, then "Agree to send
 #    descriptions") and shows the questions with the plan, so each word is accepted in both. The
-#    composer reads "Describe an app…" up to beta-1 and "Make an app…" from design-system-v1.
+#    composer reads "Describe an app…" up to beta-1 and "Make an app…" from design-system-v1, and
+#    the made app's sheet closes with "Back to your apps" up to beta-1 and "Done" on 437758.
 - tapOn: "Describe an app…|Make an app…"
 - extendedWaitUntil:
     visible: "Accept|I accept the Terms of use|Agree and continue|Agree to send descriptions|What should it do\\?"
@@ -127,7 +179,9 @@ env:
     visible: "What should it do\\?"
     timeout: 30000
 # 397438's compose field does not take focus on its own: tap it first, or the text goes nowhere.
-- tapOn: "Describe an app…|Make an app…"
+# On iOS, 437758's field reads its title and placeholder as one label ("What should it do? Make an
+# app…").
+- tapOn: "(What should it do\\? )?(Describe an app…|Make an app…)"
 - inputText: "A page that says hello"
 - runFlow:
     when:
@@ -152,9 +206,9 @@ env:
     timeout: 180000
 - tapOn: "Build it|Make it"
 - extendedWaitUntil:
-    visible: "Back to your apps"
+    visible: "Back to your apps|Done"
     timeout: 300000
-- tapOn: "Back to your apps"
+- tapOn: "Back to your apps|Done"
 - extendedWaitUntil:
     visible: "(.*, )?${GENERATED_APP}(, .*)?"
     timeout: 30000
@@ -184,7 +238,8 @@ env:
     visible: "What should change\\?"
     timeout: 30000
 # The field is not focused on arrival (397438), and its placeholder differs from the first compose's.
-- tapOn: "Add, change, or remove something…|Describe a change…"
+# 437758's iOS label joins the title to it, as in step 3.
+- tapOn: "(What should change\\? )?(Add, change, or remove something…|Describe a change…)"
 - inputText: "Make the text bigger"
 - runFlow:
     when:
@@ -209,9 +264,9 @@ env:
     timeout: 180000
 - tapOn: "Make the change"
 - extendedWaitUntil:
-    visible: "Back to your apps"
+    visible: "Back to your apps|Done"
     timeout: 300000
-- tapOn: "Back to your apps"
+- tapOn: "Back to your apps|Done"
 - extendedWaitUntil:
     visible: "Your apps"
     timeout: 30000
