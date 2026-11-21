@@ -33,6 +33,7 @@ Verdicts:
 | 2026-09-24 legal-surface-v2 (session 2 only; session 1 lost all but chain-1) | 8 implementers/fix-workers, reviewer, git-cleaner, 2 Sonar workers, orchestrator | ~68 | 11 | 31 | 10 | 16 |
 | 2026-09-25 beta-1 (resumed closure 2026-09-29; counted 2026-10-09 from verdict tags) | 9 chains, 17 fixes, 3 reviews, 5 device passes, limit investigation, orchestrator | 118 | 28 | 50 | 13 | 27 |
 | 2026-10-07 health-probe-path (on integration/beta-1) | 3 implementers, fix-1, reviewer, orchestrator | 11 tagged (chain-3, fix-1 untagged) | 2 | 4 | 0 | 5 |
+| 2026-11-20/21 upgrade-to-latest-dependencies (5 shifts; tag occurrences in handoffs/verdicts) | 10 chains, 7 fix chains, 1 Sonar lane, ~20 reviews, ~12 runner/device/deploy passes, 5 orchestrators under a PO | ~271 | 57 | 67 | 64 | 83 |
 
 ## Recurring themes
 
@@ -63,6 +64,9 @@ Beta-1 reinforced T1, T4, T7 and T10, and added:
 - **T17 Shared processes need ownership too.** Concurrent server suites interrupted a full gate; dedicated device leases did not prevent a Maestro host-log collision with another project. Gate and device orchestration must account for resources outside source paths.
 - **T18 Acceptance follows the shipping artifact.** Native keyboard and sheet regressions escaped earlier receipts. A source fix after device acceptance requires a rebuilt candidate and receipts naming that candidate.
 - **T19 An absent analysis is not a green gate.** The Sonar probe can exit 0 with GATE:NONE. Closure must also check the current head's settled GitHub result and explicit GATE:OK.
+
+upgrade-to-latest-dependencies reinforced T2, T4, T15 and T18, and added:
+- **T20 Run start trusts local `main`.** MAIN_TIP was read from a local main three commits ahead of origin, so unpushed commits rode the first staging push into public view, and 12f's ancestor check reads the same local ref.
 
 ## What caught real mistakes (keep these)
 
@@ -209,3 +213,16 @@ Beta-1 reinforced T1, T4, T7 and T10, and added:
   - DRAWBACK: `fixloop.sh redcheck` splits the test command on `--`, so it needs a wrapper script. It also reports a tsc build failure as RED, so for server suites builders must show type-satisfying mutation reds.
   - DRAWBACK: `--only config` also selects the 8-minute deploy-config suite (`--only runConfigTests` selects only the config suite). A protocol-level bump also needs `deploy/lib.sh` `WHIM_SMOKE_PROTOCOL_LEVEL`, and that file wasn't in the chain scope.
   - DRAWBACK: subagents always run in the background, so the orchestrator waited by polling transcript tails with a <170 s loop script. Runners that end a turn "waiting on a monitor" look finished to that loop, so also poll their findings file.
+- **2026-11-20/21 — upgrade-to-latest-dependencies: 10 chains + 7 fix chains + 1 Sonar round over 5 shifts (PO over one integration orchestrator per shift; ~95 subagents; verdict tags in handoffs/verdicts ≈ CAUGHT 57 / DRAWBACK 67 / ENV 64 / NEUTRAL 83)**
+  - CAUGHT-REAL-MISTAKE: per-chain Opus reviews (beyond the runbook's one end review) found a real defect in almost every chain: jest lockfile leftover, transitive `@types/node` 25, Reanimated 4.8 `ref()` crash then ~60 warn/s per morph, op-sqlite on a second NDK, CI tripwire gaps; the c10u review predicted both iOS seed-flow misfires before the iOS run. Keep them for dependency moves.
+  - CAUGHT-REAL-MISTAKE (late): the deploy step and the first real CI run caught what every local gate passed: an image without server-nested deps (`pino`), and suite bundles resolving `pino` through the parent directory into the primary tree's stale install. Worktree gates are not hermetic (T4/T15; #284, #288).
+  - CAUGHT-REAL-MISTAKE: device runners caught runtime-only defects (Sheet LayoutMetrics race, dead "Make it" after a spent plan, a persistent `:memory:` file, warm universal links dead in a scene app). T18 reinforced.
+  - DRAWBACK: `fixloop.sh gatefull` is unusable for a lockfile-changing chain (new package.json vs the primary tree's old node_modules); every gate ran in a fresh `worktree.sh create gate-…` checkout. The worktree.sh stale-clone trap cost a shift before 5f6663fa.
+  - DRAWBACK: each control-plane commit on staging moved GATE_BASE (193e5f83 → 5f6663fa → fa6a8972 → 76671efc); after that the tripwire trusts the orchestrator's own edits, and only the end review checked them.
+  - DRAWBACK: run start recorded MAIN_TIP from LOCAL main, 3 commits ahead of origin/main, so unpushed commits (one a security write-up) rode the first staging push into public view; the 12f ancestor check also reads local main. Step 0 should cut from `origin/main` after a fetch and refuse when local main is ahead.
+  - DRAWBACK: staging pushes ran no CI until chain-8 added the `integration/**` trigger. Handoff runbooks for tooling that stays (storage upgrade check) vanish at archive; the end review moved one to docs.
+  - DRAWBACK: T2 again: a fixer's relative-path test runs hit the primary tree and silently skipped the new test. The watchdog counts an emulator the script starts (cap ≥ 8 GB).
+  - NEUTRAL: Sonar was green on the first push (gate OK, 6 new-code issues); a small nested round fixed 3 and accepted 3 with reasons. S9382 now has 3 distinct run-ids (critic candidate). The release upgrade check from the tester build passed on both platforms after its seed flow was adapted to 437758 (#298 filed from what the runners saw).
+  - ENV: Homebrew node is 26 here and shadows nvm 22; gcloud crashes on the default Python 3.15; Ruby 4 bundler dropped `--path`; the primary vendor/bundle targets an older Darwin; AGP auto-installs NDK 28.2 into the shared SDK.
+  - KEEP: verdict files ending in a marker line + bounded wait loops, so the orchestrator never depends on child notices (which reach the PO).
+  - Proposals: worktrees outside the primary checkout (#284); MAIN_TIP from origin/main; a pre-deploy check that runs the real image (#288); a native CI build job (#286).
