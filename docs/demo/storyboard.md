@@ -59,7 +59,7 @@
 
 ## Production rules (emulator)
 
-- Build: `npm run android:release` offline release (Metro NAT route is dead); Node 22 verified (`node -v`)
+- Build: `npm run android:release` offline release (Metro NAT route is dead); Node 26 verified (`node -v`)
 - Record with `scrcpy --record <file> --no-audio` at native emulator resolution; frameless emulator window, device frame off
 - DND/notifications cleared; consistent emulator window size across takes
 - Seed tracker with ~a week of realistic data before take one so charts aren't empty
@@ -78,7 +78,7 @@
 
 You are producing the raw footage for a product demo of **Whim**, a phone launcher (iOS + Android, tested on Android so far) where users create mini-apps by describing them. Everything runs locally: an RN host app (offline release build, no Metro needed), a local generation server, apps rendered in a sandboxed WebView.
 
-Setup: Node 22 (`node -v` must confirm), then `npm run android:release`. Boot one emulator (device frame OFF, fixed window size). Install the release APK if not auto-installed. Confirm the generation server responds before filming anything.
+Setup: Node 26 (`node -v` must confirm), then `npm run android:release`. Boot one emulator (device frame OFF, fixed window size). Install the release APK if not auto-installed. Confirm the generation server responds before filming anything.
 
 Your only job: produce the master capture set in `demo/raw/`, following `docs/demo/storyboard.md` — the checklist section lists shots 1–11, the rules section lists framing/settings. Each shot = its own directory with numbered takes. Shots 1, 4, 10 get 3+ takes minimum; shots 4 and 10 contain one-shot moments (tile transmute, fork divergence) — record LONG takes and verify each contains a clean uncut moment before moving on.
 

@@ -1856,8 +1856,9 @@ forced an attended bootstrap commit for each one.
 
 **Policy.** A dependency is on its latest stable release, or has an entry in `dependency-pins.json`
 (package, range, reason, lift condition). Prereleases are never the target. The fast gate checks the
-pin file offline (every pinned range is what `package.json` declares, every entry has a reason and
-a lift). `npm run deps:audit` is the networked check against npm `latest` and runs outside the
+pin file offline (each pinned package is declared by some workspace; every entry has a range, a
+reason and a lift, with no duplicate entries and no unknown fields; the range has an upper bound;
+the lockfile's resolved version lies inside the range). `npm run deps:audit` is the networked check against npm `latest` and runs outside the
 gates: it exits 1 on any lag not covered by a pin.
 
 **Waves as run.**

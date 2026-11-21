@@ -120,7 +120,7 @@ function readDatabase(file: string): Omit<DatabaseDump, 'sidecars'> {
     const objects: DumpObject[] = db
       .prepare('SELECT type, name, tbl_name, sql FROM sqlite_master ORDER BY type, name')
       .all()
-      .map((row) => ({ type: String(row.type), name: String(row.name), table: String(row.tbl_name), sql: row.sql === null ? null : String(row.sql) }));
+      .map((row) => ({ type: String(row.type), name: String(row.name), table: String(row.tbl_name), sql: typeof row.sql === 'string' ? row.sql : null }));
     const tables: Record<string, DumpTable> = {};
     for (const object of objects) {
       if (object.type === 'table') tables[object.name] = dumpTable(db, object.name);

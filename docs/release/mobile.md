@@ -208,6 +208,37 @@ user takes Advanced → `Use your own server` and confirms once; an address save
 unread. So a seed against a D20 build has to confirm that step before typing the address, and an
 address seeded into an older build reaches a D20 build unread until someone confirms there.
 
+## Storage upgrade check (native storage library or React Native moves)
+
+Run it on top of the upgrade check whenever the storage library (op-sqlite) or React Native changes
+version: the check above compares what the app shows, this one compares the SQLite files byte for value.
+
+1. Serve the seed app from the stub: `WHIM_PIPELINE=stub WHIM_DATA_DIR="$(mktemp -d)" node --env-file=<repo>/.env server/dev.mjs`
+   (port 8787; `adb reverse tcp:8787 tcp:8787` on Android). On the device take Settings > Advanced >
+   Use your own server, confirm, then enter `http://127.0.0.1:8787`.
+2. On the pre-bump build, make an app from `A storage seed [[fixture:storage-v1]]` and open it until
+   it shows "Wrote the v1 seed."; then Change it with `Version two [[fixture:storage-v2]]` and open it
+   until "Wrote the v2 seed.". Order matters: v1 must run before v2 exists, or no field id is burned.
+   Maestro: `scripts/release/upgrade-check/seed-storage.yaml`.
+3. Run `read-storage.yaml` (same folder) and record its `Read back ...: 11 rows, 7 keys` line. Force-stop
+   the app, list the databases (`find . -name '*.db*'`; Android through
+   `adb exec-out run-as com.anycognition.whim`) into `before-files.txt`, and pull every db file
+   with any `-journal`/`-wal`/`-shm`.
+4. Install the new build over the old one, no uninstall. Run `read-storage.yaml` again: it must say
+   "The v2 seed was already there." and the same Read back line. "Wrote the v2 seed." with `1 rows`
+   means the new build opened an empty database elsewhere; "Storage failed: ..." is an error.
+5. Force-stop, list again into `after-files.txt`, pull the files again.
+
+Commands (`node scripts/release/run.mjs <command>`), each exits 1 on failure:
+- `storage-dump <db-file | dir> --out <file>` makes the exact dump (before and after).
+- `storage-seed-check <before-dump.json>` must print `PASS` naming the fixture db.
+- `storage-files-diff <before-files.txt> <after-files.txt>` must print `PASS: the same N file(s)`; a new
+  `.db` means the path moved.
+- `storage-diff <before-dump.json> <after-dump.json>` must print `PASS: ... identical`.
+
+Databases: Android `/data/user/0/com.anycognition.whim/databases/storage/<appId>.db`; iOS simulator
+`<app data container>/Library/storage/<appId>.db` (`xcrun simctl get_app_container <udid> com.anycognition.whim data`).
+
 ## Per-release commands
 
 Run the [upgrade check](#upgrade-check-required-before-any-beta-build-ships) first.
