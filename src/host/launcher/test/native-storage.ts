@@ -69,9 +69,13 @@ export function saveUserData(appId: string): void {
 
 const READS = /^\s*(SELECT|PRAGMA|WITH)\b/i;
 
-export function open({ name }: { name: string; location?: string }) {
-  if (!databases.has(name)) databases.set(name, new DatabaseSync(':memory:'));
-  const db = databases.get(name)!;
+/** As op-sqlite 19 resolves it (cpp/OPSqlite.cpp:88-96, cpp/OPBridge.cpp:117-119): only
+ *  `location: ':memory:'` opens a fresh in-memory database and creates no file; any other open,
+ *  including `name: ':memory:'` without that location, is the named file under the storage base. */
+export function open({ name, location }: { name: string; location?: string }) {
+  const inMemory = location === ':memory:';
+  if (!inMemory && !databases.has(name)) databases.set(name, new DatabaseSync(':memory:'));
+  const db = inMemory ? new DatabaseSync(':memory:') : databases.get(name)!;
   return {
     executeSync(sql: string, params: unknown[] = []) {
       if (READS.test(sql)) {
@@ -84,7 +88,18 @@ export function open({ name }: { name: string; location?: string }) {
       const result = db.prepare(sql).run(...(params as never[]));
       return { rows: [], insertId: Number(result.lastInsertRowid), rowsAffected: Number(result.changes) };
     },
-    close() { closedDatabases.set(name, (closedDatabases.get(name) ?? 0) + 1); },
-    delete() { databases.get(name)?.close(); databases.delete(name); },
+    close() {
+      if (inMemory) {
+        db.close();
+        return;
+      }
+      closedDatabases.set(name, (closedDatabases.get(name) ?? 0) + 1);
+    },
+    /** An in-memory database has no file, so deleting it never touches the persistent one of that name. */
+    delete() {
+      if (inMemory) return;
+      databases.get(name)?.close();
+      databases.delete(name);
+    },
   };
 }

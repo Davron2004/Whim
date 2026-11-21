@@ -36,7 +36,7 @@
     "deps:audit": "node scripts/deps-audit.mjs"
   },
   "dependencies": {
-    "@op-engineering/op-sqlite": "^16.2.0",
+    "@op-engineering/op-sqlite": "^19.0.5",
     "buffer": "^6.0.3",
     "crc-32": "^1.2.2",
     "isomorphic-git": "1.44.17",

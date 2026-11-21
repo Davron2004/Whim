@@ -50,8 +50,9 @@ const SQLITE_CORRUPT = 11;
 const SQLITE_FULL = 13;
 const SQLITE_NOTADB = 26;
 
-/** SQLite's own message for each code (`sqlite3ErrStr`). op-sqlite exposes only the message, so
- *  the code is recovered from it; node:sqlite exposes the code as `errcode`. */
+/** SQLite's own message for each code (`sqlite3ErrStr`). node:sqlite exposes the code as `errcode`;
+ *  op-sqlite errors carry `code`/`extendedCode` since 19 but this classifier keeps reading the
+ *  message, which both bindings still set, so one path serves both. */
 const ERRSTR_CODES: ReadonlyArray<[string, number]> = [
   ['database or disk is full', SQLITE_FULL],
   ['database disk image is malformed', SQLITE_CORRUPT],

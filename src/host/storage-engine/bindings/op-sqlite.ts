@@ -37,9 +37,11 @@ export function createOpSqlExecutor(opts: OpSqlExecutorOptions): SqlExecutor {
   // Lazy require: keep the native module off any path that isn't the device.
   const { open } = require('@op-engineering/op-sqlite');
 
+  // Only `location: ':memory:'` is in-memory: op-sqlite prefixes a bare name with its storage
+  // directory, so `name: ':memory:'` alone would be a file literally named `:memory:` on disk.
   const db =
     opts.mode === 'ephemeral'
-      ? open({ name: ':memory:' })
+      ? open({ name: `${opts.appId}.db`, location: ':memory:' })
       : open({ name: `${opts.appId}.db`, location: 'storage' });
 
   return createOpSqlExecutorOver(db);
