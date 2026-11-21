@@ -39,7 +39,7 @@ of the load CSP carries — it's free *if you remember the CSP*.
 
 ### Friction & dead ends (Spike 1)
 
-- **Node 26** is too new for the RN toolchain — pinned everything to nvm **node 22**.
+- **Node 26** is too new for the RN toolchain — pinned everything to nvm **node 22**. (Superseded: decision #88, Node 26.)
 - **JDK 24** (the only `java_home`-registered JVM) failed `:app:configureCMakeDebug`
   with "A restricted method in java.lang.System has been called" (JDK 24's stricter
   native-access enforcement vs RN's C++ codegen). Fixed by pinning Gradle to

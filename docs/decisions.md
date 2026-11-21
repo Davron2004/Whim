@@ -1851,3 +1851,42 @@ forced an attended bootstrap commit for each one.
   (`.claude/agents/reviewer.md` step 5) flags HIGH any rule turned off, strictness loosened,
   knip `ignore` added to silence a finding, gate script dropped, or dependency added that the plan
   doesn't name. The removal ratchet still catches deleted or shrunk checks.
+
+### 88. Every dependency is on its latest stable release or carries a documented pin `[BUILT — openspec: upgrade-to-latest-dependencies; supersedes the Node 22 pin in DEVLOG]`
+
+**Policy.** A dependency is on its latest stable release, or has an entry in `dependency-pins.json`
+(package, range, reason, lift condition). Prereleases are never the target. The fast gate checks the
+pin file offline (every pinned range is what `package.json` declares, every entry has a reason and
+a lift). `npm run deps:audit` is the networked check against npm `latest` and runs outside the
+gates: it exits 1 on any lag not covered by a pin.
+
+**Waves as run.**
+- W1: tooling and the pin register (`scripts/deps-audit.mjs`, `dependency-pins.json`).
+- W2: Node 26 (`engines >=26`, `.nvmrc`, CI) and the server deploy on it.
+- W3: React Native 0.88.1, JS then Android then iOS. W4 folded in: op-sqlite 19.0.5, because RN
+  0.88.1's iOS build cannot compile op-sqlite 16.x.
+- W5: esbuild 0.28, Playwright 1.65.1 (Chromium 159), CI on ubuntu-26.04. CI runs the lockfile's
+  `node_modules/.bin/knip` and `openspec`, never `npx`.
+- W6: ESLint 9 flat config (`eslint.config.mjs`) and Prettier 3.
+- W7: docs and closure (this entry, CLAUDE.md, release docs).
+
+**Initial pin register.**
+- `@fission-ai/openspec` `^1`: 2.x fails `validate --all --strict` on 66 of 67 specs and moves
+  skills to `.agents/skills/`. Lift: the change that migrates the spec corpus to 2.x validation.
+- `@babel/core` `^7`: RN's babel preset and Metro need 7; Babel 8 is ESM-only. Lift: an RN release
+  supporting Babel 8.
+- `@babel/runtime` `^7`: `metro-runtime` needs 7; moves with `@babel/core`. Same lift.
+- `typescript` `^6.0.3`: 7.0 has no compiler API, which the server checker, `checks/`,
+  typescript-eslint and knip import. Lift: a stable 7.x with a compiler API typescript-eslint supports.
+- `metro-symbolicate` `^0.87`: must match the Metro line RN 0.88.1 resolves. Lift: an RN release on
+  Metro 0.88+.
+- `@react-native-community/cli` and `cli-platform-android` `~20.2.0`: the RN 0.88 template pins them
+  and CLI 21 states no 0.88 support. Lift: a template pinning CLI 21, or notes stating 0.88 support.
+- `eslint` `^9.39`: `@react-native/eslint-config` 0.88.1 and `eslint-plugin-react-native` 5.0.0
+  peer at most ESLint 9 (9.39.x is marked deprecated upstream). Lift: an
+  `@react-native/eslint-config` release peering ESLint 10.
+
+**npm `overrides`** (recorded in DEVLOG.md "Root `overrides`", since the pin file rejects packages no
+workspace declares): `eslint-plugin-ft-flow ^3.0.11` under `@react-native/eslint-config` (2.0.3
+calls `context.getAllComments`, removed in ESLint 9), `basic-ftp ^6.2.2`, and
+`firebase-tools > gaxios > uuid ^11.1.1` (the last two predate this change, reasons unrecorded).

@@ -513,3 +513,9 @@
 - 2026-10-31 fix-beta-2-sonar-r1 S9382 src/host/version-store/engine.ts:258
 - 2026-10-31 fix-beta-2-sonar-r1 S9382 src/host/version-store/engine.ts:468
 - 2026-10-31 fix-beta-2-sonar-r1 S6767 src/sdk/index.tsx:565
+- 2026-11-21 fix-upgrade-sonar-r1 S7031 deploy/Dockerfile:44
+- 2026-11-21 fix-upgrade-sonar-r1 S6551 scripts/release/lib/storage-dump.ts:123
+- 2026-11-21 fix-upgrade-sonar-r1 S8431 deploy/Dockerfile:25
+- 2026-11-21 fix-upgrade-sonar-r1 S8431 deploy/Dockerfile:42
+- 2026-11-21 fix-upgrade-sonar-r1 S9382 scripts/deps-audit.mjs:61
+- 2026-11-21 fix-upgrade-sonar-r1 S7776 scripts/lib/dependency-pins.mjs:21
