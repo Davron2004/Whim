@@ -9,8 +9,9 @@
  * 382511 (build 382100, the same UI). Its state is an ordinary dev session, not a seed: the three
  * examples, a fork of Tip Splitter and a fork of Water Counter, no saved glasses, and a History dump
  * for Style Gallery only. `fixtures/upgrade-check-ios/` is real too: the grid dumps and stores of a
- * passing iOS check (382511 seeded on a new simulator, then beta-1 over it), and 382511's tile menu,
- * where iOS reads a pressable and everything in it as one element with a joined label.
+ * passing iOS check (382511 seeded on a new simulator, then beta-1 over it), 382511's tile menu,
+ * where iOS reads a pressable and everything in it as one element with a joined label, and 437758's
+ * Advanced and Settings screens, which the seed walks on its way back to the grid.
  */
 
 import fs from 'node:fs';
@@ -42,11 +43,16 @@ const IOS_BEFORE = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-ch
 const IOS_AFTER = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-ios/after');
 // 382511's tile menu on iOS, open on the seed's generated app: one element, its rows joined.
 const IOS_TILE_MENU = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-ios/tile-menu-382511.json');
-// 397438's Settings on Android with the keyboard up (the release the seed targets), from `maestro hierarchy`
-// after the seed's own steps up to typing the server address: the app's window (its root view below) and
-// the keyboard's, whose back key is labelled "Back" too.
-const ANDROID_SETTINGS_KEYBOARD = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-android/settings-keyboard-397438.json');
+// 437758's Advanced screen on Android with the keyboard up (the release the seed targets), from `maestro
+// hierarchy` after the seed's steps up to typing the server address: the app's window (its root view below,
+// its header's back button labelled "Navigate up") and the keyboard's, whose back key is labelled "Back".
+const ANDROID_SETTINGS_KEYBOARD = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-android/settings-keyboard-437758.json');
 const ANDROID_APP_WINDOW = 'com.anycognition.whim:id/action_bar_root';
+// 437758's Advanced screen on iOS with the keyboard up after the seed typed the server address, and its
+// Settings screen one Back later, from `maestro hierarchy`. Both sit on a native stack whose back button
+// (id BackButton) is labelled with the previous screen's title.
+const IOS_ADVANCED_KEYBOARD = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-ios/advanced-keyboard-437758.json');
+const IOS_SETTINGS = path.join(REPO_ROOT, 'checks/test/release/fixtures/upgrade-check-ios/settings-437758.json');
 const STORE = path.join(CAPTURE, 'storage/whim.launcher');
 const FLOWS = path.join(REPO_ROOT, 'scripts/release/upgrade-check');
 const DEVICE_ID = 'dbc53eef-5ac9-46f0-b171-3b57cb3e4fab';
@@ -531,8 +537,8 @@ async function runCases(): Promise<void> {
   await test("flows: on Android's keyboard, which has a Back key of its own, the seed drops the keyboard with a plain label above it and waits that key out before tapping Back", () => {
     const seed = fs.readFileSync(path.join(FLOWS, 'seed.yaml'), 'utf8');
     const steps =
-      /- inputText: \$\{SERVER_URL\}\n- tapOn: "((?:[^"\\]|\\.)*)"\n- extendedWaitUntil:\n +notVisible:\n +id: "([^"]+)"\n +timeout: \d+\n- tapOn: "((?:[^"\\]|\\.)*)"/.exec(seed);
-    nodeAssert.ok(steps, 'seed.yaml types the server address, taps a label, waits for an id to go, then taps Back');
+      /- inputText: \$\{SERVER_URL\}\n- runFlow:\n +when:\n +platform: Android\n +commands:\n +- tapOn: "((?:[^"\\]|\\.)*)"\n +- extendedWaitUntil:\n +notVisible:\n +id: "([^"]+)"\n +timeout: \d+\n +- tapOn: "((?:[^"\\]|\\.)*)"/.exec(seed);
+    nodeAssert.ok(steps, 'seed.yaml types the server address, then on Android taps a label, waits for an id to go, and taps Back');
     const [drop, keyboardKey, back] = steps.slice(1).map((value) => new RegExp(`^(?:${value.replace(/\\(.)/g, '$1')})$`));
     const placed = placeNodes(JSON.parse(fs.readFileSync(ANDROID_SETTINGS_KEYBOARD, 'utf8')));
     const describe = (entry: PlacedNode) => JSON.stringify({ ...entry, node: entry.node.attributes });
@@ -551,6 +557,46 @@ async function runCases(): Promise<void> {
     const keys = backs.filter((entry) => !entry.inApp).map((entry) => String(entry.node.attributes?.['resource-id']));
     nodeAssert.ok(keys.length > 0, `${back} finds a key of the keyboard`);
     for (const key of keys) nodeAssert.match(key, keyboardKey, `the seed waits out every key ${back} finds on the keyboard`);
+  });
+
+  await test("flows: on iOS 437758 the seed drops the keyboard with a label above it, goes back by the header's id, and waits for the grid with something Settings does not show", () => {
+    const seed = fs.readFileSync(path.join(FLOWS, 'seed.yaml'), 'utf8');
+    const block = /- inputText: \$\{SERVER_URL\}\n(?:.*\n)*?- runFlow:\n +when:\n +platform: iOS\n +commands:\n((?: {6}.*\n)+)/.exec(seed);
+    nodeAssert.ok(block, 'seed.yaml has an iOS block after typing the server address');
+    const commands = block[1];
+    const selector = (source: RegExp, what: string) => {
+      const match = source.exec(commands);
+      nodeAssert.ok(match, `the iOS block has ${what}`);
+      return match[1].replace(/\\(.)/g, '$1');
+    };
+    const drop = new RegExp(`^(?:${selector(/^ +- tapOn: "((?:[^"\\]|\\.)*)"/, 'a first tap on a label')})$`);
+    const afterFirstBack = selector(/- tapOn:\n +id: "BackButton"\n +- extendedWaitUntil:\n +visible: "((?:[^"\\]|\\.)*)"/, 'a wait after its first Back');
+    const onSettings = selector(/when:\n +visible: "((?:[^"\\]|\\.)*)"\n +commands:\n +- tapOn:\n +id: "BackButton"/, 'a second Back taken only on Settings');
+    const waits = [...commands.matchAll(/extendedWaitUntil:\n +visible: "((?:[^"\\]|\\.)*)"/g)].map((m) => m[1].replace(/\\(.)/g, '$1'));
+    const grid = waits[waits.length - 1];
+    const advanced = placeNodes(JSON.parse(fs.readFileSync(IOS_ADVANCED_KEYBOARD, 'utf8'))).map((entry) => entry.node);
+    const settings = JSON.parse(fs.readFileSync(IOS_SETTINGS, 'utf8')) as unknown;
+
+    const keyboard = advanced.find((node) => node.attributes?.['resource-id'] === 'inputView');
+    const keyboardTop = keyboard && verticalBounds(keyboard)?.top;
+    nodeAssert.ok(keyboardTop !== undefined, 'the Advanced dump shows the keyboard');
+    const drops = advanced.filter((node) => labelMatches(node, drop));
+    nodeAssert.ok(drops.length > 0, `${drop} finds nothing on 437758's Advanced screen`);
+    for (const node of drops) {
+      const bounds = verticalBounds(node);
+      nodeAssert.ok(node.attributes?.value === undefined, `${drop} finds a field, not a label: ${JSON.stringify(node.attributes)}`);
+      nodeAssert.ok(bounds !== undefined && bounds.bottom <= keyboardTop, `${drop} finds a label that does not end above the keyboard (y=${keyboardTop}): ${JSON.stringify(node.attributes)}`);
+    }
+    nodeAssert.ok(advanced.some((node) => node.attributes?.['resource-id'] === 'BackButton'), "Advanced's header has the BackButton the seed taps");
+    nodeAssert.ok(selectorFinds(settings, afterFirstBack), `"${afterFirstBack}" finds Settings after the first Back`);
+    nodeAssert.ok(selectorFinds(settings, onSettings), `"${onSettings}" finds Settings' Version row, so the second Back is taken`);
+    nodeAssert.ok(!selectorFinds({ children: advanced }, onSettings), `"${onSettings}" must not also find something on Advanced`);
+    // Settings' back button reads "Your apps", so a grid wait on that would pass while still on Settings.
+    nodeAssert.ok(selectorFinds(settings, 'Your apps'), "Settings' back button reads the grid's title");
+    nodeAssert.ok(!selectorFinds(settings, grid), `the grid wait "${grid}" must not pass on Settings`);
+    for (const [label, dir] of [['ios 382511', IOS_BEFORE], ['ios beta-1', IOS_AFTER]]) {
+      nodeAssert.ok(selectorFinds(readCapture(dir).grid, grid), `${label}: the grid wait "${grid}" finds the grid`);
+    }
   });
 
   await test("flows: the seed's generated-app name is the one the stub pipeline gives every app", () => {
