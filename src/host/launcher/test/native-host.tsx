@@ -43,6 +43,9 @@ export const StatusBar = host('StatusBar');
 export const injectedScripts: string[] = [];
 /** Every `window.__whimControl.auth(token)` control the host injected, oldest first. */
 export const authInjections: string[] = [];
+/** Every script the host injected, token handovers included, oldest first: the order a page runs
+ *  them in. */
+export const allInjections: string[] = [];
 /** The token handover `runtime-message-auth`'s `authControlJs` writes; group 1 is the token. */
 const AUTH_CONTROL = /^window\.__whimControl&&window\.__whimControl\.auth\('([0-9a-f]{32})'\);true;$/;
 const WEBVIEW_CONTAINER = { flex: 1, overflow: 'hidden' };
@@ -60,6 +63,7 @@ export const WebView = React.forwardRef<{ injectJavaScript: (js: string) => void
   const [authInjected] = React.useState<string[]>(() => []);
   React.useImperativeHandle(ref, () => ({
     injectJavaScript: (js: string) => {
+      allInjections.push(js);
       if (AUTH_CONTROL.test(js)) {
         authInjections.push(js);
         authInjected.push(js);

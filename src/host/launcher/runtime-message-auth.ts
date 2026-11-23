@@ -171,6 +171,7 @@ export class RuntimeChannel {
   private minted = false;
   private snap: RuntimeChannelSnapshot = { dropped: 0, authorized: false, canary: false, exposure: null };
   private readonly listeners = new Set<() => void>();
+  private readonly settledListeners = new Set<(authorized: boolean) => void>();
 
   constructor(
     private readonly source: SecureRandomSource | null | undefined,
@@ -179,22 +180,54 @@ export class RuntimeChannel {
 
   /** Hand the WebView's token to its loaded page (`onLoadEnd`) through `inject`, minting it at the
    *  first call. Returns whether a token was delivered; with none (no secure source), nothing is
-   *  injected, now or at any later load end. */
+   *  injected, now or at any later load end. The first call settles the token (`whenSettled`), after
+   *  the handover: whatever waited for it reaches a page that holds it. */
   deliver(inject: (js: string) => void): boolean {
     if (!this.minted) {
       this.minted = true;
       this.token = mintRuntimeToken(this.source);
-      if (this.token === null) this.hooks.noToken?.();
+      if (this.token === null) {
+        this.hooks.noToken?.();
+        this.settle(false);
+      }
     }
     if (this.token === null) return false;
     inject(authControlJs(this.token));
-    if (!this.snap.authorized) this.set({ authorized: true });
+    if (!this.snap.authorized) {
+      this.set({ authorized: true });
+      this.settle(true);
+    }
     return true;
   }
 
   /** The WebView's token was delivered: a launch may be sent to its page. */
   get authorized(): boolean {
     return this.snap.authorized;
+  }
+
+  /** The WebView's page loaded and no token could be minted for it (no secure source): none ever
+   *  will be, and nothing may be sent to it. */
+  get tokenAbsent(): boolean {
+    return this.minted && this.token === null;
+  }
+
+  /**
+   * Calls `settled` once, when the WebView's first load end decides its token: `true` once the
+   * token is in its page (`authorized`), `false` when none could be minted (`tokenAbsent`). At once
+   * when that is already decided. Until the page loads, nothing can be delivered to it: a launch
+   * asked for earlier waits here rather than failing. Returns a cancel.
+   */
+  whenSettled(settled: (authorized: boolean) => void): () => void {
+    if (this.snap.authorized || this.tokenAbsent) {
+      settled(this.snap.authorized);
+      return () => undefined;
+    }
+    // A registration of its own, so the same callback asked for twice is cancelled one at a time.
+    const waiter = (authorized: boolean) => settled(authorized);
+    this.settledListeners.add(waiter);
+    return () => {
+      this.settledListeners.delete(waiter);
+    };
   }
 
   /**
@@ -250,5 +283,11 @@ export class RuntimeChannel {
   private set(next: Partial<RuntimeChannelSnapshot>): void {
     this.snap = { ...this.snap, ...next };
     for (const listener of [...this.listeners]) listener();
+  }
+
+  private settle(authorized: boolean): void {
+    const waiting = [...this.settledListeners];
+    this.settledListeners.clear();
+    for (const settled of waiting) settled(authorized);
   }
 }

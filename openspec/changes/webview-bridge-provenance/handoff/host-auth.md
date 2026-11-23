@@ -12,9 +12,10 @@ Interface only. Source: `src/host/launcher/runtime-message-auth.ts` (pure), `run
   call injects `authControlJs(token)` = `window.__whimControl&&window.__whimControl.auth('<32 hex>');true;`
   (the SAME token every time) into the main frame, BEFORE the launch's delivery / the waiting page's
   `WARM_PROBE_JS`. Returns `false` (injects nothing) without a token. The page keeps the first token.
-- `useMiniAppHost.deliverBySource` refuses unless `channel.current.authorized` (token delivered to this
-  instance): logs `error` `whim:page` `'mini-app failed'` `{where:'launch', errorClass:'NoBridgeToken'}` and
-  sets `crash: {where:'webview-gone', errorClass:'NoBridgeToken', hostFault:true}` (crash screen at once, no ask-fix).
+- `useMiniAppHost.deliverBySource`: authorized → launch; page still loading → waits (`whenSettled`, latest wins,
+  startup deadline running), out right after the token; no channel / `tokenAbsent` → `error` `whim:page`
+  `'mini-app failed'` `{where:'launch', errorClass:'NoBridgeToken'}` and `crash: {where:'webview-gone',
+  errorClass:'NoBridgeToken', hostFault:true}` (crash screen at once, no ask-fix).
 - No secure source (module missing, `randomHex` null/throws/malformed): token `null`, no `auth`, every
   message dropped and counted, `error` `whim` `'no secure random source: the WebView gets no bridge token'`
   `{where:'bridge-token', errorClass:'NoSecureRandom', surface}` once per WebView (minting is tried once). No fallback.
@@ -47,8 +48,10 @@ export interface RuntimeChannelSnapshot {
 export interface RuntimeChannelHooks { noToken?: () => void; exposure?: (record: ExposureRecord) => void }
 export class RuntimeChannel {
   constructor(source: SecureRandomSource | null | undefined, hooks?: RuntimeChannelHooks);
-  deliver(inject: (js: string) => void): boolean;
+  deliver(inject: (js: string) => void): boolean;   // the first call settles the token, after the handover
   get authorized(): boolean;
+  get tokenAbsent(): boolean;            // page loaded without a token: never will have one
+  whenSettled(settled: (authorized: boolean) => void): () => void; // once (at once if settled); a cancel
   receive(raw: unknown): string | null;  // verified body for the consumer, or null (dropped / consumed)
   snapshot(): RuntimeChannelSnapshot;
   subscribe(listener: () => void): () => void;
@@ -96,8 +99,7 @@ export function createRuntimeChannel(surface: RuntimeSurface): RuntimeChannel; /
 export function useRuntimeChannel(channel: RuntimeChannel): RuntimeChannelSnapshot; // useSyncExternalStore
 ```
 
-Every channel's `hooks.exposure` calls `onExposure`; nothing else reads exposure. There is no `diagnostics`
-log channel: the record is logged on `whim` at `info` (not uploaded by the error-only transport).
+Every channel's `hooks.exposure` calls `onExposure`; nothing else reads exposure. It logs on `whim` at `info`.
 
 ## 6. Where it shows
 
@@ -109,12 +111,10 @@ log channel: the record is logged on `whim` at `info` (not uploaded by the error
 
 ## 7. Test helpers (`src/host/launcher/test/native-host.tsx`)
 
-- `WebView` mock reports `onLoadStart` once at mount (no host listens); `nativeLoadStart(web, url?)` plays a
-  later one (the iOS/Android spurious event) through the element's `onLoadStart` if any; auth injections go to `authInjections` (global) and
-  the host element's `authInjected` prop, never to `injectedScripts` / `injected`.
+- `WebView` mock reports `onLoadStart` once at mount (no host listens); `nativeLoadStart(web, url?)` plays a later
+  one. Auth injections go to `authInjections` and the element's `authInjected` prop, never to `injectedScripts`.
 - `pageToken(web): string` — token of `web`'s last recorded `auth` (throws if none).
 - `signed(tokenOrWeb, frame | string): string` — `W1.<token>.<JSON or the string>`.
-- `secureRandom: { mode: 'ok' | 'fails' | 'throws'; calls }` — the registered `WhimRandom` stub
-  (`fails` → null, `throws` → throws). Module-missing is not playable in the bundled suite (the codegen
-  default export is read once at import); it is covered on `RuntimeChannel(null)` in the pure suite.
+- `secureRandom: { mode: 'ok' | 'fails' | 'throws'; calls }` — the `WhimRandom` stub. Module-missing is not playable
+  in the bundled suite (its default export is read once at import): covered on `RuntimeChannel(null)`, pure suite.
 - `changing-in-use-ui.suite.tsx`: `pageOf(web): HeldPage {onMessage, token}`, `send(page, frame)`.

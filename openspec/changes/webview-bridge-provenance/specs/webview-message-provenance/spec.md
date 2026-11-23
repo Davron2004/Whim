@@ -15,6 +15,10 @@ The RN host SHALL mint a token of at least 128 bits from a cryptographically sec
 - **WHEN** the native view reports a main-frame load end again for the same WebView instance (Android may report one twice; a content-process termination that reloads the same instance)
 - **THEN** the same token is delivered again, and nothing the page signs is dropped
 
+#### Scenario: A launch asked for while the page loads waits for its token
+- **WHEN** a launch is asked for into a WebView whose page has not reached its first main-frame load end
+- **THEN** nothing is sent to the page before that load end, the token is delivered there and the launch right after it, and the launch does not fail for want of a token, and the latest launch asked for wins; a page that never loads fails the launch at the startup deadline; if no token can be minted at that load end, the launch fails as one with no bridge token
+
 #### Scenario: No secure source, no channel
 - **WHEN** the host's cryptographically secure random source is unavailable or throws
 - **THEN** no token is minted, no message from that WebView is accepted, and the failure is logged on the host's error channel
