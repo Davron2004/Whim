@@ -44,7 +44,8 @@ Eight principles; when two collide, the earlier wins.
 |---|---|---|
 | Ember | Whim is doing, or will do, the work | "Make it", "Make the change", "Try again", the orb, a tile being made, picked "Decide for me" |
 | An app's tint (cool) | That app | Its tile, its name in prose, "Open it" on Ready, the app's own buttons |
-| Ink | You and the system | Selected answers, quoted words, "Agree to send descriptions", "Send report", shell switches, a confirm sheet's safe button |
+| Ink | You and the system | Selected answers, quoted words, "Agree to send descriptions", "Send report", a confirm sheet's safe button |
+| `switch-on` green | On | A shell switch that is on: the green phones use for on, so on and off differ by more than which grey sits where |
 | `danger` red | Danger | Delete, Discard, an error that stopped work |
 | `warning` amber | Take care | A notice that needs attention |
 | `positive` green | It worked | Ready, restored, verified |
@@ -57,7 +58,7 @@ badges always carry their icon.
 
 ### 2.1 Neutrals and roles
 
-Warm low-chroma greys (OKLCH hue 60–75). Contrast is WCAG 2.2.
+Warm low-chroma greys (OKLCH hue 60–75), and one hue, `switch-on`. Contrast is WCAG 2.2.
 
 <!-- tokens:begin roles -->
 | Role | Light | Dark | Use | Contrast |
@@ -69,7 +70,7 @@ Warm low-chroma greys (OKLCH hue 60–75). Contrast is WCAG 2.2.
 | `raised` | `#FFFFFF` + `shadow-raised` | `#252220` + top highlight | Menus, toasts, popovers, the orb, the composer | |
 | `fill` | `#EBE9E6` | `#2E2B28` | Secondary buttons, segmented track, chips | |
 | `fill-strong` | `#E0DDDA` | `#3C3936` | Pressed fills, skeletons, progress tracks | |
-| `thumb` | `#FFFFFF` + `shadow-raised` | `#3C3936` | Segmented thumb, slider thumb, switch knob when off | |
+| `thumb` | `#FFFFFF` + `shadow-raised` | `#3C3936` | Segmented thumb, slider thumb | |
 | `separator` | `#E2DFDB` | `#34312F` | Hairlines between rows (holds no edge: 1.21:1) | |
 | `border` | `#908B86` | `#756F69` | Input and outlined-control edges; the off switch track and the slider track | ≥ 3.07 / ≥ 3.19 on `bg`, `surface`, `sheet`, `sheet-group` |
 | `text` | `#1A1614` | `#F2F0EC` | Primary text | ≥ 14.83 / ≥ 12.36 on `bg`, `surface`, `sheet`, `sheet-group`, `fill` |
@@ -77,6 +78,8 @@ Warm low-chroma greys (OKLCH hue 60–75). Contrast is WCAG 2.2.
 | `text-3` | `#908B86` | `#78746E` | **Disabled only** | Exempt (disabled) |
 | `ink` | `#1A1614` | `#F2F0EC` | The system's prominent fill | |
 | `on-ink` | `#FFFFFF` | `#1A1614` | Label on `ink` | 17.97 / 15.79 on `ink` |
+| `switch-on` | `#208E4E` | `#208E4E` | A shell switch that is on: iOS's track under its `switch-knob`, Android's knob over an `ink` track | ≥ 4.17 / ≥ 3.66 on `surface`, `sheet-group`, `ink`, `switch-knob` |
+| `switch-knob` | `#FFFFFF` | `#FFFFFF` | iOS's switch knob, on and off: white in both schemes, as the platform draws it | 3.37 / 4.96 on `border` |
 | `scrim` | `rgba(26,22,20,0.32)` | `rgba(0,0,0,0.60)` | Behind sheets and menus | |
 <!-- tokens:end roles -->
 
@@ -320,7 +323,7 @@ own answer); if glass comes later, level 3 only.
 **Two lists ship.** The **glyph set** (147, below) is what the generator may name for a tile or `Icon`.
 The **chrome set** is what shell and SDK components draw: `chevron-left` `chevron-right` `chevron-down`
 `arrow-left` `arrow-up` `x` `check` `plus` `minus` `ellipsis` `settings` `search` `copy` `share`
-`external-link` `info` `circle-alert` `triangle-alert` `circle-check`, plus `circle` (fallback only).
+`external-link` `info` `circle-alert` `triangle-alert` `circle-check` `smartphone`, plus `circle` (fallback only).
 `Icon name` resolves against both; a tile glyph resolves against the glyph set only.
 
 | Group | Glyphs |
@@ -631,8 +634,8 @@ two lines (`minHeight`); paired buttons stack from 135%. Busy and disabled are a
 | Context menu | 350 ms long-press (M12). Card `raised`, `r-lg`, `shadow-raised`, width 248, under the tile (above when no room), 8 pt away, never over the names of the row it opens from; headed by the app's full name (`footnote` 600 `text-2`). Rows 48 pt, 20 pt icon + `body` in `text`; a separator, then the destructive row in `danger-text`. A row may swap the card to a second step with a back row. Announced as a menu; each row its own button |
 | Toast | Capsule, `raised`, `shadow-floating`, max width 360, min height 48, padding 12 × 16, 12 pt above whatever floats (composer, orb, safe area). `callout`; an optional `headline` text action (`text`, or `ember-text` when it asks Whim). 4 s, 6 s with an action, 10 s for delete Undo; pauses while touched and under a screen reader; swipe down dismisses (M14). Announced politely |
 | Chip | Capsule 36 high (44 target), 14 pt side padding, `callout` 500. Unselected `fill`/`text`; selected `ink`/`on-ink` with a 16 pt `check`, single and multi alike. "Decide for me": unselected `fill` + `ember-text`, selected `ember-soft` + `ember-text` + `check`; selected by default on every question; exclusive in multi-select. Suggestion chips: `fill`/`text`, no selected state. Press 0.96; fill changes with `color`; selection haptic. Replaces four pill styles |
-| Text field / area | `surface`, 1 px `border`, `r-md`, padding 12 × 14 (area 14 × 16, 3 lines growing to 8, then scrolls), text `body` 17. Label `footnote` 600 `text-2` 6 pt above; placeholder `text-2`. Focus: 2 pt `text` border, ink caret. Error: 2 pt `danger`, helper in `danger-text` with an icon. Clear button on non-empty single-line fields; the Whim sheet's send area has a 32 pt `ember` `arrow-up` button inside its trailing edge |
-| Grouped list | Group `surface` (canvas) or `sheet-group` (sheet), `r-lg`, no border, separators per §2.8. Row min 52, padding 12 × 16, optional 20 pt `text-2` icon (with a subtitle it sits beside the title's first line; the icon slot may hold an 8 pt `danger` dot instead), title `body`, subtitle `footnote` `text-2`; trailing value (`callout` `text-2`), `chevron-right`, switch, `external-link` or copy button; pressed `fill`; destructive title `danger-text`. Section header `footnote` 600 `text-2` 8 pt above, footer `footnote` `text-2` 8 pt under. Shell switches are the platform's own: on-track `ink`, off-track `border`, knob `on-ink` on iOS; Android's knob overhangs its track onto the group, so there it is `border` on and `ink` off. Track and knob each hold 3:1 on what they sit on, on either group, in both schemes. A form in a sheet puts its groups on `sheet-group` |
+| Text field / area | `surface`, 1 px `border`, `r-md`, padding 12 × 14 (area 14 × 16, 3 lines growing to 8, then scrolls), text `body` 17. Label `footnote` 600 `text-2` 6 pt above; placeholder `text-2`. The label and the helper or error line are inset 16, as a section header is; the box is full width. Focus: 2 pt `text` border, ink caret. Error: 2 pt `danger`, helper in `danger-text` with an icon. Clear button on non-empty single-line fields; the Whim sheet's send area has a 32 pt `ember` `arrow-up` button inside its trailing edge |
+| Grouped list | Group `surface` (canvas) or `sheet-group` (sheet), `r-lg`, no border, separators per §2.8. Row min 52, padding 12 × 16, optional 20 pt `text-2` icon (with a subtitle it sits beside the title's first line; the icon slot may hold an 8 pt `danger` dot instead), title `body`, subtitle `footnote` `text-2`; trailing value (`callout` `text-2`), `chevron-right`, switch, `external-link` or copy button; pressed `fill`; destructive title `danger-text`. Section header `footnote` 600 `text-2` 8 pt above, footer `footnote` `text-2` 8 pt under. Shell switches are the platform's own, off-track `border`: on iOS on-track `switch-on`, knob `switch-knob` (white, on and off, in both schemes, as iOS's own); Android's knob overhangs its track onto the group, so there on is a `switch-on` knob on an `ink` track and off an `ink` knob. Track and knob each hold 3:1 on what they sit on, on either group, in both schemes. A form in a sheet puts its groups on `sheet-group` |
 | App tile | Props `app`, `state`, `size` (`inline` 24, `menu` 40, `grid` 64, `hero` 96), `activity` (0–1). Exports its geometry so the home skeleton draws the same cells. §3.2 |
 | Composer bar | Capsule 52 high, `raised` + `shadow-floating`, full width inside the gutters, 12 pt above the bottom safe area; 24 ember leading, then "Make an app…" (`body` `text-2`) or "Continue "A timer for my…"" when a draft waits. One button, not a field; morphs into Describe (M6). Ambient light under it while something is made |
 | Ember, AmbientLight | `size`, `state`, `activity` per §3.3; hidden from screen readers (the status line carries the label) |

@@ -88,7 +88,9 @@ const styles = makeStyles((t) => ({
   content: { paddingHorizontal: LAYOUT.gutter, paddingTop: SPACE[4], paddingBottom: SPACE[8] },
   title: { marginBottom: LAYOUT.gapTitleToContent },
   address: { marginTop: -SPACE[2], marginBottom: LAYOUT.gapBetweenGroups, gap: SPACE[2] },
-  checkLine: { flexDirection: 'row' as const, alignItems: 'flex-start' as const, gap: SPACE[1] },
+  // The lines under the field start where the field's label and a section header do.
+  checkLine: { flexDirection: 'row' as const, alignItems: 'flex-start' as const, gap: SPACE[1], paddingHorizontal: LAYOUT.listRowPaddingHorizontal },
+  caption: { paddingHorizontal: LAYOUT.listRowPaddingHorizontal },
   // The 16 pt glyph centres on the line's first row of text, which scales with the text size.
   checkGlyph: { marginTop: Math.max(0, (TYPE_SCALE.footnote.lineHeight * Math.min(t.fontScale, MAX_FONT_SCALE) - CHECK_GLYPH) / 2) },
   checkText: { flex: 1 },
@@ -224,7 +226,7 @@ export default function AdvancedScreen({
               </View>
             )}
             {savedAddress !== undefined && (
-              <Text type="footnote" color="text-2">
+              <Text type="footnote" color="text-2" style={s.caption}>
                 {legal.ownServerCaption}
               </Text>
             )}

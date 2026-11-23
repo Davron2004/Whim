@@ -42,6 +42,10 @@ const screenTitles = (tree: Tree, id: string) =>
     .filter((node) => node.props.type === 'largeTitle' || node.props.type === 'title1')
     .map((node) => [node.props.type, textOf(node), node.find((n) => hostType(n) === 'Text').props.accessibilityRole]);
 
+/** The top inset of the scrolling content `screen` draws under the platform header. */
+const contentTop = (screen: TestRenderer.ReactTestInstance) =>
+  StyleSheet.flatten(screen.find((n) => hostType(n) === 'ScrollView').props.contentContainerStyle).paddingTop as number;
+
 /** Every way the platform takes the top screen off: iOS (the header back, the edge or content
  *  swipe), Android's header back, and Android's system back. */
 const POPS: readonly [string, (tree: Tree) => Promise<void>][] = [
@@ -221,6 +225,29 @@ export async function runNativeStackUiTests(h: Harness): Promise<void> {
       } finally {
         await TestRenderer.act(async () => setColorScheme('light'));
       }
+    }
+  });
+
+  await h.test('native stack: AI features starts its content as far under the platform header as Settings does, so the language switch and its touch target sit clear of the header, in both languages and at large text (wbp-d7)', async () => {
+    for (const scale of [1, LARGE_TEXT_FROM, 2]) {
+      try {
+        await withLauncher({ server: nothing }, async ({ tree }) => {
+          await TestRenderer.act(async () => setFontScale(scale));
+          await openSettings(tree);
+          const underHeader = contentTop(tree.root.findByType(SettingsScreen));
+          await press(button(tree, COPY.settingsAISectionTitle));
+          for (const language of ['en', 'fr'] as const) {
+            const review = tree.root.findByType(ConsentScreen);
+            h.eq(review.props.language, language, `x${scale}: the screen is in ${language}`);
+            const legalSwitch = button(tree, LEGAL_COPY[language].legalLanguageSwitch);
+            const slop = Number(legalSwitch.props.hitSlop ?? 0);
+            const top = contentTop(review);
+            h.eq(top, underHeader, `x${scale} ${language}: the content starts ${underHeader} pt under the header, as on Settings`);
+            h.ok(top >= slop, `x${scale} ${language}: the switch's touch target (${slop} pt over its label) stays inside the content, under the header (inset ${top})`);
+            await press(legalSwitch);
+          }
+        });
+      } finally { windowMetrics.fontScale = 1; }
     }
   });
 }

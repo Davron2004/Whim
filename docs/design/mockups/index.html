@@ -244,14 +244,14 @@ a { color: inherit; }
 .w-group { margin: 0 var(--w-gutter); }
 
 /* Platform switch */
-.w-switch { width: 51px; height: 31px; border-radius: 16px; background: var(--w-fill-strong); position: relative; flex: none; }
-.w-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: var(--w-thumb); box-shadow: 0 2px 4px rgba(0, 0, 0, .18); }
-.w-switch.on { background: var(--w-ink); }
-.w-switch.on::after { left: 22px; background: var(--w-on-ink); }
-.phone[data-platform="android"] .w-switch { width: 52px; height: 32px; border: 2px solid var(--w-border); background: var(--w-fill); }
-.phone[data-platform="android"] .w-switch::after { width: 16px; height: 16px; top: 6px; left: 6px; background: var(--w-border); box-shadow: none; }
+.w-switch { width: 51px; height: 31px; border-radius: 16px; background: var(--w-border); position: relative; flex: none; }
+.w-switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 27px; height: 27px; border-radius: 50%; background: var(--w-switch-knob); box-shadow: 0 2px 4px rgba(0, 0, 0, .18); }
+.w-switch.on { background: var(--w-switch-on); }
+.w-switch.on::after { left: 22px; }
+.phone[data-platform="android"] .w-switch { width: 52px; height: 32px; border: 2px solid var(--w-border); background: var(--w-border); }
+.phone[data-platform="android"] .w-switch::after { width: 16px; height: 16px; top: 6px; left: 6px; background: var(--w-ink); box-shadow: none; }
 .phone[data-platform="android"] .w-switch.on { border-color: var(--w-ink); background: var(--w-ink); }
-.phone[data-platform="android"] .w-switch.on::after { width: 24px; height: 24px; top: 2px; left: 22px; background: var(--w-on-ink); }
+.phone[data-platform="android"] .w-switch.on::after { width: 24px; height: 24px; top: 2px; left: 22px; background: var(--w-switch-on); }
 
 /* ── Chips ─────────────────────────────────────────────────────────────── */
 .w-chips { display: flex; flex-wrap: wrap; gap: 8px; }
@@ -511,7 +511,7 @@ const TOKENS = {
     ['raised', '--w-raised', '#FFFFFF', '#252220', 'Menus, toasts, popovers, the orb, the composer'],
     ['fill', '--w-fill', '#EBE9E6', '#2E2B28', 'Secondary buttons, segmented track, chips'],
     ['fill-strong', '--w-fill-strong', '#E0DDDA', '#3C3936', 'Pressed fills, skeletons, progress tracks'],
-    ['thumb', '--w-thumb', '#FFFFFF', '#3C3936', 'Segmented thumb, slider thumb, switch knob when off'],
+    ['thumb', '--w-thumb', '#FFFFFF', '#3C3936', 'Segmented thumb, slider thumb'],
     ['separator', '--w-sep', '#E2DFDB', '#34312F', 'Hairlines between rows (holds no edge: 1.21:1)'],
     ['border', '--w-border', '#908B86', '#756F69', 'Input and outlined-control edges; the off switch track and the slider track'],
     ['text', '--w-text', '#1A1614', '#F2F0EC', 'Primary text'],
@@ -519,6 +519,8 @@ const TOKENS = {
     ['text-3', '--w-text3', '#908B86', '#78746E', 'Disabled only'],
     ['ink', '--w-ink', '#1A1614', '#F2F0EC', 'The system\'s prominent fill'],
     ['on-ink', '--w-on-ink', '#FFFFFF', '#1A1614', 'Label on ink'],
+    ['switch-on', '--w-switch-on', '#208E4E', '#208E4E', 'A shell switch that is on: iOS\'s track under its switch-knob, Android\'s knob over an ink track'],
+    ['switch-knob', '--w-switch-knob', '#FFFFFF', '#FFFFFF', 'iOS\'s switch knob, on and off: white in both schemes, as the platform draws it'],
     ['ember', '--w-ember', '#C14900', '#F99549', 'Fill of Whim\'s buttons; the current-step marker and 8 pt dots'],
     ['on-ember', '--w-on-ember', '#FFFFFF', '#1A1614', 'Label on ember'],
     ['ember-text', '--w-ember-text', '#B14200', '#F99549', 'Text and icons'],
@@ -787,6 +789,7 @@ Object.assign(ICONS, {
   'wifi-off': '<path d="M12 20h.01"/><path d="M8.5 16.429a5 5 0 0 1 7 0"/><path d="M5 12.859a10 10 0 0 1 5.17-2.69"/><path d="M19 12.859a10 10 0 0 0-2.007-1.523"/><path d="M2 8.82a15 15 0 0 1 4.177-2.643"/><path d="M22 8.82a15 15 0 0 0-11.288-3.764"/><path d="m2 2 20 20"/>',
   'circle-stop': '<circle cx="12" cy="12" r="10"/><rect x="9" y="9" width="6" height="6" rx="1"/>',
   'chevron-up': '<path d="m18 15-6-6-6 6"/>',
+  'smartphone': '<rect width="14" height="20" x="5" y="2" rx="2" ry="2"/><path d="M12 18h.01"/>',
 });
 
 function icon(name, size = 20, stroke = 2, extra = '') {

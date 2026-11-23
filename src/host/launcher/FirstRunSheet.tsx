@@ -221,7 +221,7 @@ function FirstRunBody(props: Readonly<Omit<FirstRunSheetProps, 'visible'>>) {
       </GroupedSection>
       <GroupedSection on="sheet">
         <GroupedRow icon="arrow-up" title={copy.firstRunSentTitle} subtitle={firstRunSentText(copy)} />
-        <GroupedRow icon="phone" title={copy.firstRunStaysTitle} subtitle={copy.firstRunStays} />
+        <GroupedRow icon="smartphone" title={copy.firstRunStaysTitle} subtitle={copy.firstRunStays} />
         <GroupedRow icon="lock" title={copy.firstRunNeverTitle} subtitle={copy.firstRunNever} />
       </GroupedSection>
       <GroupedSection on="sheet">

@@ -81,7 +81,7 @@ Icon  { name: string; size?: 'sm' | 'md' | 'lg' /* 'md' */; color?: TextColor /*
   is any glyph from the tile list, or one of these interface icons: `chevron-left`,
   `chevron-right`, `chevron-down`, `arrow-left`, `arrow-up`, `x`, `check`, `plus`, `minus`,
   `ellipsis`, `settings`, `search`, `copy`, `share`, `external-link`, `info`, `circle-alert`,
-  `triangle-alert`, `circle-check`. An unknown name draws a plain circle.
+  `triangle-alert`, `circle-check`, `smartphone`. An unknown name draws a plain circle.
 
 ## 4. Buttons and inputs
 

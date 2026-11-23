@@ -45,7 +45,7 @@ export const NEUTRAL_ROLES = {
   thumb: {
     light: '#FFFFFF',
     dark: '#3C3936',
-    use: 'Segmented thumb, slider thumb, switch knob when off',
+    use: 'Segmented thumb, slider thumb',
     material: { light: '+ `shadow-raised`', dark: '' },
   },
   separator: { light: '#E2DFDB', dark: '#34312F', use: 'Hairlines between rows (holds no edge: 1.21:1)' },
@@ -55,6 +55,12 @@ export const NEUTRAL_ROLES = {
   'text-3': { light: '#908B86', dark: '#78746E', use: '**Disabled only**' },
   ink: { light: '#1A1614', dark: '#F2F0EC', use: "The system's prominent fill" },
   'on-ink': { light: '#FFFFFF', dark: '#1A1614', use: 'Label on `ink`' },
+  'switch-on': {
+    light: '#208E4E',
+    dark: '#208E4E',
+    use: "A shell switch that is on: iOS's track under its `switch-knob`, Android's knob over an `ink` track",
+  },
+  'switch-knob': { light: '#FFFFFF', dark: '#FFFFFF', use: "iOS's switch knob, on and off: white in both schemes, as the platform draws it" },
   scrim: { light: 'rgba(26,22,20,0.32)', dark: 'rgba(0,0,0,0.60)', use: 'Behind sheets and menus' },
 } as const satisfies Record<string, RoleSpec>;
 
@@ -201,9 +207,13 @@ const TEXT_SURFACES: readonly ColorRole[] = ['bg', 'surface', 'sheet', 'sheet-gr
 
 /** Every pair §2 specifies a contrast floor for (text 4.5:1, non-text edges 3:1). `text-3` is
  *  disabled-only and exempt. `border` is also the off switch track and the slider track, which sit on
- *  every surface a control does, a Modal's `sheet-group` included (design-system-v1 task 6.7). */
+ *  every surface a control does, a Modal's `sheet-group` included (design-system-v1 task 6.7).
+ *  `switch-on` stands off the groups a shell switch sits on, the `ink` track Android's knob rides
+ *  and the `switch-knob` iOS's track carries; that knob also stands off the off track, `border`. */
 export const CONTRAST_RULES: readonly ContrastRule[] = [
   { fg: 'border', on: ['bg', 'surface', 'sheet', 'sheet-group'], floor: 3 },
+  { fg: 'switch-on', on: ['surface', 'sheet-group', 'ink', 'switch-knob'], floor: 3 },
+  { fg: 'switch-knob', on: ['border'], floor: 3 },
   { fg: 'text', on: TEXT_SURFACES, floor: 4.5 },
   { fg: 'text-2', on: TEXT_SURFACES, floor: 4.5 },
   { fg: 'on-ink', on: ['ink'], floor: 4.5 },

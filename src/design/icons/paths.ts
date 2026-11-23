@@ -171,5 +171,6 @@ export const ICON_PATHS: Readonly<Record<IconName, string>> = {
   'circle-alert': 'M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0M12 8L12 12M12 16L12.01 16',
   'triangle-alert': 'M21.73 18l-8 -14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3M12 9v4M12 17h.01',
   'circle-check': 'M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0M9 12l2 2 4 -4',
+  'smartphone': 'M7 2h10a2 2 0 0 1 2 2v16a2 2 0 0 1 -2 2h-10a2 2 0 0 1 -2 -2v-16a2 2 0 0 1 2 -2ZM12 18h.01',
   'circle': 'M2 12a10 10 0 1 0 20 0a10 10 0 1 0 -20 0',
 };
