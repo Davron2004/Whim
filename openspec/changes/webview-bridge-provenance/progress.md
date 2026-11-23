@@ -75,3 +75,13 @@ Ledger (append-only, written as it happens).
 - sonar round 2: S7721 fixed (protoOf → top-level const, unreachable via window). integrity OK, ratchet PASS, gate.sh PASS; merged.
 - gate-full after sonar round 2: FULL GATE PASSED; re-pushing.
 - PR #309 after round 2: SETTLED PASS 5/5; Sonar gate OK, 6 open = exactly the reasoned Accepts (S4138 probes.js indexed loop, S7758×2 charCodeAt, S7747 snapshot, S6582×2 raw-inlined es2019) — owner can mark them Accepted in SonarCloud (token-bearing). Sonar green → history cleanup.
+
+## Closing summary (2026-11-22)
+
+- **Chains:** 1, 2, 3, 4, 6, 7 (new, Hermes has no crypto), 8 (fix: token per WebView + all-handler cut), 9 (end-review fixes), plus the docs chain and 2 Sonar rounds. Redispatches: chain-3 once (blocked before code: Hermes crypto), chain-8 once (blocked before code: HistoryShim). Bootstrap commits: chain-1 gate-full line, chain-2 build/ (reviewed, approve-with-fixes), chain-9 build/ comments.
+- **Deviations:** all class A were adjudicated in the ledger above. Class B: chain-3 (secure source), chain-8 (rotation unsafe). Class C: none.
+- **Caught on device:** an iOS release blocker (spurious onLoadStart for about:blank iframes → token rotation → every message dropped), fixed by chain-8 and re-verified. Android shows a navigated data: frame reaches the bridge on WebView 158; the native filter and the token each stop it.
+- **Reviewer verdict:** end review FINDINGS, no high-severity items; all 10 handled (chain-9 or docs chain). Sonar: green, with 6 reasoned Accepts left open in SonarCloud.
+- **Census discharge:** #299 filed; side findings #300–#308.
+- **History:** 70 commits → 8 topic commits (cleanup gate PASS); `backup/pre-cleanup-integration-webview-bridge-provenance` kept as the rollback.
+- **Open for owner:** mark the 6 Sonar Accepts in SonarCloud; #308 ("what's new" copy); the old `backup/pre-cleanup-integration-beta-1` ref is still present.
