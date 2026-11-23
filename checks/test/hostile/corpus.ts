@@ -55,6 +55,14 @@ root[key]('https://example.invalid');
     },
   },
   {
+    name: 'aliased location navigates the frame to a data: page',
+    source: appSource(`
+const where = location;
+where.href = 'data:text/html,<p>hi</p>';
+`),
+    expected: 'forbidden_global',
+  },
+  {
     name: 'string assembly in manifest capabilities is rejected instead of trusted',
     source: `${APP_IMPORT}
 function Home() {

@@ -359,6 +359,7 @@ async function testForbiddenGlobalsWalk(): Promise<void> {
     'eval', 'Function', 'document',
     'fetch', 'XMLHttpRequest', 'WebSocket', 'EventSource', 'RTCPeerConnection',
     'localStorage', 'sessionStorage', 'indexedDB', 'caches', 'Worker', 'SharedWorker',
+    'location', 'ReactNativeWebView', 'webkit',
     ...FORBIDDEN_DIRECT_NAMES,
   ]);
   const roots = new Set(['window', 'globalThis', 'self', 'top', 'parent', 'frames', ...GLOBAL_ROOTS]);
@@ -414,6 +415,109 @@ async function testForbiddenGlobalsWalk(): Promise<void> {
     const src = "function f(fetch: string): string {\n  return fetch + '!';\n}\nf('a');\n";
     const r = runStaticChecks(src);
     assertNoKind(r, 'forbidden_global', 'a parameter named "fetch", used only as a plain local value, must not be flagged');
+  });
+
+  /** Every forbidden_global diagnostic in `src`'s report, as `symbol` + `hint`. */
+  const globalHits = (src: string): { symbol: string; hint: string }[] =>
+    findByKind(runStaticChecks(src), 'forbidden_global').map((d) => ({ symbol: d.symbol ?? '', hint: d.hint }));
+
+  await test('globals: bare frame self-navigation is flagged on `location` with the navigation hint', () => {
+    for (const src of [
+      "location.href = 'data:text/html,x';\n",
+      "location.replace('data:text/html,x');\n",
+      "location.assign('data:text/html,x');\n",
+      "location = 'data:text/html,x' as unknown as Location;\n",
+    ]) {
+      const hits = globalHits(src);
+      assert(hits.some((h) => h.symbol === 'location'), `expected a forbidden_global on "location" for ${JSON.stringify(src)}, got ${JSON.stringify(hits)}`);
+      assert(hits.every((h) => h.hint.includes("nav.navigate('ScreenName')")), `the hint must point at vc-sdk's nav.navigate for ${JSON.stringify(src)}, got ${JSON.stringify(hits)}`);
+    }
+  });
+
+  await test('globals: location reached through a global root or an alias is flagged with the navigation hint', () => {
+    // The symbol is the hit that stands for the access itself (the root or the alias), not the
+    // bare `window`/`location` read that initialises an alias.
+    for (const [src, symbol] of [
+      ["window.location.href = 'x';\n", 'window'],
+      ["globalThis.location.assign('x');\n", 'globalThis'],
+      ["const w = window;\nw.location.href = 'x';\n", 'w'],
+      ["const l = location;\nl.href = 'x';\n", 'l'],
+    ] as const) {
+      const hits = globalHits(src).filter((h) => h.symbol === symbol);
+      assert(hits.length > 0, `expected a forbidden_global on "${symbol}" for ${JSON.stringify(src)}`);
+      assert(hits.every((h) => h.hint.includes("nav.navigate('ScreenName')")), `every "${symbol}" hit needs the navigation hint for ${JSON.stringify(src)}, got ${JSON.stringify(hits)}`);
+    }
+  });
+
+  await test('globals: only the member applied directly to the root picks the specific hint; an alias keeps what it came from', () => {
+    const nested = globalHits("const w = window;\nw.myState.location = 1;\n");
+    assert(nested.length > 0 && nested.every((h) => !h.hint.includes('nav.navigate')), `w.myState.location must not get the navigation hint, got ${JSON.stringify(nested)}`);
+    const direct = globalHits("const w = window;\nw.location.href = 'x';\n").filter((h) => h.symbol === 'w');
+    assert(direct.length > 0 && direct.every((h) => h.hint.includes("nav.navigate('ScreenName')")), `w.location.href must get the navigation hint on every w hit, got ${JSON.stringify(direct)}`);
+    for (const src of ["(window).location.href = 'x';\n", "(window as any).location.href = 'x';\n", "window!.location.href = 'x';\n"]) {
+      const bare = globalHits(src).filter((h) => h.symbol === 'window');
+      assert(bare.length > 0 && bare.every((h) => h.hint.includes("nav.navigate('ScreenName')")), `${JSON.stringify(src)} must give the navigation hint like the alias form, got ${JSON.stringify(bare)}`);
+    }
+    const aliasedFetch = globalHits('const f = fetch;\nf.call(null, 1);\n');
+    assert(aliasedFetch.some((h) => h.symbol === 'f' && h.hint.includes('Network access')), `an alias of fetch must give the network hint on the alias hit, got ${JSON.stringify(aliasedFetch)}`);
+  });
+
+  await test('globals: the native bridges are flagged bare and through a root, with the bridge hint', () => {
+    for (const [src, symbol] of [
+      ["ReactNativeWebView.postMessage('x');\n", 'ReactNativeWebView'],
+      ["window.ReactNativeWebView.postMessage('x');\n", 'window'],
+      ["webkit.messageHandlers.h.postMessage('x');\n", 'webkit'],
+      ["window.webkit.messageHandlers.h.postMessage('x');\n", 'window'],
+    ] as const) {
+      const hits = globalHits(src);
+      assert(hits.some((h) => h.symbol === symbol), `expected a forbidden_global on "${symbol}" for ${JSON.stringify(src)}, got ${JSON.stringify(hits)}`);
+      assert(hits.every((h) => h.hint.includes('native bridge')), `the bridge hint is expected for ${JSON.stringify(src)}, got ${JSON.stringify(hits)}`);
+    }
+  });
+
+  await test('globals: a shorthand property reads the global, so `{ fetch }` and `{ location }` are flagged', () => {
+    for (const [src, symbol] of [
+      ['const o = { fetch };\nvoid o;\n', 'fetch'],
+      ["({ location }).location.href = 'x';\n", 'location'],
+    ] as const) {
+      const hits = globalHits(src);
+      assert(hits.some((h) => h.symbol === symbol), `expected a forbidden_global on "${symbol}" for ${JSON.stringify(src)}, got ${JSON.stringify(hits)}`);
+    }
+  });
+
+  await test('globals: location-like names that are not the global are never flagged', () => {
+    for (const src of [
+      "const location = { href: '' };\nlocation.href = 'x';\n",
+      "function f(trail: { location: string }): string {\n  return trail.location;\n}\nf({ location: 'Park' });\n",
+      "const o = { location: 'Park' };\nvoid o;\n",
+      "const { location: where } = { location: 'Park' };\nvoid where;\n",
+      'const fetch = 1;\nconst o = { fetch };\nvoid o;\n',
+      "const xs: { location: string }[] = [];\nxs.map(({ location: loc }) => loc);\n",
+      "function f({ location: loc }: { location: string }): string {\n  return loc;\n}\nf({ location: 'Park' });\n",
+      "class Place {\n  location = '';\n}\nvoid new Place();\n",
+      "class Place {\n  location: string = '';\n}\nvoid new Place();\n",
+      "function f(location: string) {\n  const o = { location };\n  return o;\n}\nf('Park');\n",
+    ]) {
+      assertNoKind(runStaticChecks(src), 'forbidden_global', `${JSON.stringify(src)} names no forbidden global and must not be flagged`);
+    }
+  });
+
+  await test('globals: defaults and computed keys inside a declaration\'s destructuring pattern are read', () => {
+    for (const [src, symbol] of [
+      ['const { x = fetch } = {} as any;\nvoid x;\n', 'fetch'],
+      ['const [y = location] = [] as any[];\nvoid y;\n', 'location'],
+      ['const { [location as any]: z } = {} as any;\nvoid z;\n', 'location'],
+    ] as const) {
+      const hits = globalHits(src);
+      assert(hits.some((h) => h.symbol === symbol), `expected a forbidden_global on "${symbol}" for ${JSON.stringify(src)}, got ${JSON.stringify(hits)}`);
+    }
+    assertNoKind(runStaticChecks('const g = 1;\nconst { x = g } = {} as { x?: number };\nvoid x;\n'), 'forbidden_global', 'a default reading a local is honest');
+  });
+
+  await test('globals: a class field named like a forbidden global is exempt, but its initializer is still read', () => {
+    const hits = globalHits("class Place {\n  location = fetch;\n}\nvoid new Place();\n");
+    assert(hits.some((h) => h.symbol === 'fetch'), `a field initializer reading fetch must be flagged, got ${JSON.stringify(hits)}`);
+    assert(!hits.some((h) => h.symbol === 'location'), `the field name must not be flagged, got ${JSON.stringify(hits)}`);
   });
 
   await test('globals: no inline pragma suppresses a diagnostic (harness-diagnostics req 4)', () => {

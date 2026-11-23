@@ -254,7 +254,7 @@ export const GLOBAL_ROOTS: readonly string[] = [
 /**
  * Forbidden identifiers reachable directly (as a bare reference) or via a global root/alias
  * (`root.name`). Union of: the neutralize-list names (`src/runtime/web/neutralize.js`), the
- * CSP-killed codegen names, and `document`.
+ * CSP-killed codegen names, `document`, and the frame-navigation and native-bridge names.
  */
 export const FORBIDDEN_DIRECT_NAMES: readonly string[] = [
   // codegen (CSP-handled at runtime; still flagged statically — belt-and-suspenders + the
@@ -275,6 +275,12 @@ export const FORBIDDEN_DIRECT_NAMES: readonly string[] = [
   'caches',
   'Worker',
   'SharedWorker',
+  // frame self-navigation (`location.href = …` / `.assign` / `.replace` can load a data: page
+  // over the app) and the host WebView's native bridges (`ReactNativeWebView.postMessage`,
+  // `webkit.messageHandlers.<h>.postMessage`) — never reachable from a vc-sdk app
+  'location',
+  'ReactNativeWebView',
+  'webkit',
 ];
 
 /** Forbidden MEMBER paths reachable only through a global root/alias (not bare identifiers
