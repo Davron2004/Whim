@@ -226,3 +226,11 @@ upgrade-to-latest-dependencies reinforced T2, T4, T15 and T18, and added:
   - ENV: Homebrew node is 26 here and shadows nvm 22; gcloud crashes on the default Python 3.15; Ruby 4 bundler dropped `--path`; the primary vendor/bundle targets an older Darwin; AGP auto-installs NDK 28.2 into the shared SDK.
   - KEEP: verdict files ending in a marker line + bounded wait loops, so the orchestrator never depends on child notices (which reach the PO).
   - Proposals: worktrees outside the primary checkout (#284); MAIN_TIP from origin/main; a pre-deploy check that runs the real image (#288); a native CI build job (#286).
+- **2026-11-22 — webview-bridge-provenance: 9 chains + docs chain + 2 Sonar rounds, attended main-thread orchestrator (~35 subagents; builder → dispatcher-run gate → Opus review where control plane or security).**
+  - CAUGHT-REAL-MISTAKE: builders stopping class-B before code saved two wrong builds: Hermes has no `crypto` (token always null on device), and iOS `ReactNativeHistoryShim` lets any frame fire onLoadEnd (the dispatcher's own rotation design would have let apps suppress telemetry).
+  - CAUGHT-REAL-MISTAKE: the iOS simulator run found a release blocker every Node/Chromium gate passed (a spurious onLoadStart for about:blank iframes rotated the token). T18 reinforced: device passes are mandatory for host↔WebView protocol changes.
+  - CAUGHT-REAL-MISTAKE: the Opus review of the build/ bootstrap found a probe race (slow navigation read as `refused`) that would have biased the owner's telemetry; the end review found the Settings copy implying a false safety benefit and ask-fix offered for a host fault.
+  - DRAWBACK: device verifiers can't commit PNGs (evidence/ gitignored + tracked-weight check); copying to the main tree + archiving to GCS is manual every run.
+  - DRAWBACK: the dispatcher ran every gate itself (background bash) instead of runner agents: cheaper, but a duplicate regate briefly ran in the same tree.
+  - ENV: Gradle defaults exceed 8 GB (low-memory flags needed); `bundle exec pod install` fails; gcloud needs `CLOUDSDK_PYTHON=python3.14` and a non-default account for the evidence bucket.
+  - Proposals: a `scripts/evidence-archive.sh` (tar + zstd + upload + EVIDENCE row); a closure step that cuts MAIN_TIP from origin/main (still open from the last run).
