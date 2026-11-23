@@ -13,14 +13,17 @@ import NetworkDenyProbeScreen from '../../NetworkDenyProbeScreen';
 import { COPY } from '../copy';
 import { STARTUP_DEADLINE_MS } from '../boot-state';
 import { WARM_ANSWER } from '../webview-pool';
-import { EXPOSURE_CANARY } from '../runtime-message-auth';
+import { EXPOSURE_CANARY, type RuntimeChannel } from '../runtime-message-auth';
+import { createRuntimeChannel } from '../runtime-channel';
+import { useMiniAppHost, type MiniAppHost } from '../useMiniAppHost';
+import type { WebView } from '../../webview';
 import type { AppRecord } from '../../bridge';
 import { SYSCALL_VERSION } from '../../bridge/contract';
 import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import { log } from '../../logging';
 import type { PostDiagnostics } from '../../logging/diagnostics';
-import { authInjections, hardwareBack, injectedScripts, nativeLoadStart, pageToken, secureRandom, signed } from './native-host';
+import { allInjections, authInjections, hardwareBack, injectedScripts, nativeLoadStart, pageToken, secureRandom, signed } from './native-host';
 import { resetNativeStorage } from './native-storage';
 import { button, captureTimeouts, hostType, isHost, press, renderScreen, textOf, unmountScreen } from './react-screen';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
@@ -72,6 +75,8 @@ interface Probe {
   state: () => string;
   dropped: () => number;
   exits: () => number;
+  /** The screen's timers, held until fired. */
+  clock: ReturnType<typeof captureTimeouts>;
 }
 
 /** The dev probe screen, rendered, its WebView's page started loading (the mock reports it). */
@@ -79,6 +84,7 @@ async function withDevProbe(body: (p: Probe) => Promise<void>): Promise<void> {
   resetNativeStorage();
   injectedScripts.length = 0;
   authInjections.length = 0;
+  allInjections.length = 0;
   const clock = captureTimeouts();
   let exits = 0;
   const tree = await renderScreen(<DevProbeScreen onExit={() => { exits += 1; }} />);
@@ -92,6 +98,7 @@ async function withDevProbe(body: (p: Probe) => Promise<void>): Promise<void> {
       state: () => textOf(tree.root).replace(/dropped: \d+/, ''),
       dropped: () => Number(/dropped: (\d+)/.exec(textOf(tree.root))?.[1]),
       exits: () => exits,
+      clock,
     });
   } finally {
     await unmountScreen(tree);
@@ -99,8 +106,71 @@ async function withDevProbe(body: (p: Probe) => Promise<void>): Promise<void> {
   }
 }
 
+/** One WebView as the host's pool hands it over: its channel, and every script the host injected
+ *  into it (token handovers included), oldest first. */
+interface Page {
+  channel: RuntimeChannel;
+  sent: string[];
+}
+const newPage = (): Page => ({ channel: createRuntimeChannel('pool'), sent: [] });
+const pageKinds = (page: Page) => page.sent.map((js) => {
+  if (js.includes('__whimControl.auth(')) return 'token';
+  return js.includes('__whimControl.reinject(') ? 'launch' : 'control';
+});
+const tokenOf = (page: Page) => /__whimControl\.auth\('([0-9a-f]{32})'\)/.exec(page.sent[0] ?? '')?.[1] ?? '';
+
+interface BareHost {
+  host: () => MiniAppHost;
+  /** Binds the host to `page`, as the pool binds a launch to a WebView. */
+  bind: (page: Page) => Page;
+  /** `page`'s `onLoadEnd`: its token goes in, and whatever waited for it is sent. */
+  loadEnd: (page: Page) => Promise<void>;
+  act: (fn: () => void) => Promise<void>;
+  unmount: () => Promise<void>;
+  clock: ReturnType<typeof captureTimeouts>;
+}
+
+/** `useMiniAppHost` alone, over WebViews the test binds and swaps itself: the launch states the dev
+ *  probe screen (one WebView for its life) and the product pool (a launch delivers only into a page
+ *  that loaded) never reach. */
+async function withBareHost(body: (b: BareHost) => Promise<void>): Promise<void> {
+  resetNativeStorage();
+  const clock = captureTimeouts();
+  let latest: MiniAppHost | null = null;
+  let bound: Page | null = null;
+  const webRef = { get current() { return bound === null ? null : ({ injectJavaScript: (js: string) => { (bound as Page).sent.push(js); } } as unknown as WebView); } };
+  const channel = { get current() { return bound?.channel ?? null; } };
+  function Under() {
+    latest = useMiniAppHost({ webRef, channel });
+    return null;
+  }
+  const tree = await renderScreen(<Under />);
+  let mounted = true;
+  const act = (fn: () => void) => TestRenderer.act(async () => { fn(); });
+  try {
+    await body({
+      host: () => latest as MiniAppHost,
+      bind: (page) => { bound = page; return page; },
+      loadEnd: (page) => act(() => { page.channel.deliver((js) => page.sent.push(js)); }),
+      act,
+      unmount: async () => { if (mounted) { mounted = false; await unmountScreen(tree); } },
+      clock,
+    });
+  } finally {
+    if (mounted) await unmountScreen(tree);
+    clock.restore();
+  }
+}
+
 /** The generation the latest delivery bound its realm at. */
 const boundGeneration = () => Number(/,generation:(\d+)/.exec(injectedScripts.filter((s) => s.includes('__whimControl.reinject(')).at(-1) ?? '')?.[1]);
+/** The app of each launch delivered to a page, oldest first. */
+const deliveries = () => injectedScripts.flatMap((s) => /__whimControl\.reinject\(\{reset:true,bundle:("[^"]*")/.exec(s)?.[1] ?? []).map((name) => JSON.parse(name) as string);
+/** What each script a page was handed is: its token, a launch, or another control. */
+function injectionKind(js: string): 'token' | 'launch' | 'control' {
+  if (authInjections.includes(js)) return 'token';
+  return js.includes('__whimControl.reinject(') ? 'launch' : 'control';
+}
 const relays = () => injectedScripts.filter((s) => s.includes('__whimRelaySysret(')).length;
 const navBacks = () => injectedScripts.filter((s) => s.includes('__whimControl.navBack(')).length;
 const pageLogs = () => log.buffer.snapshot().filter((r) => r.message === 'relayed page log').length;
@@ -216,6 +286,112 @@ export async function runRuntimeMessageAuthUiTests(h: Harness): Promise<void> {
       h.ok(/running…/.test(state()) && dropped() === 2, 'no verdict; two drops');
       await post(signed(token, verdict));
       h.ok(/CONTAINED ✓ 52\/52/.test(state()), 'the page load’s own token is read');
+    });
+  });
+
+  await h.test('token: a launch asked for while the page still loads waits for its token, goes out right after it, and the page’s signed frames are read', async () => {
+    await withDevProbe(async ({ tree, post, loadEnd: loaded, state, dropped, web }) => {
+      log.buffer.clear();
+      await press(button(tree, 'tip-splitter'));
+      h.eq([allInjections, errorRecords('NoBridgeToken').length], [[], 0], 'nothing reaches a page that has not loaded, and the launch has not failed');
+      h.ok(/app: Tip Splitter/.test(state()) && /running…/.test(state()) && !/err: /.test(state()), 'the launch is under way');
+      await loaded();
+      h.eq(allInjections.map(injectionKind), ['token', 'launch'], 'at the load end the page gets its token, then the launch');
+      h.eq(deliveries(), ['Tip Splitter'], 'the app asked for');
+      const generation = boundGeneration();
+      const token = pageToken(web());
+      await post(signed(token, { kind: 'paint', trusted: true, payload: { generation, mountToFirstPaintMs: 42 } }));
+      await post(signed(token, { kind: 'probes', trusted: true, payload: { contained: true, passed: 52, total: 52, generation } }));
+      h.ok(/paint 42ms/.test(state()) && /CONTAINED ✓ 52\/52/.test(state()) && dropped() === 0, 'its paint and verdict are read, nothing dropped');
+      await loaded();
+      h.eq([deliveries(), authInjections.length], [['Tip Splitter'], 2], 'a repeated load end hands the token over again and sends the launch no second time');
+      h.eq(errorRecords('NoBridgeToken').length, 0, 'no NoBridgeToken failure at any point');
+    });
+  });
+
+  await h.test('token: of the launches asked for while the page still loads, only the latest goes out', async () => {
+    await withDevProbe(async ({ tree, loadEnd: loaded, state }) => {
+      await press(button(tree, 'tip-splitter'));
+      await press(button(tree, 'water-counter'));
+      await loaded();
+      h.eq(deliveries(), ['Water Counter'], 'one delivery, of the app asked for last');
+      h.ok(/app: Water Counter/.test(state()), 'and the screen names it');
+    });
+  });
+
+  await h.test('token: a launch waiting for a page that never loads fails at its startup deadline, and a load end after that sends nothing', async () => {
+    await withDevProbe(async ({ tree, loadEnd: loaded, state, clock }) => {
+      await press(button(tree, 'tip-splitter'));
+      h.eq(clock.count(STARTUP_DEADLINE_MS), 1, 'the startup deadline runs while the launch waits');
+      await TestRenderer.act(async () => clock.fire(STARTUP_DEADLINE_MS));
+      h.ok(/err: app never became visible/.test(state()), 'the launch fails as never visible');
+      await loaded();
+      h.eq([allInjections.map(injectionKind), deliveries()], [['token'], []], 'the late page gets its token and no launch');
+    });
+  });
+
+  await h.test('token: with no secure source, a launch asked for while the page still loads fails closed at the load end', async () => {
+    for (const mode of ['fails', 'throws'] as const) {
+      secureRandom.mode = mode;
+      try {
+        log.buffer.clear();
+        await withDevProbe(async ({ tree, loadEnd: loaded, state, clock }) => {
+          await press(button(tree, 'tip-splitter'));
+          h.ok(!/err: /.test(state()) && errorRecords('NoBridgeToken').length === 0, `${mode}: it waits while the page loads`);
+          await loaded();
+          h.ok(/err: no bridge token/.test(state()), `${mode}: the load end mints no token and fails the launch`);
+          h.eq([errorRecords('NoSecureRandom').length, errorRecords('NoBridgeToken').length], [1, 1], `${mode}: both failures are on the error channel`);
+          h.eq([allInjections, clock.count(STARTUP_DEADLINE_MS)], [[], 0], `${mode}: nothing reached the page, and no deadline is left running`);
+        });
+      } finally {
+        secureRandom.mode = 'ok';
+      }
+    }
+  });
+
+  await h.test('token: a launch that waits for its page starts from a fresh state: an earlier realm’s paint and depth are gone, and the startup deadline fails it', async () => {
+    await withBareHost(async (bare) => {
+      const first = bare.bind(newPage());
+      await bare.loadEnd(first);
+      await bare.act(() => bare.host().deliverBySource(TIP, APP_BUNDLES[TIP.appId]));
+      const generation = Number(/,generation:(\d+)/.exec(first.sent.find((js) => js.includes('__whimControl.reinject(')) ?? '')?.[1]);
+      h.ok(Number.isFinite(generation), 'precondition: the first launch went into its loaded page');
+      const frame = (body: unknown) => bare.act(() => bare.host().onMessage(signed(tokenOf(first), body)));
+      await frame({ kind: 'paint', trusted: true, payload: { generation, mountToFirstPaintMs: 42 } });
+      await frame({ kind: 'nav-depth', trusted: false, payload: { depth: 2, generation } });
+      const before = bare.host().state;
+      h.eq([before.paintMs, before.navDepth, before.paintedAt === null], [42, 2, false], 'precondition: the first realm painted and went two deep');
+      bare.bind(newPage());
+      await bare.act(() => bare.host().deliverBySource(TIP, APP_BUNDLES[TIP.appId]));
+      const waiting = bare.host().state;
+      h.eq([waiting.paintMs, waiting.paintedAt, waiting.navDepth], [null, null, 0], 'the waiting launch carries no paint and no depth of the realm before it');
+      await bare.act(() => bare.clock.fire(STARTUP_DEADLINE_MS));
+      h.eq(bare.host().state.lastError, 'app never became visible', 'its startup deadline fails it, as it fails a launch that never paints');
+    });
+  });
+
+  await h.test('token: a host unmounted while its launch waits for the page sends nothing when the page loads', async () => {
+    await withBareHost(async (bare) => {
+      const page = bare.bind(newPage());
+      await bare.act(() => bare.host().deliverBySource(TIP, APP_BUNDLES[TIP.appId]));
+      h.eq(page.sent, [], 'precondition: the launch waits');
+      const pageLoadEnd = bare.host().onLoadEnd;
+      await bare.unmount();
+      await bare.act(pageLoadEnd);
+      h.eq(pageKinds(page), ['token'], 'the page that loaded late holds its token and was sent no launch');
+      h.eq(bare.clock.count(STARTUP_DEADLINE_MS), 0, 'no startup deadline is left running');
+    });
+  });
+
+  await h.test('token: a launch waiting on a WebView the host no longer controls is dropped: the new WebView is sent nothing before its own token, and no launch after it', async () => {
+    await withBareHost(async (bare) => {
+      const old = bare.bind(newPage());
+      await bare.act(() => bare.host().deliverBySource(TIP, APP_BUNDLES[TIP.appId]));
+      const next = bare.bind(newPage());
+      await bare.loadEnd(old);
+      h.eq([pageKinds(old), pageKinds(next)], [['token'], []], 'the old page’s load end sends no launch, and nothing reaches the new WebView');
+      await bare.loadEnd(next);
+      h.eq([pageKinds(old), pageKinds(next)], [['token'], ['token']], 'the new WebView gets its own token and still no launch: the dropped launch is not sent into it');
     });
   });
 

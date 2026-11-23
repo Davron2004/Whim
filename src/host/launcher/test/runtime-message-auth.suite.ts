@@ -147,6 +147,40 @@ export async function runRuntimeMessageAuthTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('channel: the first load end settles the token once, for whatever waits on it (delivered, after it went in), at once once settled, and a cancelled wait hears nothing', () => {
+    const channel = new RuntimeChannel(osRandom());
+    const injected: string[] = [];
+    const heard: string[] = [];
+    let inPageWhenHeard = false;
+    channel.whenSettled((authorized) => {
+      heard.push(`first:${authorized}`);
+      inPageWhenHeard = injected.length === 1 && channel.authorized;
+    });
+    const cancel = channel.whenSettled((authorized) => heard.push(`cancelled:${authorized}`));
+    cancel();
+    h.eq([heard, channel.authorized, channel.tokenAbsent], [[], false, false], 'before its page loads, nothing is settled');
+    channel.deliver((js) => injected.push(js));
+    h.eq(heard, ['first:true'], 'the load end settles it as delivered, once; the cancelled wait hears nothing');
+    h.ok(inPageWhenHeard, 'the wait is told only after the token went into the page');
+    channel.deliver((js) => injected.push(js));
+    h.eq(heard, ['first:true'], 'a repeated load end settles nothing again');
+    channel.whenSettled((authorized) => heard.push(`late:${authorized}`));
+    h.eq(heard, ['first:true', 'late:true'], 'a wait asked for once it is settled is answered at once');
+
+    for (const [name, source] of [['missing', null], ['failing', { randomHex: () => null }], ['throwing', { randomHex: () => { throw new Error('no'); } }]] as const) {
+      const none = new RuntimeChannel(source);
+      const seen: boolean[] = [];
+      none.whenSettled((authorized) => seen.push(authorized));
+      h.eq([seen, none.tokenAbsent], [[], false], `${name}: undecided before its page loads`);
+      none.deliver(() => {});
+      h.eq([seen, none.tokenAbsent, none.authorized], [[false], true, false], `${name}: the load end settles it as absent, once`);
+      none.deliver(() => {});
+      const late: boolean[] = [];
+      none.whenSettled((authorized) => late.push(authorized));
+      h.eq([seen, late], [[false], [false]], `${name}: never again, and a later wait is answered at once`);
+    }
+  });
+
   await h.test('channel: the canary is recorded and dropped, and joins the WebView’s exposure record however the two arrive', () => {
     const report = (token: string, payload: object) => signedWith(token, JSON.stringify({ kind: 'bridge-exposure', payload }));
     const navigated = { outcome: 'navigated', visible: { android: true, ios: false }, webview: 'chrome-131' };

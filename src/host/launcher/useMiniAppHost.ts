@@ -239,6 +239,13 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions): MiniAppHost {
   leavingRef.current = leaving;
   // The deadline ended while the app was leaving: it fails when the app is turned back out.
   const expiredAway = useRef(false);
+  // The cancel of a launch asked for before the WebView's page loaded, waiting for the page's token
+  // (`deliverBySource`); at most one, the latest.
+  const waitingLaunch = useRef<(() => void) | null>(null);
+  const [dropWaitingLaunch] = useState(() => () => {
+    waitingLaunch.current?.();
+    waitingLaunch.current = null;
+  });
   const [neverVisible] = useState(() => () => {
     log.error(CHANNELS.page, 'mini-app failed', { where: 'paint-timeout', errorClass: 'StartupDeadline', appId: engineId.current });
     setS((p) => (
@@ -248,6 +255,8 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions): MiniAppHost {
     ));
   });
   const startupDeadline = useRef(createStartupDeadline(() => {
+    // A launch still waiting for its page never became visible either: it is over, not sent later.
+    dropWaitingLaunch();
     if (leavingRef.current) expiredAway.current = true;
     else neverVisible();
   }));
@@ -324,15 +333,14 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions): MiniAppHost {
     [],
   );
 
-  const deliverBySource = useCallback((record: AppRecord, source: string, engineAppId?: string, theme?: object) => {
-    const id = engineAppId ?? record.appId;
-    // Nothing is sent to a page before its token: a page that never got one could tell RN nothing
-    // RN would accept, so the launch fails at once rather than waiting out its startup deadline.
-    if (channel.current?.authorized !== true) {
-      log.error(CHANNELS.page, 'mini-app failed', { where: 'launch', errorClass: 'NoBridgeToken', appId: id });
-      setS((p) => ({ ...p, currentApp: record.name, lastError: 'no bridge token', crash: { where: 'webview-gone', errorClass: 'NoBridgeToken', hostFault: true } }));
-      return;
-    }
+  // A page that never gets a token could tell RN nothing RN would accept, so its launch fails at
+  // once rather than waiting out its startup deadline.
+  const failNoBridgeToken = useCallback((record: AppRecord, appId: string) => {
+    log.error(CHANNELS.page, 'mini-app failed', { where: 'launch', errorClass: 'NoBridgeToken', appId });
+    setS((p) => ({ ...p, currentApp: record.name, lastError: 'no bridge token', crash: { where: 'webview-gone', errorClass: 'NoBridgeToken', hostFault: true } }));
+  }, []);
+
+  const launchNow = useCallback((record: AppRecord, source: string, id: string, theme?: object) => {
     const realm = bind(record, record.name, id);
     if (!realm) return;
     let js: string;
@@ -347,7 +355,41 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions): MiniAppHost {
     // Start before page control: native loader/rule-list failure can suppress every page frame.
     startupDeadline.current.begin();
     control(js);
-  }, [bind, control, channel]);
+  }, [bind, control]);
+
+  const deliverBySource = useCallback((record: AppRecord, source: string, engineAppId?: string, theme?: object) => {
+    const id = engineAppId ?? record.appId;
+    // A later launch replaces one still waiting for the page.
+    dropWaitingLaunch();
+    // Nothing is sent to a page before its token. A WebView whose page loaded without one (no secure
+    // source), or no WebView at all, never will have one.
+    const ch = channel.current;
+    if (ch === null || ch.tokenAbsent) {
+      failNoBridgeToken(record, id);
+      return;
+    }
+    if (ch.authorized) {
+      launchNow(record, source, id, theme);
+      return;
+    }
+    // The page is still loading: its token goes in at its first load end, and the launch right after
+    // it (a launch injected before the page loads would be lost anyway). The startup deadline runs
+    // meanwhile, so a page that never loads fails the launch instead of leaving it running forever.
+    // Reset as `bind` resets: a paint an earlier realm reported must not make the deadline a no-op.
+    setS((p) => ({ ...p, currentApp: record.name, lastError: null, crash: null, launchFailed: false, navDepth: 0, paintMs: null, paintedAt: null }));
+    startupDeadline.current.begin();
+    waitingLaunch.current = ch.whenSettled((authorized) => {
+      waitingLaunch.current = null;
+      // The WebView the launch waited for is no longer this host's (it is gone, and so is the launch).
+      if (channel.current !== ch) return;
+      if (authorized) {
+        launchNow(record, source, id, theme);
+        return;
+      }
+      startupDeadline.current.cancel();
+      failNoBridgeToken(record, id);
+    });
+  }, [channel, dropWaitingLaunch, failNoBridgeToken, launchNow]);
 
   const onMessage = useCallback((raw: string) => {
     // The shared verifier first (webview-bridge-provenance D2): nothing unsigned, or signed for
@@ -440,9 +482,10 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions): MiniAppHost {
   }, []);
 
   const webViewGone = useCallback(() => {
+    dropWaitingLaunch();
     startupDeadline.current.cancel();
     setS((p) => (p.launchFailed || p.lastError ? p : { ...p, lastError: 'webview gone', crash: { where: 'webview-gone', errorClass: 'WebViewGone' } }));
-  }, []);
+  }, [dropWaitingLaunch]);
 
   // ── Android system back (#5 D4 — the guaranteed-exit wiring) ────────────────
   // The pure policy decides; the host acts. `forward` posts a nav-back and arms the unhandled-
@@ -468,10 +511,11 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions): MiniAppHost {
   }, [control, exit]);
 
   // ── Unmount teardown (E2 — self-enforcing realm cleanup) ─────────────────────
-  // Runs ONLY on unmount (empty deps). Reads `live` and `popTimer` as refs so the closure is
-  // never stale. Does NOT call onExit — unmount already means leaving; onExit is the exit()-path
-  // caller's responsibility (explicit user-initiated leave only).
-  useEffect(() => () => { tearDownLiveRealm(live, popTimer); startupDeadline.current.cancel(); }, []);
+  // Runs ONLY on unmount (its one dependency never changes). Reads `live` and `popTimer` as refs so
+  // the closure is never stale. Does NOT call onExit — unmount already means leaving; onExit is the
+  // exit()-path caller's responsibility (explicit user-initiated leave only). A launch still waiting
+  // for the page is dropped with it.
+  useEffect(() => () => { dropWaitingLaunch(); tearDownLiveRealm(live, popTimer); startupDeadline.current.cancel(); }, [dropWaitingLaunch]);
 
   return {
     runtimeHtml: RUNTIME_HTML,
