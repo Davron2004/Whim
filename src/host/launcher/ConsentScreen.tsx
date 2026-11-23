@@ -55,7 +55,9 @@ const styles = makeStyles((t) => ({
   root: { flex: 1, backgroundColor: t.colors.bg },
   // The disclosure scrolls under the pinned actions; a hairline marks where it is cut off.
   scroll: { borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: t.colors.separator },
-  content: { paddingHorizontal: LAYOUT.gutter, paddingTop: SPACE[2], paddingBottom: LAYOUT.gapBetweenGroups, gap: LAYOUT.gapInGroup },
+  // The same inset under the platform header as Settings, Advanced and Report (wbp-d7): at half of
+  // it the language switch sat right against the header, its 44 pt touch target reaching into it.
+  content: { paddingHorizontal: LAYOUT.gutter, paddingTop: SPACE[4], paddingBottom: LAYOUT.gapBetweenGroups, gap: LAYOUT.gapInGroup },
   section: { gap: SPACE[1], marginTop: SPACE[3] },
   bullet: { flexDirection: 'row' as const, gap: SPACE[2] },
   bulletText: { flex: 1 },

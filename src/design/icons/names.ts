@@ -52,7 +52,7 @@ export const GLYPH_NAMES: readonly GlyphName[] = Object.values(GLYPH_GROUPS).fla
 export const CHROME_NAMES = [
   'chevron-left', 'chevron-right', 'chevron-down', 'arrow-left', 'arrow-up', 'x', 'check', 'plus', 'minus',
   'ellipsis', 'settings', 'search', 'copy', 'share', 'external-link', 'info', 'circle-alert', 'triangle-alert',
-  'circle-check',
+  'circle-check', 'smartphone',
 ] as const;
 
 export type ChromeName = (typeof CHROME_NAMES)[number];

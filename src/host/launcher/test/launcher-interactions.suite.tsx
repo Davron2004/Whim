@@ -194,6 +194,44 @@ export async function runLauncherInteractionTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('launcher: Advanced says the address is checked once AI features are on only while they are off; turned on in the session, it shows the probe’s result (wbp-d5)', async () => {
+    resetNativeStorage();
+    const kv = createMmkvBackend('whim.launcher');
+    new AppIndex(kv).markSeeded(SEED_VERSION);
+    acceptTerms(kv, '2026-09-18T12:00:00.000Z');
+    acknowledgeOwnServer(kv);
+    saveServerUrl(kv, 'https://s1.example');
+    const clock = captureTimeouts();
+    const originalFetch = globalThis.fetch;
+    const probed: string[] = [];
+    globalThis.fetch = (async (url: string) => {
+      if (!String(url).endsWith('/health')) throw new Error(`Unexpected request ${url}`);
+      probed.push(String(url));
+      return new Response(JSON.stringify({ service: 'whim-server' }));
+    }) as typeof fetch;
+    let tree: TestRenderer.ReactTestRenderer | undefined;
+    try {
+      tree = await renderScreen(<LauncherRoot appInfo={testAppInfo} deviceLocale={() => 'en-US'} />);
+      const settings = () => tree!.root.findByType(SettingsScreen);
+      const shown = () => textOf(tree!.root.findByType(AdvancedScreen));
+      await TestRenderer.act(async () => tree!.root.findByType(HomeScreen).props.onSettings());
+      await TestRenderer.act(async () => settings().props.onOpenAdvanced());
+      h.eq(probed, [], 'AI features off: nothing is probed');
+      h.ok(shown().includes(COPY.settingsProbeNeutral), 'AI features off: the line says the address is checked once they are on');
+      await TestRenderer.act(async () => tree!.root.findByType(AdvancedScreen).props.onBack());
+      await TestRenderer.act(async () => settings().props.onOpenAIFeatures());
+      await TestRenderer.act(async () => tree!.root.findByType(ConsentScreen).props.onAgree());
+      h.eq(probed, ['https://s1.example/health'], 'turning AI features on probes the saved address');
+      await TestRenderer.act(async () => settings().props.onOpenAdvanced());
+      h.ok(!shown().includes(COPY.settingsProbeNeutral), 'AI features on: the “checked once AI features are on” line is gone');
+      h.ok(shown().includes(COPY.serverProbeVerified), 'and the probe’s result for the saved address shows instead');
+    } finally {
+      if (tree) await unmountScreen(tree);
+      globalThis.fetch = originalFetch;
+      clock.restore();
+    }
+  });
+
   // ── Delete and Discard: soft delete on the pending-purge marker (tasks 15.4, spec "Deleting an
   //    app leaves no residue") ──────────────────────────────────────────────────────────────────
 

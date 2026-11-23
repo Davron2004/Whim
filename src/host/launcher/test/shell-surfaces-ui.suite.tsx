@@ -35,7 +35,7 @@ import ReportScreen, { ReportPage } from '../ReportScreen';
 import { reportClientOptions } from '../transport-shared';
 import { testAppInfo } from './client-fixtures';
 import { resolveTokens } from '../../ui/tokens-pure';
-import { contrastRatio } from '../../../design/tints';
+import { contrastRatio, labFromHex } from '../../../design/tints';
 import type { StoreAccess } from '../store-access';
 
 /** Every pending `setTimeout`, by delay, without running any. */
@@ -255,6 +255,30 @@ async function groupedRowsAt(scale: number) {
   await act(() => tree.unmount());
   return result;
 }
+/** A switch row's switch on `os` in `scheme`, set to `value`, as the platform draws it: its knob and
+ *  the track for `value` (iOS paints the off track from `ios_backgroundColor`). */
+async function drawnSwitch(os: 'ios' | 'android', scheme: 'light' | 'dark', value: boolean): Promise<{ knob: string; track: string }> {
+  await resetPhone();
+  Platform.OS = os;
+  await act(() => setColorScheme(scheme));
+  const tree = await render(
+    <GroupedSection>
+      <GroupedRow title="Send error details" trailing={{ kind: 'switch', value, onValueChange: () => {} }} />
+    </GroupedSection>,
+  );
+  const { thumbColor, trackColor, ios_backgroundColor: iosOff } = all(tree, 'Switch')[0].props;
+  await act(() => tree.unmount());
+  const offTrack = os === 'ios' ? (iosOff ?? trackColor?.false) : trackColor?.false;
+  return { knob: String(thumbColor ?? '#FFFFFF'), track: String((value ? trackColor?.true : offTrack) ?? '#FFFFFF') };
+}
+/** CIELAB chroma: how far a colour stands from the grey of its lightness. The warm neutrals sit under
+ *  5; a colour a glance reads as a hue stands well past 30. */
+function chroma(hex: string): number {
+  const [, a, b] = labFromHex(hex);
+  return Math.hypot(a, b);
+}
+const isGrey = (hex: string) => chroma(hex) < 10;
+const hasHue = (hex: string) => chroma(hex) >= 30;
 /** A row that opens in place beside a plain chevron row. */
 function OpeningRows() {
   const [open, setOpen] = useState(false);
@@ -1749,7 +1773,7 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     h.eq([rows[0].props.accessibilityRole, rows[0].props.accessibilityState.checked], ['switch', false], 'the switch row reads as a switch, off');
     await press(rows[0]);
     h.eq([all(tree, 'Pressable')[0].props.accessibilityState.checked, hapticCalls.some((c) => c.includes('TOGGLE_ON'))], [true, true], 'pressing the row flips it, with the toggle haptic');
-    h.eq(all(tree, 'Switch')[0].props.trackColor.true, LIGHT.ink, 'on-track ink');
+    h.eq(all(tree, 'Switch')[0].props.trackColor.true, LIGHT['switch-on'], 'iOS on-track switch-on');
     await press(rows[2]);
     h.eq(log, ['copy'], 'copy runs on its own button');
     const resetTitle = rows[4].find((n) => hostType(n) === 'Text');
@@ -1764,6 +1788,31 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     const iconInset = withIcons.root.findAll((n) => hostType(n) === 'View' && flat(n).height === StyleSheet.hairlineWidth).map((n) => flat(n).marginLeft);
     h.eq([iconInset, flat(withIcons.root.find((n) => hostType(n) === 'View' && flat(n).borderRadius === 20)).backgroundColor], [[LAYOUT.separatorInsetWithIcon], LIGHT.surface], 'under an icon: inset 52; on the canvas: surface');
     await act(() => withIcons.unmount());
+  });
+
+  await h.test('GroupedList: a switch that is on reads on at a glance, on both platforms in both schemes: on carries a hue (Android its knob, iOS its track) and off is all greys; on Android the knob and the track each change between on and off', async () => {
+    for (const os of ['android', 'ios'] as const) {
+      for (const scheme of ['light', 'dark'] as const) {
+        const [off, on] = [await drawnSwitch(os, scheme, false), await drawnSwitch(os, scheme, true)];
+        const where = `${os} ${scheme}`;
+        h.ok([off.knob, off.track].every(isGrey), `${where}: off is greys, knob ${off.knob} on track ${off.track}`);
+        const lit = os === 'android' ? on.knob : on.track;
+        h.ok(hasHue(lit), `${where}: on carries a hue, ${os === 'android' ? 'knob' : 'track'} ${lit}`);
+        if (os === 'android') h.ok(on.knob !== off.knob && on.track !== off.track, `${where}: the knob (${off.knob} → ${on.knob}) and the track (${off.track} → ${on.track}) both change`);
+      }
+    }
+    await act(() => setColorScheme('light'));
+    await resetPhone();
+  });
+
+  await h.test('GroupedList: an iOS switch’s knob is white, on and off, in both schemes, as iOS draws its own (wbp-d4)', async () => {
+    const knobs: string[] = [];
+    for (const scheme of ['light', 'dark'] as const) {
+      for (const value of [false, true]) knobs.push(`${scheme} ${value ? 'on' : 'off'}: ${(await drawnSwitch('ios', scheme, value)).knob}`);
+    }
+    h.eq(knobs, ['light off: #FFFFFF', 'light on: #FFFFFF', 'dark off: #FFFFFF', 'dark on: #FFFFFF'], 'the knob is #FFFFFF every time');
+    await act(() => setColorScheme('light'));
+    await resetPhone();
   });
 
   await h.test('GroupedList: from 135% text a trailing value goes under its title, so the title keeps the row’s width; the spoken label and the other trailing marks stay where they were', async () => {

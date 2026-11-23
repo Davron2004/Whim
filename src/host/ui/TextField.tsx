@@ -5,7 +5,8 @@
  * footer, and a multiline field gets iOS's Done bar.
  *
  * - `surface`, a 1 px `border`, `r-md`, padding 12 × 14 (area 14 × 16), text `body` 17 so iOS never
- *   zooms. Label `footnote` 600 `text-2`, 6 pt above; placeholder `text-2`.
+ *   zooms. Label `footnote` 600 `text-2`, 6 pt above; placeholder `text-2`. The label and the line
+ *   under the field are inset 16, as a section header is; the box is full width.
  * - Focused: a 2 pt `text` border and an `ink` caret. Error: a 2 pt `danger` border, and the error
  *   in `danger-text` with an icon under the field. The box never changes size between states.
  * - A clear button on a non-empty single-line field. A text area shows 3 lines, grows to 8, then
@@ -15,7 +16,7 @@
 import React, { useState } from 'react';
 import { Pressable, Text as RNText, View } from 'react-native';
 import type { TextInputProps, ViewInstance } from 'react-native';
-import { RADII, SPACE, TYPE_SCALE } from '../../design/tokens';
+import { LAYOUT, RADII, SPACE, TYPE_SCALE } from '../../design/tokens';
 import { COPY } from '../launcher/copy';
 import { KeyboardTextInput } from '../launcher/KeyboardShell';
 import { Icon } from './Icon';
@@ -60,6 +61,8 @@ export interface TextFieldProps extends InputProps {
 
 export const FIELD = {
   labelGap: 6,
+  /** The label and the line under the field start where a section header does; the box is full width. */
+  captionInset: LAYOUT.listRowPaddingHorizontal,
   field: { vertical: SPACE[3], horizontal: 14 },
   area: { vertical: 14, horizontal: SPACE[4], minLines: 3, maxLines: 8 },
   border: 1,
@@ -83,7 +86,7 @@ export function areaHeight(lines: number, fontScale: number): number {
 }
 
 const styles = makeStyles((t) => ({
-  label: { ...typeStyle('footnote', true), color: t.colors['text-2'], marginBottom: FIELD.labelGap },
+  label: { ...typeStyle('footnote', true), color: t.colors['text-2'], paddingHorizontal: FIELD.captionInset, marginBottom: FIELD.labelGap },
   box: {
     flexDirection: 'row' as const,
     alignItems: 'center' as const,
@@ -93,7 +96,7 @@ const styles = makeStyles((t) => ({
   },
   input: { ...typeStyle('body'), color: t.colors.text, flex: 1, padding: 0, margin: 0 },
   clear: { marginLeft: SPACE[2], alignItems: 'center' as const, justifyContent: 'center' as const },
-  helperRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[1], marginTop: FIELD.labelGap },
+  helperRow: { flexDirection: 'row' as const, alignItems: 'center' as const, gap: SPACE[1], paddingHorizontal: FIELD.captionInset, marginTop: FIELD.labelGap },
   helper: { ...wrappingType('footnote'), color: t.colors['text-2'], flexShrink: 1 },
   error: { ...wrappingType('footnote'), color: t.colors['danger-text'], flexShrink: 1 },
 }));

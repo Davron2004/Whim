@@ -102,6 +102,33 @@ export async function runSettingsScreenTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('Advanced: the address field’s label, its hint, the check line and the caption start where the section headers do', async () => {
+    const tree = await renderScreen(advanced({ probe: { address: 'https://saved.example', result: 'unverified' } }));
+    try {
+      /** How far a text sits from the content's left edge: every margin and padding around it. */
+      const left = (words: string) => {
+        const texts = tree.root.findAll(node => String(node.type) === 'Text' && textOf(node) === words);
+        h.ok(texts.length > 0, `“${words}” shows`);
+        let x = 0;
+        for (let at: TestRenderer.ReactTestInstance | null = texts[0]; at; at = at.parent) {
+          if (typeof at.type !== 'string') continue;
+          const s = StyleSheet.flatten(at.props.style) ?? {};
+          x += Number(s.marginLeft ?? s.marginHorizontal ?? s.margin ?? 0) + Number(s.paddingLeft ?? s.paddingHorizontal ?? s.padding ?? 0);
+        }
+        return x;
+      };
+      const header = left(COPY.settingsThisPhoneSection);
+      h.ok(header > 0, 'a section header is inset from the group’s edge');
+      h.eq(
+        [left(COPY.serverAddressSectionTitle), left(COPY.serverAddressHint), left(COPY.serverProbeUnverified), left(LEGAL_COPY.en.ownServerCaption)],
+        [header, header, header, header],
+        'label, hint, check line and caption share the headers’ x',
+      );
+    } finally {
+      await unmountScreen(tree);
+    }
+  });
+
   await h.test('Advanced: without consent an edit still saves, and the line says the address is checked once AI features are on', async () => {
     const clock = captureTimeouts();
     const saved: string[] = [];
