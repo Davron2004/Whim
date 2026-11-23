@@ -21,7 +21,7 @@ Facts from the manifest (README "Manifest, version 2") and the owner's decisions
 | Phone ID | Random ID made on the phone | Inside usage records and reports | Core |
 | App-integrity check (#65) | A key and a verdict from Apple or Google | 12 months after the phone ID's last use | Core |
 | Usage records | Per request: type, times, outcome, size, cost; lifetime totals per phone ID | 12 months; totals 12 months after last use | Core |
-| Error details | Versions, error type from a fixed list, code location, screen, request number; no typed text or saved data (B9) | 90 days | Optional, on |
+| Error details | Versions, error type from a fixed list, code location, screen, request number; the result of an automatic safety check of how the phone runs apps (engine and major version, whether a navigated frame could reach the app’s bridge); no typed text or saved data (B9) | 90 days | Optional, on |
 | Connection and log data | IP address, times, app version and build, consent version | 90 days | Core |
 | Reports | Reason, note, app name, app code, prompt if included | 12 months | Sent by the user |
 
@@ -63,11 +63,11 @@ The code sets high privacy as the default and asks for a compelling reason to di
 
 **The case for on**
 
-- What goes is technical only: versions, an error type from a fixed list, where in the code it happened, the screen, a request number. No typed text, no saved data, no free-text error name or message from a generated app (B9 closes the list before diagnostics ship).
+- What goes is technical only: versions, an error type from a fixed list, where in the code it happened, the screen, a request number, and the result of an automatic safety check of how the phone runs apps, sent once per distinct result per session, not only on failure. No typed text, no saved data, no free-text error name or message from a generated app (B9 closes the list before diagnostics ship).
 - The purpose is to find and fix faults. A generated app that breaks for a young user is a harm to that user. With the switch off by default, Whim would see errors only from the few people who turn it on, and most failures would go unseen.
 - UK law already treats fault detection as low-intrusion: since 2026-02-05, storage or access strictly necessary to detect technical faults in the service needs no consent under PECR (README, EU and UK table: PECR Sch. A1, as amended by the Data (Use and Access) Act 2025).
 - It is a separate choice (standard 8): named on the consent screen, one switch in Settings, and turning it off changes nothing else.
-- It is kept at most 90 days, and it isn't used for profiling, advertising or anything but fixing faults.
+- It is kept at most 90 days, and it isn't used for profiling, advertising or anything but fixing faults and keeping generated apps contained.
 
 **The case against**
 

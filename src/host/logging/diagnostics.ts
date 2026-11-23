@@ -5,12 +5,14 @@
  * current AI-data consent grant").
  *
  * Rules this file exists to hold:
- *   - `error` level only, and never a record on the sink's own channel.
+ *   - `error` level only, and never a record on the sink's own channel. The one other record it
+ *     takes is the `info`-level bridge-exposure record, which arrives already projected.
  *   - No request, and nothing retained, unless `target()` says an upload is allowed right now. It
  *     is asked at every record and again before every POST, so a consent revoked or a switch
  *     turned off a moment ago applies to the very next decision. A record that arrives while the
  *     answer is no is discarded, never queued for a later grant.
- *   - One entry per `(channel, message, errorClass, where)` for the whole app session; repeats
+ *   - One entry per `(channel, message, errorClass, where)` for the whole app session (the
+ *     bridge-exposure record: per `(message, exposure, webview)`); repeats
  *     bump its count, and a flush sends only the count added since the previous flush. At most
  *     `maxDistinct` entries per session; later distinct records are dropped.
  *   - A flush is one POST with no retry. A failure is reported once through `onFailure` (the seam
@@ -137,7 +139,11 @@ interface Entry {
   sent: number;
 }
 
+/** What makes two records the same entry. An error record is one per `(channel, message,
+ *  errorClass, where)`; the bridge-exposure record (the only one carrying `exposure`) is one per
+ *  `(message, exposure, webview)`, so a changed result is its own record. */
 function dedupKey(record: DiagnosticRecord): string {
+  if (record.exposure !== undefined) return JSON.stringify(['exposure', record.message, record.exposure, record.webview ?? null]);
   return JSON.stringify([record.channel, record.message, record.errorClass ?? null, record.where ?? null]);
 }
 
@@ -177,7 +183,8 @@ export class DiagnosticsTransport {
     this.add(toDiagnostic(record));
   }
 
-  /** Take a record that is already projected (the fatal-error slot read back at launch). */
+  /** Take a record that is already projected (the fatal-error slot read back at launch, the
+   *  bridge-exposure record). */
   enqueueDiagnostic(record: DiagnosticRecord): void {
     if (this.paused() || !this.allowed()) return;
     this.add(record);

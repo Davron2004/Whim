@@ -361,7 +361,8 @@ const MANIFEST_V2: DisclosureManifest<CategoryId> = {
       rows: [
         {
           name: 'Error details',
-          description: 'Technical details when something breaks: versions, error type from a fixed list, code location, screen and request number',
+          description:
+            'Technical details when something breaks (versions, error type from a fixed list, code location, screen and request number), and the results of automatic safety checks of how the phone runs apps',
         },
       ],
       excludes: {
