@@ -71,8 +71,9 @@ Any other specifier in any of those positions, any `require(...)` call, and any 
 The pipeline SHALL detect references to forbidden capability globals by **binding
 resolution, not token matching** (decisions #37, T8). The walk SHALL flag, with an error
 diagnostic each: direct references to forbidden globals (the neutralize-list names, `eval`,
-`Function`, `document`, and the global roots `window`/`globalThis`/`self`/`top`/`parent`/
-`frames`); member or computed access to forbidden names through a global root **or through
+`Function`, `document`, the frame-navigation and native-bridge names `location`/
+`ReactNativeWebView`/`webkit`, and the global roots `window`/`globalThis`/`self`/`top`/
+`parent`/`frames`); member or computed access to forbidden names through a global root **or through
 any local alias of one** (taint follows lexical assignment); computed member access on a
 global-root alias even when the key is statically unknown; `.constructor` member access
 (the prototype-walk codegen step); `__proto__` access and any `Object.defineProperty`/

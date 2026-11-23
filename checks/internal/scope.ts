@@ -70,6 +70,9 @@ export interface ImportBindingInfo {
 
 interface ScopeEntry {
   tainted: boolean;
+  /** For a tainted entry: the forbidden global or root its value chain traces back to
+   *  (`const l = location` → `'location'`), so a hint can name what the alias stands for. */
+  taintSource?: string;
   /** Set only when this declaration is the import binding itself (not a plain local). */
   importInfo?: ImportBindingInfo;
 }
@@ -92,7 +95,9 @@ const NAMED_BINDING_DECLARATION_KINDS = new Set<ts.SyntaxKind>([
   ts.SyntaxKind.TypeAliasDeclaration,
   ts.SyntaxKind.EnumDeclaration,
   ts.SyntaxKind.PropertyAssignment,
-  ts.SyntaxKind.ShorthandPropertyAssignment,
+  // A class field's NAME declares a member, not a binding; its initializer is still a read.
+  ts.SyntaxKind.PropertyDeclaration,
+  // `ShorthandPropertyAssignment` is deliberately absent: `{ fetch }` reads the binding `fetch`.
   ts.SyntaxKind.PropertySignature,
   ts.SyntaxKind.MethodSignature,
   ts.SyntaxKind.EnumMember,
@@ -123,6 +128,7 @@ function isPropertyAccessOrTypeName(id: ts.Identifier): boolean {
   if (!p) return false;
   if (ts.isPropertyAccessExpression(p) && p.name === id) return true;
   if (ts.isQualifiedName(p) && p.right === id) return true;
+  if (ts.isBindingElement(p) && p.propertyName === id) return true;
   if (ts.isTypeReferenceNode(p)) return true;
   if (ts.isTypeQueryNode(p)) return true;
   return false;
@@ -188,8 +194,16 @@ function importBindingInfoFor(node: ts.ImportClause | ts.ImportSpecifier | ts.Na
   return { moduleSpecifier, importedName: 'default' }; // ImportClause default-import name
 }
 
-function buildBindingMap(sourceFile: ts.SourceFile): { bindingMap: Map<ts.Node, Binding>; importBindingMap: Map<ts.Node, ImportBindingInfo> } {
+interface BindingMaps {
+  bindingMap: Map<ts.Node, Binding>;
+  importBindingMap: Map<ts.Node, ImportBindingInfo>;
+  /** Identifier read → the forbidden global its tainted alias traces back to. */
+  taintSourceMap: Map<ts.Node, string>;
+}
+
+function buildBindingMap(sourceFile: ts.SourceFile): BindingMaps {
   const result = new Map<ts.Node, Binding>();
+  const taintSources = new Map<ts.Node, string>();
   const importResult = new Map<ts.Node, ImportBindingInfo>();
   const moduleScope: ScopeFrame = new Map();
   const scopes: ScopeFrame[] = [moduleScope];
@@ -281,20 +295,24 @@ function buildBindingMap(sourceFile: ts.SourceFile): { bindingMap: Map<ts.Node, 
   predeclare(sourceFile);
   scopes.length = 1;
 
-  function initializerTaint(init: ts.Expression | undefined): boolean {
+  /** The forbidden global an initializer identifier traces back to, or undefined when honest. */
+  function initializerTaintSource(init: ts.Expression | undefined): string | undefined {
     let expr = init;
     while (expr && ts.isParenthesizedExpression(expr)) expr = expr.expression;
-    if (!expr || !ts.isIdentifier(expr)) return false;
+    if (!expr || !ts.isIdentifier(expr)) return undefined;
     const local = lookup(expr.text);
-    if (local !== undefined) return local.tainted;
-    return TAINT_SOURCE_NAMES.has(expr.text);
+    if (local !== undefined) return local.tainted ? local.taintSource : undefined;
+    return TAINT_SOURCE_NAMES.has(expr.text) ? expr.text : undefined;
   }
 
   function visitVariableDeclaration(node: ts.VariableDeclaration): void {
     if (node.initializer) visit(node.initializer);
+    // A destructuring pattern's defaults and computed keys are reads; its declared names are not.
+    if (!ts.isIdentifier(node.name)) visit(node.name);
     const owner = declarationScope.get(node);
     if (owner && ts.isIdentifier(node.name)) {
-      owner.set(node.name.text, { tainted: initializerTaint(node.initializer) });
+      const taintSource = initializerTaintSource(node.initializer);
+      owner.set(node.name.text, { tainted: taintSource !== undefined, taintSource });
     }
   }
 
@@ -314,6 +332,7 @@ function buildBindingMap(sourceFile: ts.SourceFile): { bindingMap: Map<ts.Node, 
     if (!isReadIdentifier(node)) return;
     const local = lookup(node.text);
     result.set(node, bindingFor(local));
+    if (local?.taintSource) taintSources.set(node, local.taintSource);
     if (local?.importInfo) importResult.set(node, local.importInfo);
   }
 
@@ -325,12 +344,12 @@ function buildBindingMap(sourceFile: ts.SourceFile): { bindingMap: Map<ts.Node, 
   }
 
   visit(sourceFile);
-  return { bindingMap: result, importBindingMap: importResult };
+  return { bindingMap: result, importBindingMap: importResult, taintSourceMap: taintSources };
 }
 
-const bindingMapCache = new WeakMap<ts.SourceFile, { bindingMap: Map<ts.Node, Binding>; importBindingMap: Map<ts.Node, ImportBindingInfo> }>();
+const bindingMapCache = new WeakMap<ts.SourceFile, BindingMaps>();
 
-function bindingMapsFor(sourceFile: ts.SourceFile): { bindingMap: Map<ts.Node, Binding>; importBindingMap: Map<ts.Node, ImportBindingInfo> } {
+function bindingMapsFor(sourceFile: ts.SourceFile): BindingMaps {
   let maps = bindingMapCache.get(sourceFile);
   if (!maps) {
     maps = buildBindingMap(sourceFile);
@@ -346,6 +365,12 @@ function bindingMapsFor(sourceFile: ts.SourceFile): { bindingMap: Map<ts.Node, B
  */
 export function resolveBinding(node: ts.Node, ctx: CheckContext): Binding {
   return bindingMapsFor(ctx.sourceFile).bindingMap.get(node) ?? 'local';
+}
+
+/** For an identifier resolving to a tainted alias: the forbidden global or root it was assigned
+ *  from, transitively (`const l = location; const m = l;` → `'location'` for both). */
+export function resolveTaintSource(node: ts.Node, ctx: CheckContext): string | undefined {
+  return bindingMapsFor(ctx.sourceFile).taintSourceMap.get(node);
 }
 
 /**

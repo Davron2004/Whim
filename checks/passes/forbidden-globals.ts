@@ -11,7 +11,7 @@
 
 import ts from 'typescript';
 import { Diagnostic, DiagnosticKind, FORBIDDEN_DIRECT_NAMES, FORBIDDEN_MEMBER_PATHS, GLOBAL_ROOTS } from '../contract';
-import { CheckContext, Pass, lineOf, resolveBinding, rootIdentifierOf } from '../internal/scope';
+import { CheckContext, Pass, lineOf, resolveBinding, resolveTaintSource, rootIdentifierOf } from '../internal/scope';
 
 const DIRECT_FORBIDDEN_NAMES: ReadonlySet<string> = new Set([...FORBIDDEN_DIRECT_NAMES, ...GLOBAL_ROOTS]);
 const GLOBAL_ROOT_NAMES: ReadonlySet<string> = new Set(GLOBAL_ROOTS);
@@ -32,7 +32,54 @@ function hintFor(name: string): string {
   if (name === 'Worker' || name === 'SharedWorker') {
     return 'Background threads are not available; use vc-sdk’s `delay`/`interval` for async work instead.';
   }
+  if (name === 'location') {
+    return 'Apps can’t navigate or reload the page; move between screens with vc-sdk’s `nav.navigate(\'ScreenName\')`.';
+  }
+  if (name === 'ReactNativeWebView' || name === 'webkit') {
+    return 'The native bridge is not available to apps; use vc-sdk capabilities instead.';
+  }
   return "This global is not reachable from a vc-sdk app; use the equivalent vc-sdk capability instead.";
+}
+
+/** Members whose own hint beats the generic root hint when reached through a global root or alias. */
+const SPECIFIC_MEMBER_NAMES: ReadonlySet<string> = new Set(['location', 'ReactNativeWebView', 'webkit']);
+
+function memberNameOf(access: ts.Node): string | undefined {
+  if (ts.isPropertyAccessExpression(access)) return access.name.text;
+  if (ts.isElementAccessExpression(access) && ts.isStringLiteralLike(access.argumentExpression)) return access.argumentExpression.text;
+  return undefined;
+}
+
+/** The access applied directly to the root of a member chain (`w.myState.location` → `w.myState`). */
+function accessOnRoot(access: ts.PropertyAccessExpression | ts.ElementAccessExpression): ts.Node {
+  let cur: ts.PropertyAccessExpression | ts.ElementAccessExpression = access;
+  for (;;) {
+    let inner: ts.Expression = cur.expression;
+    while (ts.isParenthesizedExpression(inner) || ts.isNonNullExpression(inner) || ts.isAsExpression(inner)) inner = inner.expression;
+    if (!ts.isPropertyAccessExpression(inner) && !ts.isElementAccessExpression(inner)) return cur;
+    cur = inner;
+  }
+}
+
+/** The member access applied to `id`, looking up through the wrappers `rootIdentifierOf` skips
+ *  (parens, `!`, `as`: `(window).location` → `.location`), or undefined when `id` is not its object. */
+function accessAppliedTo(id: ts.Identifier): ts.PropertyAccessExpression | ts.ElementAccessExpression | undefined {
+  let child: ts.Node = id;
+  let p = id.parent;
+  while (ts.isParenthesizedExpression(p) || ts.isNonNullExpression(p) || ts.isAsExpression(p)) {
+    child = p;
+    p = p.parent;
+  }
+  return (ts.isPropertyAccessExpression(p) || ts.isElementAccessExpression(p)) && p.expression === child ? p : undefined;
+}
+
+/** The hint for a read through the global root or alias `root`: the member applied directly to it,
+ *  when it is `location`/`ReactNativeWebView`/`webkit` (`window.location.href`), else the hint for
+ *  what the root is or traces back to (`const l = location` → the navigation hint). */
+function hintForRoot(ctx: CheckContext, root: ts.Identifier, access: ts.Node | undefined): string {
+  const member = access && memberNameOf(access);
+  if (member !== undefined && SPECIFIC_MEMBER_NAMES.has(member)) return hintFor(member);
+  return hintFor(resolveTaintSource(root, ctx) ?? root.text);
 }
 
 function report(
@@ -84,7 +131,7 @@ function checkMemberBase(ctx: CheckContext, access: ts.PropertyAccessExpression 
       access,
       root.text,
       `Member/computed access reaches a forbidden global through the alias "${root.text}".`,
-      hintFor(root.text),
+      hintForRoot(ctx, root, accessOnRoot(access)),
     );
   }
 }
@@ -145,7 +192,8 @@ export const forbiddenGlobalsPass: Pass = (ctx: CheckContext) => {
     if (ts.isIdentifier(node)) {
       const binding = resolveBinding(node, ctx);
       if (binding === 'global' && DIRECT_FORBIDDEN_NAMES.has(node.text)) {
-        report(ctx, 'forbidden_global', node, node.text, `"${node.text}" is a forbidden global.`, hintFor(node.text));
+        const hint = hintForRoot(ctx, node, accessAppliedTo(node));
+        report(ctx, 'forbidden_global', node, node.text, `"${node.text}" is a forbidden global.`, hint);
       }
       return;
     }
