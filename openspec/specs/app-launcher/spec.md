@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change launcher-shell. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Installed apps are persistent host-held records
 
 The host SHALL maintain a persistent record for every installed mini-app — identity, display
@@ -600,7 +602,7 @@ Opening a ready tile SHALL grow a `bg` container from the tile to the screen whi
 
 ### Requirement: A crashed app keeps the orb and offers a way forward
 
-When a running app fails, the container SHALL show "<name> ran into a problem", "It stopped and can't carry on right now. Your saved data is safe.", Reload, "Ask Whim to fix it" (opening the change field prefilled with "Fix the error that stops this app." and the error text attached) and Back to your apps, and the orb SHALL stay. When the crashed launch is behind its app's current version (a change landed and was not reloaded, or an Undo moved the app after it opened), the body SHALL say a newer version is ready and the screen SHALL offer only Reload and Back to your apps: the error belongs to code that is no longer current, and a change is made from the current version, so the fix is offered once Reload runs that version (decision #82).
+When a running app fails, the container SHALL show "<name> ran into a problem", "It stopped and can't carry on right now. Your saved data is safe.", Reload, "Ask Whim to fix it" (opening the change field prefilled with "Fix the error that stops this app." and the error text attached) and Back to your apps, and the orb SHALL stay. When the crashed launch is behind its app's current version (a change landed and was not reloaded, or an Undo moved the app after it opened), the body SHALL say a newer version is ready and the screen SHALL offer only Reload and Back to your apps: the error belongs to code that is no longer current, and a change is made from the current version, so the fix is offered once Reload runs that version (decision #82). When the launch failed because its WebView got no bridge token (`webview-message-provenance`), the failure is the host's, not the app's code: the screen SHALL offer only Reload and Back to your apps, and no error is attached anywhere.
 
 #### Scenario: A crash is a change request
 
@@ -611,6 +613,11 @@ When a running app fails, the container SHALL show "<name> ran into a problem", 
 
 - **WHEN** a change of the app landed while it ran, was not reloaded, and the app then crashes
 - **THEN** the crash screen says a newer version is ready and offers Reload and Back to your apps, without "Ask Whim to fix it", and after Reload a crash of the new version offers "Ask Whim to fix it" again
+
+#### Scenario: A launch with no bridge token offers no fix
+
+- **WHEN** an app is launched into a WebView that was handed no bridge token, and the crash screen shows
+- **THEN** it offers Reload and Back to your apps, without "Ask Whim to fix it", while a crash of the app's own code, or of a WebView that died, still offers "Ask Whim to fix it"
 
 ### Requirement: The shell plays haptics from a fixed map
 
@@ -710,4 +717,3 @@ Every launcher screen and sheet page with a text input SHALL keep the focused fi
 
 - **WHEN** the keyboard is up on the Plan page's row editing, the Whim sheet's change field, the report page or any other input screen, on iOS or Android
 - **THEN** the focused field and the primary action are visible and the content above scrolls
-
