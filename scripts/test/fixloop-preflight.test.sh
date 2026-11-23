@@ -890,6 +890,27 @@ case_redcheck_ignores_primary_tree_checkout() {
   return 0
 }
 
+# stale on a large file: the evidence line sits near the top of a file far bigger than a pipe
+# buffer. `git show | grep -q` under `pipefail` lost the race: grep -q exits on its first match, git
+# show takes SIGPIPE writing the rest, and the pipeline reported a live finding as ALREADY FIXED
+# (seen on src/host/launcher/LauncherRoot.tsx, ~200 KB, during fix-wbp-issues). The file here is
+# ~1 MB so the writer is reliably still writing when grep exits.
+case_stale_large_file_present() {
+  local fx out rc
+  fx="$(new_fixture)" || { fail "stale fixture could not be built" ""; return 0; }
+  { echo "const needle = 'evidence line';"; for _ in $(seq 1 20000); do echo "// padding line to push the file far past a pipe buffer"; done; } > "$fx/free/big.ts"
+  fgit -C "$fx" add -A >/dev/null 2>&1
+  fgit -C "$fx" commit -qm "big file" >/dev/null 2>&1
+  printf '%s\n' "## free/big.ts" "  const needle = 'evidence line';" > "$fx/ev.txt"
+  out="$(cd "$fx" && ./scripts/fixloop.sh stale "$fx/ev.txt" 2>&1)"; rc=$?
+  assert_rc_zero "stale finds an evidence line near the top of a large file" "$rc" "$out"
+  assert_contains "stale reports the large-file finding live" "$out" "EVIDENCE PRESENT"
+  printf '%s\n' "## free/big.ts" "const needle = 'not in the file';" > "$fx/ev.txt"
+  out="$(cd "$fx" && ./scripts/fixloop.sh stale "$fx/ev.txt" 2>&1)"; rc=$?
+  if [ "$rc" -eq 7 ]; then pass "stale still reports a line absent from a large file as missing (exit 7)"; else fail "stale on an absent line (expected exit 7, got $rc)" "$out"; fi
+  return 0
+}
+
 case_incomplete_checkout
 case_linked_worktree
 case_unrelated_baseline
@@ -911,6 +932,7 @@ case_symlinked_node_modules_refused
 case_check_rejects_unowned_node_modules
 case_gate_refuses_unowned_node_modules
 case_redcheck_ignores_primary_tree_checkout
+case_stale_large_file_present
 
 printf '\n'
 if [ "$FAILURES" -gt 0 ]; then

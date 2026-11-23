@@ -291,7 +291,10 @@ case "$cmd" in
       [ -z "$t" ] && continue
       [ -n "$file" ] || die "evidence line before any '## <path>' header in $evfile"
       checked=$((checked+1))
-      if ! git show "HEAD:$file" 2>/dev/null | grep -qF -- "$t"; then
+      # Read the blob into a variable, then match without a pipeline: `git show | grep -q` under
+      # pipefail reports "missing" when grep exits early and git show takes SIGPIPE on a big file.
+      blob="$(git show "HEAD:$file" 2>/dev/null)" || blob=""
+      if [[ $blob != *"$t"* ]]; then
         missing+="$file: $t"$'\n'
       fi
     done < "$evfile"
