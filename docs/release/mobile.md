@@ -157,13 +157,22 @@ commit is its release tag: `git rev-parse 'release/1.0.0+382511^{commit}'` gives
    cd ~/.cache/whim-upgrade/382511 && npm ci && npm run build
    (cd android && ./gradlew :app:assembleOffline -PwhimBuildNumber=382511)
    cp android/app/build/outputs/apk/offline/app-offline.apk ~/.cache/whim-upgrade/from.apk
-   mkdir -p vendor && ln -s <repo>/vendor/bundle vendor/bundle
-   (cd ios && bundle exec pod install && xcodebuild -workspace Whim.xcworkspace -scheme Whim \
+   bundle install
+   bundle exec pod install --project-directory=ios
+   (cd ios && xcodebuild -workspace Whim.xcworkspace -scheme Whim \
      -configuration Release -sdk iphonesimulator -derivedDataPath build/sim WHIM_BUILD_NUMBER=382511 build)
    ```
-   A fresh worktree has no `vendor/bundle` (gems are never committed), so `bundle exec pod install`
-   fails there until it borrows the repo's gems. The symlink is safe while both checkouts have the
-   same `Gemfile.lock`; if they differ, run `bundle install` in the worktree instead.
+   Run `bundle install` and `bundle exec pod install` from the checkout root, as above. Bundler is
+   the only way to run CocoaPods here. Set it up once per checkout:
+   - **Prerequisite:** Bundler 4 needs Ruby 4. Put `/opt/homebrew/bin` first on `PATH`.
+     `which bundle` must print `/opt/homebrew/bin/bundle`. The macOS `/usr/bin/ruby` is 2.6 and
+     can't run Bundler 4.
+   - **Install:** `bundle install`. The gems go into the gitignored `vendor/bundle`. A fresh
+     worktree has none until it runs this.
+   - **Verify:** `bundle exec pod --version` prints `1.15.2`.
+   - Never run the system `pod`. The lockfile pins CocoaPods 1.15.2. Another version rewrites
+     `ios/Podfile.lock` and `ios/Whim.xcodeproj/project.pbxproj`.
+
    Since React Native 0.88, `pod install` generates the React Native core pods (`React-Core` among
    them) under the gitignored `ios/build/rncore-facades/` and `Podfile.lock` points at that path,
    so after deleting `ios/build` the next `xcodebuild` fails until `pod install` runs again.
@@ -171,8 +180,7 @@ commit is its release tag: `git rev-parse 'release/1.0.0+382511^{commit}'` gives
    takes the `offline` build: it's debug-signed (so the upgrade installs) and debuggable (so the
    script can read the app's store with `run-as`).
 2. Build the candidate the same way from its own checkout, with a higher build number
-   (`node scripts/release/run.mjs build-number`). In this repo, restore `ios/Podfile.lock` after the
-   build if `pod install` changed it.
+   (`node scripts/release/run.mjs build-number`).
 3. Start the previous release's server in stub mode, from its checkout. The candidate's server
    answers 426 to a build that doesn't send `x-whim-protocol`. Up to 382511, the plan step
    (`/v1/rewrite`) has no stub, so the server needs the model key and roster from `.env`. Generation
@@ -371,8 +379,10 @@ curl -sI https://whim.<domain>/.well-known/assetlinks.json
   Rerun the lane with `CLOUDSDK_PYTHON=/opt/homebrew/bin/python3.14` (any supported Python), or
   upload the map alone with `node scripts/release/run.mjs upload-source-map ...` as above.
 - **`bundle exec pod install` fails on missing native extensions (nkf, json, ffi, bigdecimal).** The
-  gems in `vendor/bundle` were built for another Ruby. Run `bundle install` in that checkout, then
-  restore `Gemfile.lock` if it only gained a checksum line.
+  gems in `vendor/bundle` were built for another Ruby, or this checkout never ran `bundle install`.
+  Put `/opt/homebrew/bin` first on `PATH` (`which bundle` must print `/opt/homebrew/bin/bundle`),
+  then run `bundle install` at the checkout root. Don't fall back to the system `pod`. A clean
+  `bundle install` leaves `Gemfile.lock` as committed.
 - **The upload keystore or an API key is gone.** Back up `~/.config/whim/` to the password manager
   whenever a file there changes; the 2026-10-10 wipe took every one of them. A lost upload key is
   replaced through Play Console → App integrity → App signing → Upload key → Request reset (with the
