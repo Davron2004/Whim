@@ -1891,3 +1891,48 @@ gates: it exits 1 on any lag not covered by a pin.
 workspace declares): `eslint-plugin-ft-flow ^3.0.11` under `@react-native/eslint-config` (2.0.3
 calls `context.getAllComments`, removed in ESLint 9), `basic-ftp ^6.2.2`, and
 `firebase-tools > gaxios > uuid ^11.1.1` (the last two predate this change, reasons unrecorded).
+
+### 89. RN acts only on messages signed with its WebView's token; the mini-app frame holds no native bridge `[BUILT — openspec: webview-bridge-provenance; closes the device section of docs/security/2026-11-19-verdict-channel.md; extends #86 to the outer page → RN hop]`
+
+**Context:** RN parsed whatever arrived on `ReactNativeWebView` and trusted a `trusted` field any
+sender can write. On Android, react-native-webview exposes the bridge with origin rule `"*"` and drops
+`isMainFrame`; on an old WebView it falls back to `addJavascriptInterface` (every frame). On device
+(System WebView 158) a `data:` document the mini-app frame navigates to **does** see
+`ReactNativeWebView`, and on iOS every script-message handler is reachable from every frame.
+
+- **A token per WebView instance.** 16 bytes from the OS CSPRNG through the first-party `WhimRandom`
+  TurboModule (`SecureRandom` / `SecRandomCopyBytes`; Hermes has no `crypto`), minted at the instance's
+  first `onLoadEnd` and delivered by main-frame `injectJavaScript` of `__whimControl.auth()` at every
+  load end; the page accepts it once and keeps it in its orchestration closure. `onLoadStart` is never an
+  input: on iOS every `about:blank` iframe fires a spurious load start (the first iOS device run failed
+  on it), and iOS's `ReactNativeHistoryShim` handler, reachable from any frame, fires `onLoadEnd`.
+  *Rotation rejected:* a repeated load end would swap the token under a running page and drop what it
+  had already signed. No secure source → no token → every message dropped, no fallback.
+- **Envelope `W1.<token>.<JSON>`, checked before parsing** (constant-time prefix compare) at the head of
+  every consumer: the launch host, the pool's slot router (warm answer included), the dev probe and the
+  network-deny probe. The page posts unsigned until `auth`, so synthrun, `invariants/` and the desktop
+  suites run unchanged; RN drops those posts.
+- **In-frame bridge probes are hard.** `neutralize.js` records and removes `ReactNativeWebView` and the
+  whole `window.webkit` reach before anything else runs; the loader captures the frozen record (verdict
+  side field `bridge`, not counted); three counted `reach` probes check the frame holds only the loader
+  stub. 49 → 52 probes. An unremovable bridge fails containment.
+- **The navigated-frame exposure probe is diagnostic.** After `auth` the page navigates a hidden probe
+  frame to `data:` and reports `navigated` (with what was visible) / `refused` / `timedOut` plus a canary
+  result. It never fails containment: the platform decides what a navigated document sees, and the token
+  makes that harmless. The result is uploaded as one `info` record under the existing error-details
+  consent (fields `exposure`, `webview`; deduped by result). No consent version bump: no category,
+  holder, keep period or default changed. The v2 manifest's error-details description was reworded
+  without a bump (descriptions aren't diffed; `contract/disclosure/released/v2.json` keeps the text v2
+  consenters saw).
+- **Native main-frame filter, a second layer.** Android: a `RNCWebView` subclass drops non-main-frame
+  posts on the listener path (the fallback path has no frame identity and relies on the token; a
+  debug-only `WHIM_FORCE_JS_INTERFACE_BRIDGE` reproduces it). iOS: a swizzle drops sub-frame posts to
+  every handler.
+- **iOS refuses sub-frame navigations** except `about:srcdoc` and `about:blank` (an allowlist, since
+  `blob:`/`javascript:` are the same attack as `data:`). It broke nothing on device. Android does not
+  report sub-frame navigations reliably, so it stays unrefused there.
+- **`NoBridgeToken` is a host fault:** the crash screen offers Reload and Back only, never "Ask Whim to
+  fix it".
+
+Device results and the tests that pin each property: docs/security/2026-11-19-verdict-channel.md
+("Evidence", second part; "Pinned by").

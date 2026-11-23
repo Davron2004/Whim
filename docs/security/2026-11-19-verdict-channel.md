@@ -6,6 +6,10 @@ same parent capture in `src/runtime/web/syscall.js`. Pinned by `npm run invarian
 `stolen nonce`. Decision #86. The four containment legs (sandboxed iframe, CSP, neutralized globals,
 native network refusal) were never affected: this blinded the detector, it opened no escape.
 
+The device follow-up ("Device: a frame posting straight to the native bridge", below) is fixed too:
+decision #89, openspec change `webview-bridge-provenance`. Its device evidence is in "Evidence",
+second part.
+
 ## The finding
 
 The containment verdict reaches the host as a `probes` frame tagged with a per-realm nonce
@@ -95,6 +99,58 @@ attack delivered in front of the real tip-splitter bundle, frames read from the 
 - `synthrun/test/acceptance.ts` `stolen nonce`: a candidate that asks again and swaps
   `window.parent` forges a breach verdict; the report must keep the genuine `contained: true`.
 
+### Device: the native bridge (webview-bridge-provenance, 2026-11-22)
+
+Four device cases, run with the `bridge-reach` adversarial fixture (`fixtures/adversarial/bridge-reach.app.tsx`:
+it navigates its own frame to a `data:` document, which looks for `__whimControl` and any token-shaped
+string and posts forged unsigned `paint`, `probes {contained:false}`, `error` and `syscall` frames straight
+to any bridge it sees) and the outer page's exposure probe. Write-ups are in
+`openspec/changes/webview-bridge-provenance/evidence/`; screenshots, logs and upload bodies are in the
+archive listed in `docs/EVIDENCE.md`.
+
+- **Android, current System WebView (158.0.8127.46, listener path), debug build on emulator, Android 17**
+  (`android-5.1-5.2.md`, rerun after the iOS fix in `android-5.1-rerun-5.4.md`). The answer to the question
+  left open in "What stays out of reach" is **yes: a navigated `data:` frame does see
+  `window.ReactNativeWebView`** (`"*"` matches the opaque origin; exposure `navigated:android`,
+  bridge-reach's document reads `object`). The native main-frame filter stopped every sub-frame post before
+  JavaScript (bridge-reach's 4 forged frames and the exposure probe's canary): drop counter 0,
+  `canaryReachedNative: false`. The document found no `__whimControl` and no token. Verdict
+  CONTAINED 52/52 with `bridge: android present/removed` (neutralize removed the object from the mini-app
+  frame), no paint change, no crash screen, no syscall. The rerun repeated this over 3 WebView instances
+  and 2 processes with 0 drops.
+- **Android, forced fallback path** (`WHIM_FORCE_JS_INTERFACE_BRIDGE`, `addJavascriptInterface`, same
+  WebView; `android-5.1-5.2.md`). Exposure `navigated:android+canary`: the canary reached RN, so the path
+  was in effect. The native filter cannot apply here (no frame identity), and **the token alone refused
+  the 4 forged frames** (drop counter 1 → 5), with no state change. The injected object was still removed
+  from the mini-app frame: 52/52, `bridge: android present/removed`.
+- **iOS simulator (iPhone 17, iOS 27.0), first run** (`ios-5.3.md`): **failed, release-blocking.** The
+  runtime page loads with base URL `about:blank`, and react-native-webview treats any request whose URL
+  equals the main document URL as a top-frame load, so every `about:blank` iframe the page creates (the
+  exposure probe frame, each launch's mini-app frame) fired `onLoadStart` after `onLoadEnd`. RN, which then
+  minted the token at load start, replaced it with one it never delivered and dropped everything after:
+  the dev probe refused every launch (`NoBridgeToken`), and the product's Tip Splitter painted, then hit
+  its paint timeout and showed the crash screen. The fix (chain-8) is decision #89's token lifecycle: one
+  token per WebView instance, minted at its first load end, re-delivered at every load end, load start
+  never an input. A shimmed run in the same report showed every other item passing.
+- **iOS simulator, rerun on the fix, unshimmed** (`ios-5.3-rerun.md`): **passed.** CONTAINED 52/52 on
+  every launch, `bridge: ios present/removed`, drop counter 0 everywhere, exposure `refused`/`webkit`; the
+  product path Home → Tip Splitter opens, takes input and reopens. bridge-reach's `data:` self-navigation
+  was refused natively (WebKit `policy 0`) and its frame kept its realm. Over the run 6 sub-frame
+  navigations were refused (5 exposure probes, 1 bridge-reach) and 46 allowed; every frame painted, and a
+  `data:` PNG and SVG rendered (first run), so the iOS navigation refusal broke nothing legitimate and was
+  not narrowed. The iOS native script-message filter saw no traffic: with `window.webkit` removed from the
+  mini-app frame no sub-frame code could reach a handler.
+- **Design Open Question 3 did not arise.** It asked what to do if a counted in-frame probe failed on a
+  real platform, notably if iOS `webkit.messageHandlers.ReactNativeWebView` could not be removed. It
+  could: WKWebView let neutralize remove `window.webkit` in the mini-app frame (probe "webkit.messageHandlers
+  unreachable" passes, bridge-reach reads the handler as absent). No owner decision was needed.
+- **Android offline release build, product shell, switch off** (`android-5.1-rerun-5.4.md`, local stub
+  server, production unreachable). Apps paint, a storage app's write and read round-trip across WebViews,
+  back navigation works, each pool WebView logs its exposure record, and with consent and "Send error
+  details" on the local `/v1/diagnostics` received the `bridge-exposure` record with exactly the seven
+  contract keys (`exposure: navigated:android`, `webview: chrome-158`, no token, URL or app id); with the
+  switch off, nothing. No drop, token or failure line appeared in the session.
+
 ## What stays out of reach
 
 The verdict channel is now sound: only the loader can produce a frame the host trusts, and app code
@@ -113,7 +169,9 @@ change, and what the verdict should not be read as claiming:
   before the bundle is delivered and requiring both. That changes what the synthetic run's spec'd
   cases observe (a candidate that never paints would then still produce a probe run, and its T6
   spoof rejection), so it is an owner decision, not part of this fix.
-- **Device: a frame posting straight to the native bridge.** On Android, react-native-webview
+- **Device: a frame posting straight to the native bridge.** *Status: fixed (decision #89; was
+  "proposed"). The text below is the finding as written on 2026-11-20; "What was built" and "Pinned by"
+  at its end are current.* On Android, react-native-webview
   registers `ReactNativeWebView` with `addWebMessageListener(…, Set.of("*"), …)` and ignores
   `isMainFrame`, and the RN host does not check where a message came from. If the bridge object is
   injected into an opaque-origin frame, a document the mini-app frame navigates to (a `data:` URL is
@@ -145,7 +203,7 @@ change, and what the verdict should not be read as claiming:
   reachable from a subframe is unchecked (research for `upgrade-to-latest-dependencies`,
   2026-11-20).
 
-  **Proposed fix (not implemented; the change after `upgrade-to-latest-dependencies`):**
+  **Proposed fix (2026-11-20; now built, see "What was built"):**
   1. *Reproduce first.* A fixture mini-app navigates its frame to a `data:` document that reports
      `typeof window.ReactNativeWebView` and, when present, posts a marked `probes` frame straight to
      RN. Run it on all three cases above. That fixes the urgency; the fix is likely needed
@@ -168,3 +226,33 @@ change, and what the verdict should not be read as claiming:
   5. *Tests:* a host-side test that a token-less message of every kind is dropped, red-checked
      against the weaker variant that checks the token on `probes` only; the step-1 fixture kept as
      an on-device acceptance case.
+
+  **What was built (decision #89).** Steps 1–3 and 5 as proposed, with these differences: the token is
+  one per WebView instance, not per page load (the iOS defect in "Evidence"); the mini-app frame's own
+  bridge objects (`ReactNativeWebView`, the whole `window.webkit` reach) are removed by `neutralize.js`
+  and checked by three counted probes (49 → 52); the step-1 reproduction also runs on every device as the
+  outer page's exposure probe, uploaded under the error-details consent; the iOS native filter covers
+  every script-message handler; and step 4's rejection now holds for Android only: iOS refuses sub-frame
+  navigations except `about:srcdoc`/`about:blank`, which the device run showed breaks nothing. On current
+  Android the answer to "does `"*"` match opaque origins" is yes (see "Evidence").
+
+  **Pinned by:**
+  - *The page signs every post after `auth`, buffers load-time logs, never hands the token to a frame,
+    and reports exposure only from its probe frame:* `npm run runtime:provenance-verify`
+    (`src/runtime/test/bridge-provenance.desktop.mjs`, page cases), and `npm run launcher:deliver-verify`
+    (`src/host/launcher/test/deliver-by-source.desktop.mjs`: the signed warm answer, the exposure report as
+    RN reads it).
+  - *The mini-app frame holds no native bridge, the record cannot be rewritten, an unremovable bridge fails
+    containment:* `npm run runtime:provenance-verify` (probe cases, with sabotaged non-configurable
+    variants), plus `npm run invariants` and `npm run bridge:invariants` unchanged.
+  - *RN drops every unsigned or wrong-token message before parsing, in every consumer; one token per
+    WebView instance; no secure source, no channel; a missing token is a host fault (Reload only):*
+    `src/host/launcher/test/runtime-message-auth-ui.suite.tsx` and the pure
+    `src/host/launcher/test/runtime-message-auth.suite.ts` (`npm run launcher:test`).
+  - *Native main-frame filter (Android listener path, every iOS handler), iOS sub-frame navigation
+    refusal, the fallback switch unreachable from release builds:*
+    `checks/test/release/webview-main-frame.suite.ts`; *the token's source is the OS CSPRNG
+    (`WhimRandom`):* `checks/test/release/secure-random.suite.ts` (both `npm run checks:test`).
+  - *The exposure record's projection, dedupe by result, consent gate, and the server accepting only
+    well-formed exposure fields:* `src/host/logging/test/diagnostics.suite.ts`,
+    `server/test/diagnostics.suite.ts`, `server/test/contract.suite.ts`.
