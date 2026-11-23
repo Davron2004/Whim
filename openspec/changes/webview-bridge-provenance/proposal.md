@@ -5,7 +5,7 @@ React Native trusts every message that arrives on the WebView's `ReactNativeWebV
 ## What Changes
 
 - **Authenticated outer page → RN hop.**
-  - React Native mints a fresh random token for each page load of each WebView and hands it to the outer page through a main-frame-only injection.
+  - React Native mints a fresh random token for each WebView instance and hands it to the outer page through a main-frame-only injection.
   - The outer page keeps the token in a closure and puts it in front of every message it sends to RN.
   - RN drops any message without the current token before parsing it. This covers every kind: paint, error, syscall, ui-event, nav-depth, probes, delivery, rejected-forgery, host log, the warm-slot answer and the new exposure report.
   - Without a token, the outer page posts the same messages with no token. Stub hosts (synthrun, the owner's invariants, desktop suites) therefore keep working unchanged, while RN refuses everything that lacks a token.
@@ -32,11 +32,12 @@ React Native trusts every message that arrives on the WebView's `ReactNativeWebV
 ## Capabilities
 
 ### New Capabilities
-- `webview-message-provenance`: RN accepts a WebView message only when it is proven to come from the outer runtime page. This covers the per-page-load token, its main-frame-only delivery, the drop of every token-less message before parsing, the native main-frame filter as a second layer, and the device-only exposure probe with its canary record.
+- `webview-message-provenance`: RN accepts a WebView message only when it is proven to come from the outer runtime page. This covers the per-WebView-instance token, its main-frame-only delivery, the drop of every token-less message before parsing, the native main-frame filter as a second layer, and the device-only exposure probe with its canary record.
 
 ### Modified Capabilities
 - `sandbox-isolation`: adds requirements that the mini-app frame holds no native bridge object apart from the loader stub, enforced by counted hard probes, that bridge presence at start is reported in a side field, and that iOS refuses sub-frame navigations to anything but `about:srcdoc`/`about:blank`.
 - `device-diagnostics`: the allowlist gains `exposure` and `webview`, valid only on the bridge-exposure record; that `info`-level record is the one non-error upload, deduplicated by result, under the same consent gate.
+- `app-launcher`: a launch that fails because its WebView got no bridge token is the host's fault, so its crash screen offers Reload and Back only, with no "Ask Whim to fix it" and no error attached.
 
 ## Impact
 

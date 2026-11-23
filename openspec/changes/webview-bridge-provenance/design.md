@@ -39,16 +39,21 @@ Constraints carried in (research.md, both Constraints sections):
 
 ## Decisions
 
-### D1. A per-page-load token, delivered by main-frame injection after load
+### D1. A token per WebView instance, delivered by main-frame injection at every load end
 
-RN mints 128 bits from the same secure random source the device id uses. The token is minted at `onLoadStart` and delivered at `onLoadEnd` with `injectJavaScript("window.__whimControl({kind:'auth',token:…})")`. Every page load (reload, content-process termination, remount) gets a new one, and RN keeps only the current load's. Injection runs in the main frame on both platforms: Android `evaluateJavascript`, iOS `evaluateJavaScript:` (research.md Part A).
+RN mints 128 bits from the operating system's secure random source through a first-party native module, `WhimRandom` (Android `java.security.SecureRandom`, iOS `SecRandomCopyBytes`). Hermes has no `crypto` global (no `getRandomValues`/`randomUUID`; found by chain-3, 2026-11-22), so the device id's `crypto.randomUUID` path never runs on a phone; the device id is anonymous metering and keeps its `Math.random` fallback by design, but the token is a secret and has no fallback: if `WhimRandom` is missing or fails, no token is minted and that WebView's messages are all dropped. *Alternative considered:* the `react-native-get-random-values` package: rejected for a few lines of first-party native code that follows the `WhimHaptics` TurboModule pattern and adds no dependency. The token is minted at a WebView instance's first `onLoadEnd` and delivered with `injectJavaScript("window.__whimControl.auth('…');true;")`; every later `onLoadEnd` of that instance delivers the same token again. `onLoadStart` is not an input. A new WebView instance (a pool slot recreated after a content-process or renderer death, a remount, each network-deny variant) has a channel of its own, so a new token, and a message carrying another instance's token is refused. If a content-process termination reloads the same instance in place, the same token is delivered again: the realm that held it is gone, and nothing else ever saw it. Injection runs in the main frame on both platforms: Android `evaluateJavascript`, iOS `evaluateJavaScript:` (research.md Part A).
 
-The outer page accepts `auth` once per page load and keeps the token in its orchestration closure. The outer realm never runs app code, and a subframe cannot reach it: the iframe is opaque-origin, and a navigated `data:` document is a new opaque realm.
+The outer page accepts `auth` once per page load and keeps the token in its orchestration closure; a repeated delivery of the same token is a no-op. The outer realm never runs app code, and a subframe cannot reach it: the iframe is opaque-origin, and a navigated `data:` document is a new opaque realm.
+
+**Why per instance, not per page load (chain-8, 2026-11-22).** The first version minted at `onLoadStart`. On the iOS simulator (evidence ios-5.3) every launch then failed: react-native-webview 14 takes a request for the top frame when `request.URL` equals `mainDocumentURL` (`RNCWebViewImpl.m:1362`), and the runtime page loads with base URL `about:blank`, so every `about:blank` iframe it creates (the exposure probe frame, the mini-app frame on each launch) fires `onLoadStart` after `onLoadEnd`. RN minted a token it never delivered and dropped everything after. Android fires `onLoadStart` for history updates too (`RNCWebViewClient.java:67-75`, `doUpdateVisitedHistory`). Load ends are main-frame only by origin: Android `onPageFinished` (`RNCWebViewClient.java:50-63`) and the deprecated `onReceivedError` (`:230-241`, main-frame errors only); iOS `didFinishNavigation` (`RNCWebViewImpl.m:1583-1591`) and `didFailProvisionalNavigation` (`:1499`), both main-frame `WKNavigation` callbacks; the JS layer maps finish and error to `onLoadEnd` (`WebViewShared.tsx:157-165, 207-210`). Two exceptions: Android may report one page's load end twice (`realm-delivery.ts`), and iOS's history shim fires `onLoadEnd` on any message to its handler, `ReactNativeHistoryShim` (`RNCWebViewImpl.m:790-796`), which is registered with `addScriptMessageHandler:name:` (`:490-492`) and so is exposed to every frame; only the shim's script is main-frame only (`:1876`). Before D6 was widened, the mini-app frame could fire `onLoadEnd` at will.
+
+*Rotation rejected:* minting at every `onLoadEnd` and having the page accept a later `auth` as a rotation fixes the iOS case but lets a repeated load end (or a sub-frame's shim message) swap the token under a running page. Everything the page signed before it ran the new `auth` (a paint, a syscall, the exposure report) reaches RN after the swap and is dropped. With one token per instance, a repeated load end hands over the token the page already holds, and nothing is lost.
 
 **Alternatives considered:**
 - *`injectedJavaScriptBeforeContentLoaded`.* On Android it is `evaluateJavascript` from `onPageStarted`, not a document-start script, so it races the page's inline script. Its `ForMainFrameOnly` flag is never read. It is reliable on neither platform (research.md Part A).
 - *A token baked into `RUNTIME_HTML`.* The HTML is a build-time constant shared by every WebView and by synthrun, so the token would be neither secret nor per-load.
 - *A token per launch (realm reset).* The outer realm outlives iframe resets and never holds app code, so rotating per launch adds churn and no security.
+- *A token per page load.* No reliable signal marks a new page in the same instance (see above), and no owner reloads a page in place: each new page is a new instance.
 - *Leaning on the iframe nonce.* That nonce lives in the attacker's realm by design. The token deliberately lives where app code never runs.
 
 ### D2. Envelope `W1.<32 hex>.<JSON>`, checked before parsing
@@ -73,7 +78,7 @@ What the page would post before the token:
 - Host-log lines from page load. These go into a bounded buffer (64 lines, then a count) that is flushed, signed, on `auth`.
 - Nothing else. Delivery, paint, probes and syscalls all follow an RN-initiated delivery, which RN sends only after it has delivered the token.
 
-`WARM_PROBE_JS` stops posting by itself. It calls `__whimControl({kind:'warm'})`, and the page answers through its signed path (research.md Part A, Risks).
+`WARM_PROBE_JS` stops posting by itself. It calls `__whimControl.warm()`, and the page answers through its signed path (research.md Part A, Risks).
 
 **Alternatives considered:**
 - *Buffer everything until a token.* This would break every stub host forever.
@@ -82,8 +87,8 @@ What the page would post before the token:
 ### D4. In-frame bridge: neutralize removes it, the loader records it, hard probes check it
 
 At the top of `neutralize.js`, before anything else runs:
-1. Record `present` for `window.ReactNativeWebView` (own or inherited) and for `window.webkit?.messageHandlers?.ReactNativeWebView`.
-2. Remove them with the existing delete-or-shadow technique, which covers non-configurable globals.
+1. Record `present` for `window.ReactNativeWebView` (own or inherited) and for any `messageHandlers` reachable through a `webkit` on the window's chain. WebKit hands every frame every handler the host registered: react-native-webview registers its bridge, `ReactNativeWebView`, and its history shim, `ReactNativeHistoryShim`, whose message fires RN's `onLoadEnd` (D1).
+2. Remove them with the existing delete-or-shadow technique, which covers non-configurable globals. On iOS `webkit` itself goes: WebKit does not enumerate a handler namespace's entries, so no list of names is complete. Where `webkit` cannot be removed, the two known handlers are stripped by name, and the record says not removed.
 3. Record `removed`.
 
 The record goes into a frozen object that the loader captures at load, before app code runs, alongside its other captured references. It never travels through `__WHIM_NEUTRALIZE_REPORT__`, which app code can write (research.md Part B, Constraints). The loader then installs its stub as today.
@@ -91,7 +96,7 @@ The record goes into a frozen object that the loader captures at load, before ap
 New counted `reach` probes in `probes.js`:
 - "frame bridge is the loader stub": the own and inherited `ReactNativeWebView` resolves to the captured stub;
 - "no native bridge on the window prototype chain";
-- "`webkit.messageHandlers.ReactNativeWebView` unreachable".
+- "`webkit.messageHandlers` unreachable": no `webkit` on the chain yields a `messageHandlers` at all, so no entry of it, whatever its name (chain-8 widened it from `ReactNativeWebView` alone).
 
 The verdict gains a `bridge` side field built from the captured record, like `t7` and not counted. `total` grows by three. README/docs "49" becomes 52.
 
@@ -110,13 +115,13 @@ On `auth`, the outer page runs the probe once:
 4. If a bridge is visible, the document also posts the fixed canary `WHIM-EXPOSURE-CANARY-1` straight to it.
 5. The outer page removes the frame and sends RN a signed `bridge-exposure` report with exactly one outcome: `navigated` (with `visible`), `refused` or `timedOut`. A 3-second time limit applies.
 
-**Telling `refused` from `timedOut`.** The srcdoc script posts `navigating` before it sets `location`, then posts `still-here` about 500 ms later. Only a real navigation destroys that realm, so a `still-here` means the platform refused the navigation (expected on iOS under D9). The report also carries `webview`, the engine and major version the outer page reads from its own user agent (`chrome-<n>` or `webkit`).
+**Telling `refused` from `timedOut`.** The srcdoc script posts `navigating` before it sets `location`, posts `still-here` about 500 ms later while its realm is alive, and posts `leaving` on `pagehide`, when a navigation commits. A slow navigation can commit after `still-here`, so `still-here` decides nothing by itself: a `report` from the `data:` document before the 3-second deadline is `navigated`, whatever came before. At the deadline the outcome is `refused` if `navigating` and `still-here` arrived and `leaving` did not (the realm survived the whole window: the platform refused the navigation, expected on iOS under D9), and `timedOut` otherwise (the probe script never ran, or a navigation was still under way). The report also carries `webview`, the engine and major version the outer page reads from its own user agent (`chrome-<n>` or `webkit`).
 
-RN recognizes the canary by exact string equality before the token check, records `canaryReachedNative` for that page load, and drops it. Recognizing a constant string reads no attacker data, and a forged canary can only claim something that is then actually true.
+RN recognizes the canary by exact string equality before the token check, records `canaryReachedNative` for that WebView, and drops it. Recognizing a constant string reads no attacker data, and a forged canary can only claim something that is then actually true.
 
 It is device-only because it starts on `auth`, and only RN delivers a token: under synthrun and Playwright every frame sees the harness shim, so the result would be meaningless there. It is diagnostic because neither the page nor the app can change what the platform injects into a navigated document. Once the token is enforced, exposure is harmless, and failing containment for it would fail every app on old Android WebViews for something the user cannot fix.
 
-The result is recorded per page load. It goes to the host's diagnostics log channel, onto the dev probe screen, into the diagnostics upload (D8), and to the pool: the slot router handles `bridge-exposure` before the waiting-slot drop (research.md Part B, Integration points).
+The result is recorded per WebView (one page per instance). It goes to the host's diagnostics log channel, onto the dev probe screen, into the diagnostics upload (D8), and to the pool: the slot router handles `bridge-exposure` before the waiting-slot drop (research.md Part B, Integration points).
 
 **Alternative considered:** *Probing from inside the mini-app frame.* Rejected: navigating the frame destroys the probe's own realm, and the CSP forbids a nested frame (probe 4b already confirms that).
 
@@ -129,7 +134,7 @@ A debug-only `BuildConfig` switch, `WHIM_FORCE_JS_INTERFACE_BRIDGE`, forces the 
 - `MainApplication` still replaces exactly one `RNCWebViewPackage`;
 - the switch is unreachable from release build types.
 
-**iOS:** extend the existing swizzle seam with a swizzle of `userContentController:didReceiveScriptMessage:` that returns early for `!message.frameInfo.isMainFrame` when the handler name is `ReactNativeWebView`. The same static suite covers it.
+**iOS:** extend the existing swizzle seam with a swizzle of `userContentController:didReceiveScriptMessage:` that returns early for `!message.frameInfo.isMainFrame`, whatever the handler's name. Every handler the library registers is reachable from every frame, and its history shim's message fires `onLoadEnd` (D1), so chain-8 widened the hook from `ReactNativeWebView` alone. The same static suite covers it and fails if the condition names a handler. Android needs no change: the library exposes only `ReactNativeWebView` (`RNCWebView.java:56, 259, 269`), on the listener path the subclass already filters.
 
 If a subclass cannot reach the bridge factory, because the newarch manager's impl is `private final` (research.md Part A, Integration points), the implementer reports back rather than improvising. The fallback is vendoring the one class through the Gradle source set, which is a design change for the owner.
 
@@ -160,7 +165,8 @@ The owner asked to block `data:` sub-frame navigation on iOS unless something br
 - **Host suite** (new, beside `mini-app-host-ui.suite.tsx`):
   - every kind, token-less → dropped with zero state change;
   - wrong token → dropped;
-  - the previous page load's token after a reload → dropped;
+  - a previous WebView instance's token → dropped;
+  - a load start after load, and a repeated load end, change nothing (the iOS defect, reproduced first);
   - the canary is recorded and dropped;
   - all four consumers go through the verifier.
 
@@ -181,9 +187,10 @@ The owner asked to block `data:` sub-frame navigation on iOS unless something br
 - **[iOS `webkit` cannot be removed from the frame]** → the hard probe fails on iOS, but only on the dev probe screen. That is the truthful result. The decision of what to do next (a spec delta, or a native measure such as a content-world handler) goes to the owner with the reproduction evidence. The token still makes the reachable handler harmless.
 - **[The fallback-path object is non-configurable or comes back]** → same handling: the probe fails, the evidence is recorded, and the owner decides.
 - **[Main-frame injection assumption]** Android `evaluateJavascript` is main-frame on every version the app supports, which is documented but unverified on device. → The on-device run checks that the token appears in no subframe: the `bridge-reach` fixture's `data:` document looks for `__whimControl` and for any token-shaped string it can reach.
-- **[A lost token after a renderer crash]** RN mints and delivers again on the next `onLoadEnd`. Messages in between are dropped and counted, so the drop counter is visible on the dev screen.
+- **[A renderer crash]** The pool replaces the slot with a new WebView instance, whose channel mints a new token at its first `onLoadEnd`. Messages in between are dropped and counted, so the drop counter is visible on the dev screen.
 - **[The probe count changes]** No test pins 49 (research.md Part B). The README and the security docs are updated in the same chain.
 - **[The exposure probe's cost]** One extra tiny frame per WebView page load, not per launch, removed after at most 3 s.
+- **[A cold launch can lose its WebView's exposure record]** With no warm slot, the launch is delivered right after `auth`, so app code runs during the probe's 3 s window. An app that fails at mount (its WebView torn down, the channel deleted before the report lands) or that hogs the renderer through the window loses that WebView's exposure record. Accepted: warm slots probe before any app runs, so most sessions still report, and the containment itself does not depend on the record.
 - **[`build/assemble.mjs` is control plane]** Its chain is HUMAN-BOOTSTRAP: the assemble edits are reviewed and committed into the chain's base before it gates.
 
 ## Migration Plan
