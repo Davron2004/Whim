@@ -247,6 +247,9 @@ async function main() {
     // ticker (sandbox-isolation suite) + INV-CUEGATE's hostile cue-gate intruder (bridge suite).
     'timer-ticker': 'fixtures/adversarial/timer-ticker.app.tsx',
     'cue-intruder': 'fixtures/adversarial/cue-intruder.app.tsx',
+    // webview-bridge-provenance (dev probe, on device): posts to any native bridge it can reach,
+    // then navigates its frame to a `data:` document that hunts for the outer page's token.
+    'bridge-reach': 'fixtures/adversarial/bridge-reach.app.tsx',
   };
   const bundles = {};
   const maps = {};

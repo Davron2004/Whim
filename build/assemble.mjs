@@ -7,8 +7,10 @@
 //                      probes → loader [→ channel-(a) baked bundle]).
 //   • buildOuterHtml() → the WebView page that hosts the sandboxed iframe, drives the
 //                      nonce handshake, AUTHENTICATES iframe→host frames, relays to the RN
-//                      host, renders the full probe JSON on-screen, and exposes the
-//                      RN→page control surface (realm-reset re-injection + named delivery).
+//                      host (signed with RN's per-WebView-instance token once `auth` delivered it),
+//                      renders the full probe JSON on-screen, runs the navigated-frame exposure
+//                      probe, and exposes the RN→page control surface (realm-reset
+//                      re-injection + named delivery + auth/warm).
 // Reused for the RN app's RUNTIME_HTML and for the desktop invariant pages.
 
 import { PAGE_BG } from '../src/design/generated/page.mjs';
@@ -97,6 +99,50 @@ export function buildSrcdoc({ parts, channel, bakedBundle }) {
   );
 }
 
+// webview-bridge-provenance D5: the fixed string the exposure probe's navigated document posts
+// straight to any native bridge it can see. RN recognizes it by exact equality and never parses it.
+const EXPOSURE_CANARY = 'WHIM-EXPOSURE-CANARY-1';
+
+// The document the exposure probe navigates its frame to. It stands in for a `data:` document a
+// mini-app could write: none of our CSP, a fresh realm neutralize never ran in. It reports `typeof`
+// for both native bridge objects to the outer page and posts the canary to whichever it can see.
+const EXPOSURE_NAVIGATED_DOC =
+  '<!DOCTYPE html><html><head><meta charset="utf-8"><title>whim-exposure-navigated</title></head><body>\n' +
+  inlineScript(
+    '(function(){\n' +
+    '  function kindOf(get){ try{ var v=get(); return v==null?"undefined":typeof v; }catch(e){ return "error"; } }\n' +
+    '  var android=kindOf(function(){ return window.ReactNativeWebView; });\n' +
+    '  var ios=kindOf(function(){ return window.webkit.messageHandlers.ReactNativeWebView; });\n' +
+    '  if(android!=="undefined"&&android!=="error"){ try{ window.ReactNativeWebView.postMessage(' + JSON.stringify(EXPOSURE_CANARY) + '); }catch(e){} }\n' +
+    '  if(ios!=="undefined"&&ios!=="error"){ try{ window.webkit.messageHandlers.ReactNativeWebView.postMessage(' + JSON.stringify(EXPOSURE_CANARY) + '); }catch(e){} }\n' +
+    '  try{ parent.postMessage(JSON.stringify({__whimExposure:true,phase:"report",visible:{android:android,ios:ios}}),"*"); }catch(e){}\n' +
+    '})();',
+  ) +
+  '\n</body></html>';
+
+// The exposure probe frame's srcdoc: the mini-app frame's locked CSP, and one script that says
+// `navigating`, navigates its own frame to EXPOSURE_NAVIGATED_DOC, says `still-here` 500 ms later
+// while its realm survives, and says `leaving` on `pagehide` (a navigation committing). A slow
+// navigation can commit after `still-here`, so the outer page decides only at its deadline.
+function exposureSrcdoc() {
+  const target = 'data:text/html;charset=utf-8,' + encodeURIComponent(EXPOSURE_NAVIGATED_DOC);
+  return (
+    '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8">\n' +
+    '<meta http-equiv="Content-Security-Policy" content="' + LOCKED_CSP + '">\n' +
+    '<title>whim-exposure-probe</title></head><body>\n' +
+    inlineScript(
+      "(function(){ 'use strict';\n" +
+      "  function say(phase){ try{ parent.postMessage(JSON.stringify({__whimExposure:true,phase:phase}),'*'); }catch(e){} }\n" +
+      "  say('navigating');\n" +
+      "  window.addEventListener('pagehide', function(){ say('leaving'); });\n" +
+      "  setTimeout(function(){ say('still-here'); }, 500);\n" +
+      '  try{ location.href = ' + JSON.stringify(target) + '; }catch(e){}\n' +
+      '})();',
+    ) +
+    '\n</body></html>'
+  );
+}
+
 // The outer page's orchestration script (runs in the WebView page, NOT the iframe).
 function orchestrationScript(cfg) {
   return (
@@ -142,14 +188,43 @@ function orchestrationScript(cfg) {
     // authenticates no frame, so a page without getRandomValues reports no verdict (fail closed)
     // instead of one keyed on a guessable value.
     "  function rnd(){ try{ var a=new Uint8Array(16); window.crypto.getRandomValues(a); var s=''; for(var i=0;i<a.length;i++) s+=(a[i]+256).toString(16).slice(-2); return s; }catch(e){ rnLog('no CSPRNG: the verdict channel stays closed'); return null; } }\n" +
-    '  function toRN(obj){ try{ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify(obj)); }catch(e){} }\n' +
+    // webview-bridge-provenance D1-D3: the per-WebView-instance token RN injects through `auth`. It lives
+    // only in this closure and never enters anything sent to a frame. `toRN` is the ONE signer:
+    // every post to RN goes through it as `W1.<token>.<JSON>` once a token is held, and exactly as
+    // before (unsigned) until then, so hosts that never deliver a token see no change.
+    '  var TOKEN = null;\n' +
+    // Host-log lines posted before `auth` are also kept (64 at most, the rest counted) and flushed
+    // signed on `auth`: on a device, RN drops their unsigned originals.
+    '  var LOG_BUF_MAX = 64, logBuf = [], logDropped = 0;\n' +
+    // The exposure probe (D5): runs once per page load, after `auth`. probeFrame is the current
+    // throwaway frame, the only source whose `__whimExposure` phases are read; probeSaw records
+    // which of `navigating` / `still-here` / `leaving` it has said so far.
+    '  var EXPOSURE_SRCDOC = ' + jsLiteral(exposureSrcdoc()) + ', exposureRan = false, probeFrame = null, probeTimer = 0, probeSaw = {};\n' +
+    '  function toRN(obj){ try{ if(window.ReactNativeWebView){ var s=JSON.stringify(obj); window.ReactNativeWebView.postMessage(TOKEN ? "W1."+TOKEN+"."+s : s); } }catch(e){} }\n' +
     // Relay a sysret string from the host back INTO the iframe (host→iframe; ev.source there is
     // window.parent, which the marshaller requires). Exposed as a global so the RN host can
     // inject it. Holds no authority beyond the postMessage pipe it already had.
     '  function relaySysret(json){ try{ if(iframe&&iframe.contentWindow) iframe.contentWindow.postMessage(String(json),"*"); }catch(e){} }\n' +
     '  function relaySyscall(raw, m){ if(SYSCALL_SINK==="exposed" && typeof window.whimHostDispatch==="function"){ try{ window.whimHostDispatch(raw).then(function(s){ if(s) relaySysret(s); }); }catch(e){ rnLog("dispatch failed: "+(e&&e.name)); } } else { toRN({kind:"syscall",trusted:false,payload:m}); } }\n' +
     '  window.__whimRelaySysret = relaySysret;\n' +
-    "  function rnLog(line){ try{ if(window.ReactNativeWebView) window.ReactNativeWebView.postMessage(JSON.stringify({__whimHostLog:true,line:line})); }catch(e){} try{ console.error('WHIM '+line); }catch(e){} }\n" +
+    "  function rnLog(line){ if(!TOKEN){ if(logBuf.length<LOG_BUF_MAX) logBuf.push(line); else logDropped++; } toRN({__whimHostLog:true,line:line}); try{ console.error('WHIM '+line); }catch(e){} }\n" +
+    // `auth`: a token of exactly 32 lowercase hex characters, accepted once per page load. Anything
+    // else, and any second call, is ignored. On acceptance: flush the buffered load-time log lines
+    // (signed, in order, then one overflow line if any were not kept), then run the exposure probe.
+    "  function auth(t){ if(TOKEN!==null || typeof t!=='string' || !/^[0-9a-f]{32}$/.test(t)) return false; TOKEN=t; var lines=logBuf, dropped=logDropped; logBuf=[]; logDropped=0; for(var i=0;i<lines.length;i++) toRN({__whimHostLog:true,line:lines[i]}); if(dropped>0) toRN({__whimHostLog:true,line:'HOST-LOG-OVERFLOW '+dropped+' load-time line(s) were not kept before auth'}); runExposureProbe(); return true; }\n" +
+    // The engine and major version the page runs on, from its own user agent (D5): Android System
+    // WebView says `Chrome/<n>`, WKWebView only `AppleWebKit`.
+    "  function webviewName(){ var ua=String((window.navigator&&navigator.userAgent)||''); var c=/Chrome\\/(\\d+)/.exec(ua); if(c) return 'chrome-'+c[1]; return /AppleWebKit\\//.test(ua) ? 'webkit' : 'unknown'; }\n" +
+    "  function runExposureProbe(){ if(exposureRan) return; exposureRan=true; var f=document.createElement('iframe'); f.setAttribute('sandbox','allow-scripts'); f.setAttribute('aria-hidden','true'); f.tabIndex=-1; f.style.cssText='position:absolute;left:0;top:0;width:0;height:0;border:0;visibility:hidden'; probeFrame=f; probeSaw={}; probeTimer=setTimeout(exposureDeadline, 3000); (document.body||document.documentElement).appendChild(f); f.srcdoc=EXPOSURE_SRCDOC; }\n" +
+    // The verdict at the 3 s deadline when no `report` came: `refused` only if the probe script ran
+    // (`navigating`), its realm was still alive 500 ms later (`still-here`) and never began to unload
+    // (`leaving`); otherwise `timedOut` (the script never ran, or a navigation was still under way).
+    "  function exposureDeadline(){ finishExposure((probeSaw.navigating && probeSaw['still-here'] && !probeSaw.leaving) ? 'refused' : 'timedOut', null); }\n" +
+    // One phase from the probe frame: a `report` (only the navigated document sends one) finishes
+    // the probe as `navigated` whatever came before; the others are only recorded.
+    "  function exposurePhase(m){ if(!m || m.__whimExposure!==true) return; if(m.phase==='report'){ finishExposure('navigated', m.visible); return; } if(m.phase==='navigating' || m.phase==='still-here' || m.phase==='leaving') probeSaw[m.phase]=true; }\n" +
+    "  function seenBridge(t){ return t==='object' || t==='function'; }\n" +
+    "  function finishExposure(outcome, visible){ var f=probeFrame; if(!f) return; probeFrame=null; clearTimeout(probeTimer); if(f.parentNode) f.parentNode.removeChild(f); var v=(outcome==='navigated' && visible && typeof visible==='object') ? visible : {}; toRN({kind:'bridge-exposure',payload:{outcome:outcome,visible:{android:seenBridge(v.android),ios:seenBridge(v.ios)},webview:webviewName()}}); }\n" +
     "  function setStatus(t,c){ if(!SHOW_DIAG) return; var s=document.getElementById('status'); if(s){ s.textContent=t; s.className=c||'wait'; } }\n" +
     '  function setDiag(id,t){ if(!SHOW_DIAG) return; var e=document.getElementById(id); if(e) e.textContent=t; }\n' +
     // deliver by NAME (baked map, dev/probe + invariant pages) or by SOURCE (opts.source — the
@@ -162,6 +237,10 @@ function orchestrationScript(cfg) {
     "  function rejectForgery(m){ setDiag('delivery','REJECTED unauthenticated frame (kind='+m.kind+') — forged control message ignored (constraint #4)'); toRN({kind:'rejected-forgery',trusted:false,forgedKind:m.kind,payload:m.payload||null}); rnLog('REJECTED-FORGERY kind='+m.kind); }\n" +
     "  window.addEventListener('message', function(ev){\n" +
     '    var m; try{ m=JSON.parse(ev.data); }catch(e){ return; } if(!m) return;\n' +
+    // The exposure probe frame (D5) speaks only to the probe: whatever it posts is consumed here and
+    // never reaches the paths below (no relay, no forgery tally). Every other source takes those
+    // paths unchanged, so an exposure-shaped post from anywhere else reads nothing into the probe.
+    '    if(probeFrame && ev.source===probeFrame.contentWindow){ exposurePhase(m); return; }\n' +
     '    var fromIframe = !!iframe && ev.source===iframe.contentWindow;\n' +
     // The handshake (constraint #4): the nonce goes out once per iframe, only to a `hello` from that
     // iframe, and the loader's `hello` is always the first one (it is posted while the srcdoc parses,
@@ -205,7 +284,12 @@ function orchestrationScript(cfg) {
     // nav seam (launcher-shell / #5 D4): post a host→realm nav-back request into the iframe.
     // The host calls this on system back when the last-hinted depth > 0; #3's SDK pops a screen.
     '    navBack: function(){ try{ if(iframe&&iframe.contentWindow) iframe.contentWindow.postMessage(JSON.stringify({__whimNavBack:true}),"*"); }catch(e){} },\n' +
-    '    listBundles: function(){ return Object.keys(BUNDLES); }\n' +
+    '    listBundles: function(){ return Object.keys(BUNDLES); },\n' +
+    // webview-bridge-provenance: RN injects `auth(token)` into the main frame once the page has
+    // loaded (D1), and `warm()` to ask a waiting page whether its scripts run (D3): the answer is
+    // `{"__whimWarm":true}` through the signer.
+    '    auth: function(t){ return auth(t); },\n' +
+    '    warm: function(){ toRN({__whimWarm:true}); }\n' +
     '  };\n' +
     '  makeIframe();\n' +
     '})();'

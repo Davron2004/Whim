@@ -10,7 +10,7 @@ import { APP_BUNDLES } from '../../runtime/generated/app-bundles';
 import type { AppRecord } from '../bridge';
 
 /** The fixtures the dev probe can deliver by name (incl. the adversarial ones — evil/
- *  cap-intruder/sql-injector/latency-probe), unchanged from the retired `DELIVERABLE` tuple. */
+ *  cap-intruder/sql-injector/latency-probe, and bridge-reach for webview-bridge-provenance). */
 export const DEV_PROBE_FIXTURES = [
   'tip-splitter',
   'water-counter',
@@ -19,6 +19,7 @@ export const DEV_PROBE_FIXTURES = [
   'sql-injector',
   'cap-intruder',
   'evil',
+  'bridge-reach',
 ] as const;
 
 export type DevProbeFixture = (typeof DEV_PROBE_FIXTURES)[number];
