@@ -25,7 +25,7 @@ import { planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type
 import { streamingServer } from './prompt-flow-ui.suite';
 import { dismissToast, pressToastAction, toastOf } from './home-rig';
 import { APP_NAME, controlsIn, hasButton, openSheet, openTipSplitter, orb, runningApp, sheetCard, showing } from './whim-sheet-ui.suite';
-import { boundWebView, generationIn, makeChange, opening, paint, paintRunningApp, send } from './changing-in-use-ui.suite';
+import { boundWebView, generationIn, makeChange, opening, pageOf, paint, paintRunningApp, send, type HeldPage } from './changing-in-use-ui.suite';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 
 type Node = TestRenderer.ReactTestInstance;
@@ -49,13 +49,11 @@ const field = (tree: Tree): Node => sheetCard(tree).find((n) => hostType(n) === 
 /** A render error no boundary in the app caught, as the outer page forwards it, the error named `name`. */
 const renderError = (name: string) => ({ ...RENDER_ERROR_FRAME, payload: { ...RENDER_ERROR_FRAME.payload, name } });
 
-type OnMessage = (e: { nativeEvent: { data: string } }) => void;
-
-/** Tip Splitter open and painted, then crashed by a render error: the crashed WebView's frame handler,
- *  as RN still holds it once the WebView is gone. */
-async function crashRunningApp(tree: Tree, frame: unknown = RENDER_ERROR_FRAME): Promise<OnMessage> {
+/** Tip Splitter open and painted, then crashed by a render error: the crashed WebView's frame handler
+ *  and token, as RN still holds them once the WebView is gone. */
+async function crashRunningApp(tree: Tree, frame: unknown = RENDER_ERROR_FRAME): Promise<HeldPage> {
   await openTipSplitter(tree);
-  const fromCrashed = (await paintRunningApp(tree)).props.onMessage as OnMessage;
+  const fromCrashed = pageOf(await paintRunningApp(tree));
   await send(fromCrashed, frame);
   await waitFor(() => crashShown(tree), 'the crash screen');
   return fromCrashed;
@@ -78,7 +76,7 @@ export async function runAppCrashedUiTests(h: Harness): Promise<void> {
     for (const [phone, frame] of [['light', 'dark'], ['dark', 'light']] as const) {
       await TestRenderer.act(async () => { setColorScheme(phone); });
       const tokens = resolveTokens({ scheme: frame, fontScale: 1, platform: Platform.OS, reduceMotion: false, increaseContrast: false });
-      const tree = await renderScreen(<AppCrashed name={APP_NAME} tokens={tokens} bottomClearance={0} behind={false} onReload={noop} onAskFix={noop} onExit={noop} />);
+      const tree = await renderScreen(<AppCrashed name={APP_NAME} tokens={tokens} bottomClearance={0} behind={false} fixable onReload={noop} onAskFix={noop} onExit={noop} />);
       try {
         const drawn = tree.root.findAll(isHost('Pressable')).map((action) => {
           const capsule = StyleSheet.flatten(action.find(isHost('Animated.View')).props.style) as { backgroundColor?: string };
@@ -104,7 +102,7 @@ export async function runAppCrashedUiTests(h: Harness): Promise<void> {
       await openTipSplitter(tree);
       const web = await paintRunningApp(tree);
       const launch = runningApp(tree).props.tappedAt;
-      await send(web.props.onMessage, RENDER_ERROR_FRAME);
+      await send(pageOf(web), RENDER_ERROR_FRAME);
       await waitFor(() => crashShown(tree), 'the crash screen');
       const shown = textOf(tree.root.findByType(AppCrashed));
       h.ok(shown.includes(appCrashedTitle(APP_NAME)) && shown.includes(COPY.appCrashedBody), `"${appCrashedTitle(APP_NAME)}", and that it stopped and the data is safe`);
@@ -151,7 +149,7 @@ export async function runAppCrashedUiTests(h: Harness): Promise<void> {
       const old = await paintRunningApp(tree);
       const oldGeneration = generationIn(old);
       const launch = runningApp(tree).props.tappedAt;
-      await send(old.props.onMessage, RENDER_ERROR_FRAME);
+      await send(pageOf(old), RENDER_ERROR_FRAME);
       await waitFor(() => crashShown(tree), 'the crash screen');
       watching = true;
       await press(button(tree, COPY.actionReload));
@@ -165,7 +163,7 @@ export async function runAppCrashedUiTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => fresh.props.onLoadEnd());
       const generation = generationIn(fresh);
       h.ok(Number.isFinite(generation) && generation !== oldGeneration, 'its realm bound at a generation of its own');
-      await send(fresh.props.onMessage, paint(generation));
+      await send(pageOf(fresh), paint(generation));
       await waitFor(() => !opening(tree), 'the new realm’s own paint to show it');
     });
   });
@@ -207,7 +205,7 @@ export async function runAppCrashedUiTests(h: Harness): Promise<void> {
       const id = new PendingBuildStore(kv).list()[0]!.id;
       const kept = kv.getString(`pending:${id}`);
       const before = sent.length;
-      await send(web.props.onMessage, RENDER_ERROR_FRAME);
+      await send(pageOf(web), RENDER_ERROR_FRAME);
       await waitFor(() => crashShown(tree), 'the crash screen');
       await press(button(tree, COPY.appCrashedAskFix));
       await waitFor(() => hasButton(tree, COPY.whimSheetBackToApps), 'the Whim sheet');
@@ -233,7 +231,7 @@ export async function runAppCrashedUiTests(h: Harness): Promise<void> {
       await settle();
       await dismissToast(tree);
       const launch = runningApp(tree).props.tappedAt;
-      await send(web.props.onMessage, RENDER_ERROR_FRAME);
+      await send(pageOf(web), RENDER_ERROR_FRAME);
       await waitFor(() => crashShown(tree), 'the crash screen');
       h.ok(textOf(tree.root.findByType(AppCrashed)).includes(COPY.appCrashedBehindBody), 'it says a newer version is ready');
       h.eq(crashActions(tree), [COPY.actionReload, COPY.launchFailedBack], 'Reload first, then Back to your apps; no Ask Whim to fix it');
@@ -241,7 +239,7 @@ export async function runAppCrashedUiTests(h: Harness): Promise<void> {
       await press(button(tree, COPY.actionReload));
       await waitFor(() => showing(tree, MiniAppView) && runningApp(tree).props.tappedAt !== launch, 'the new version to open');
       const fresh = await paintRunningApp(tree);
-      await send(fresh.props.onMessage, RENDER_ERROR_FRAME);
+      await send(pageOf(fresh), RENDER_ERROR_FRAME);
       await waitFor(() => crashShown(tree), 'the new version’s crash screen');
       await settle();
       h.ok(textOf(tree.root.findByType(AppCrashed)).includes(COPY.appCrashedBody), 'on the current version, the crash screen as always');
@@ -290,7 +288,7 @@ export async function runAppCrashedUiTests(h: Harness): Promise<void> {
         await pressToastAction(tree);
         // Read after the Undo's move in the store's order, so it has landed once this answers.
         h.eq(await readActive(app), tip.id, 'setup: the Undo made the newer version current again');
-        await send(web.props.onMessage, RENDER_ERROR_FRAME);
+        await send(pageOf(web), RENDER_ERROR_FRAME);
         await waitFor(() => crashShown(tree), 'the crash screen');
         h.ok(textOf(tree.root.findByType(AppCrashed)).includes(COPY.appCrashedBehindBody), 'it says a newer version is ready');
         h.eq(crashActions(tree), [COPY.actionReload, COPY.launchFailedBack], 'Reload first, then Back to your apps; no Ask Whim to fix it');
@@ -320,11 +318,11 @@ export async function runAppCrashedUiTests(h: Harness): Promise<void> {
       const launch = runningApp(tree).props.tappedAt;
       const fresh = await paintRunningApp(tree);
       await send(fromCrashed, RENDER_ERROR_FRAME);
-      await send(fresh.props.onMessage, { ...RENDER_ERROR_FRAME, trusted: false });
-      await send(fresh.props.onMessage, { kind: 'rejected-forgery', trusted: false, forgedKind: 'error', payload: RENDER_ERROR_FRAME.payload });
+      await send(pageOf(fresh), { ...RENDER_ERROR_FRAME, trusted: false });
+      await send(pageOf(fresh), { kind: 'rejected-forgery', trusted: false, forgedKind: 'error', payload: RENDER_ERROR_FRAME.payload });
       await settle();
       h.ok(!crashShown(tree) && runningApp(tree).props.tappedAt === launch && !opening(tree), 'the replaced realm’s crash and the unauthenticated ones show nothing');
-      await send(fresh.props.onMessage, RENDER_ERROR_FRAME);
+      await send(pageOf(fresh), RENDER_ERROR_FRAME);
       await waitFor(() => crashShown(tree), 'the crash screen');
       h.ok(crashShown(tree), 'while the running realm’s own crash does');
     });

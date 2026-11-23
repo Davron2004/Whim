@@ -25,6 +25,8 @@ import { RUNTIME_HTML } from '../runtime/generated/runtime-html';
 import { deliverBySourceJs } from './launcher/deliver';
 import { log } from './logging';
 import { CHANNELS } from './logging/channels';
+import { createRuntimeChannel } from './launcher/runtime-channel';
+import type { RuntimeChannel } from './launcher/runtime-message-auth';
 
 /** The probe-only literal an operator greps a bundle for (handoff/netdeny-probe.md). Present
  *  whenever this module is part of the bundle graph, independent of the `RUN_NETDENY_PROBE`
@@ -74,6 +76,9 @@ interface RunState {
   row: Row;
   delivered: boolean;
   bundleSource: string | null;
+  /** The variant's WebView's provenance channel: a WebView instance of its own, so a token of its own,
+   *  handed to its page before the variant's bundle, and every message verified against it. */
+  channel: RuntimeChannel;
   /** Set once, right before the WebView mounts; `handleLoadEnd` calls it after the dwell. */
   resolveDwell: () => void;
 }
@@ -128,7 +133,7 @@ export default function NetworkDenyProbeScreen() {
       if (cancelled) return;
 
       await new Promise<void>((resolve) => {
-        runRef.current = { variant, row, delivered: false, bundleSource, resolveDwell: resolve };
+        runRef.current = { variant, row, delivered: false, bundleSource, channel: createRuntimeChannel('netdeny-probe'), resolveDwell: resolve };
         setActiveIndex(index);
       });
 
@@ -162,35 +167,48 @@ export default function NetworkDenyProbeScreen() {
 
   const handleLoadEnd = (): void => {
     const run = runRef.current;
-    if (!run || run.delivered) return;
-    run.delivered = true;
+    if (!run) return;
     const ref = webRef.current;
-    if (ref) {
-      if (run.variant === 'host-top-frame') {
-        const target = `${httpBase}/wnd/hit/host-top-frame?run=${runId}`;
-        ref.injectJavaScript(`try{location.href=${JSON.stringify(target)};}catch(e){};true;`);
-      } else if (run.bundleSource) {
-        try {
-          const js = deliverBySourceJs({
-            name: run.variant,
-            source: run.bundleSource,
-            generation: ALL_VARIANTS.indexOf(run.variant) + 1,
-          });
-          ref.injectJavaScript(js);
-        } catch (e) {
-          run.row.errors.push(`deliver: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      }
+    // The token at every load end (the same one each time, `RuntimeChannel.deliver`); the variant's
+    // bundle or navigation once, after the first.
+    const authorized = ref !== null && run.channel.deliver((js) => ref.injectJavaScript(js));
+    if (run.delivered) return;
+    run.delivered = true;
+    if (ref && !authorized) {
+      run.row.errors.push('no bridge token: nothing delivered');
+    } else if (ref) {
+      deliverVariant(run, ref);
     }
     setTimeout(() => run.resolveDwell(), DWELL_MS);
+  };
+
+  /** The variant's one delivery into its authorized page: the top-frame navigation, or its bundle. */
+  const deliverVariant = (run: RunState, ref: WebView): void => {
+    if (run.variant === 'host-top-frame') {
+      const target = `${httpBase}/wnd/hit/host-top-frame?run=${runId}`;
+      ref.injectJavaScript(`try{location.href=${JSON.stringify(target)};}catch(e){};true;`);
+    } else if (run.bundleSource) {
+      try {
+        const js = deliverBySourceJs({
+          name: run.variant,
+          source: run.bundleSource,
+          generation: ALL_VARIANTS.indexOf(run.variant) + 1,
+        });
+        ref.injectJavaScript(js);
+      } catch (e) {
+        run.row.errors.push(`deliver: ${e instanceof Error ? e.message : String(e)}`);
+      }
+    }
   };
 
   const handleMessage = (e: { nativeEvent: { data: string } }): void => {
     const run = runRef.current;
     if (!run) return;
+    const data = run.channel.receive(e.nativeEvent.data);
+    if (data === null) return;
     let m: unknown;
     try {
-      m = JSON.parse(e.nativeEvent.data);
+      m = JSON.parse(data);
     } catch (parseError) {
       log.debug(CHANNELS.app, 'netdeny probe: frame from the sandboxed page is not JSON', {
         detail: parseError instanceof Error ? parseError.message : String(parseError),

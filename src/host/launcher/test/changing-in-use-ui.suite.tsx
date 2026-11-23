@@ -26,6 +26,7 @@ import { RUN_SIGNAL_TICK_MS } from '../prompt-flow';
 import type { KVBackend } from '../../version-store/fs/kv-fs';
 import { PendingPurgeStore, completePurge } from '../pending-purge';
 import { failNativeStorageRemovalsWhen } from './native-storage';
+import { pageToken, signed } from './native-host';
 import { afterRelaunch } from './attempt-lifecycle-ui.suite';
 import { button, hostType, press, textOf, unmountScreen } from './react-screen';
 import { iosPop } from './native-screens';
@@ -71,8 +72,13 @@ export const generationIn = (web: Node): number => Number(/,generation:(\d+)/.ex
 
 /** A realm's first paint as the outer page forwards it, stamped with `generation`. */
 export const paint = (generation: number) => ({ kind: 'paint', trusted: true, payload: { generation, mountToFirstPaintMs: 42, appName: APP_NAME } });
-export const send = (onMessage: (e: { nativeEvent: { data: string } }) => void, frame: unknown) =>
-  TestRenderer.act(async () => onMessage({ nativeEvent: { data: JSON.stringify(frame) } }));
+/** What RN holds of a WebView's page: the handler it was rendered with and the token its page load
+ *  was handed, kept so a test can still send through them once the WebView is gone. */
+export interface HeldPage { onMessage: (e: { nativeEvent: { data: string } }) => void; token: string }
+export const pageOf = (web: Node): HeldPage => ({ onMessage: web.props.onMessage, token: pageToken(web) });
+/** A frame from `page`, signed as the outer page posts it once it holds its token. */
+export const send = (page: HeldPage, frame: unknown) =>
+  TestRenderer.act(async () => page.onMessage({ nativeEvent: { data: signed(page.token, frame) } }));
 
 /** The opening state is up over the app (its page hidden under the cover). */
 export const opening = (tree: Tree) =>
@@ -82,7 +88,7 @@ export const opening = (tree: Tree) =>
 export async function paintRunningApp(tree: Tree): Promise<Node> {
   const web = boundWebView(tree);
   await TestRenderer.act(async () => web.props.onLoadEnd());
-  await send(web.props.onMessage, paint(generationIn(web)));
+  await send(pageOf(web), paint(generationIn(web)));
   await waitFor(() => !opening(tree), 'the app to show');
   return web;
 }
@@ -294,7 +300,7 @@ export async function runChangingInUseUiTests(h: Harness): Promise<void> {
         const app = await openTipSplitter(tree);
         const old = await paintRunningApp(tree);
         const oldGeneration = generationIn(old);
-        const fromOld = old.props.onMessage;
+        const fromOld = pageOf(old);
         const launch = runningApp(tree).props.tappedAt;
         await makeChange(tree, streams);
         // The change lands a minute later: a version's time is its commit's, to the second.
@@ -319,7 +325,7 @@ export async function runChangingInUseUiTests(h: Harness): Promise<void> {
         await send(fromOld, paint(generation));
         await send(fromOld, paint(oldGeneration));
         h.ok(opening(tree), 'a paint still queued from the old realm’s WebView opens nothing, even one claiming the new generation');
-        await send(fresh.props.onMessage, paint(generation));
+        await send(pageOf(fresh), paint(generation));
         await waitFor(() => !opening(tree), 'the new realm’s own paint to show it');
         h.eq(orbState(tree), '', 'the orb is at rest again');
         await openSheet(tree);

@@ -32,6 +32,7 @@ import type { AppCrash } from './crash-report';
 import { deliverBySourceJs } from './deliver';
 import { createCueBackend } from '../cue-backend';
 import { tearDownLiveRealm } from './teardown';
+import type { RuntimeChannel } from './runtime-message-auth';
 
 // The append-only capability table (storage + diag + cues), built once for the host (#41 D5). The
 // cue backend (the WhimHaptics and WhimTone native modules) is injected here — the only
@@ -120,6 +121,21 @@ function handleErrorFrame(
   setS((p) => ({ ...p, lastError: payload?.message || payload?.name || 'error', crash: { where: payload.where, errorClass } }));
 }
 
+/** Whether each native bridge object was in the mini-app frame when its runtime started, and was
+ *  removed (the verdict's `bridge` side field, `null` when the loader had no valid record). */
+export interface BridgeRecord {
+  android: { present: boolean; removed: boolean };
+  ios: { present: boolean; removed: boolean };
+}
+
+/** The verdict's `bridge` field as the loader copies it, or `null` for anything else. */
+function bridgeRecordOf(v: any): BridgeRecord | null {
+  const side = (o: any) => (o && typeof o === 'object' ? { present: o.present === true, removed: o.removed === true } : null);
+  const android = side(v?.android);
+  const ios = side(v?.ios);
+  return android && ios ? { android, ios } : null;
+}
+
 export interface HostState {
   contained: boolean | null;
   probesFrac: string;
@@ -134,6 +150,8 @@ export interface HostState {
   lastTap: string | null;
   rejectedForgeries: number;
   t7AnyPoison: boolean | null;
+  /** The latest verdict's `bridge` side field (not counted in `contained`). */
+  bridge: BridgeRecord | null;
   lastError: string | null;
   /** The bound launch's failure after its delivery, set with `lastError` (not for a launch refused
    *  before it): what the crash screen's "Ask Whim to fix it" attaches. */
@@ -150,7 +168,7 @@ export interface HostState {
 
 const INITIAL: HostState = {
   contained: null, probesFrac: '—', paintMs: null, paintedAt: null, generation: null,
-  lastTap: null, rejectedForgeries: 0, t7AnyPoison: null, lastError: null, crash: null, launchFailed: false,
+  lastTap: null, rejectedForgeries: 0, t7AnyPoison: null, bridge: null, lastError: null, crash: null, launchFailed: false,
   currentApp: '—', syscalls: 0, lastSyscall: null, navDepth: 0,
 };
 
@@ -173,6 +191,9 @@ export interface UseMiniAppHostOptions {
   /** The WebView this host controls, when the caller renders it elsewhere (`MiniAppView`'s pool);
    *  it must keep its identity across renders. Absent: the host's own ref, for the caller to attach. */
   webRef?: React.RefObject<WebView | null>;
+  /** The provenance channel (`runtime-message-auth`) of the WebView this host controls, looked up
+   *  when used: every frame is verified against it, and nothing is delivered before its token. */
+  channel: { readonly current: RuntimeChannel | null };
   /** The person is leaving the app, which still runs while it goes back into its tile (M3) and may be
    *  turned back out. A startup deadline that ends meanwhile fails the launch only if it does come
    *  back out, at once: the realm's boot clock never stopped. */
@@ -183,7 +204,12 @@ export interface MiniAppHost {
   runtimeHtml: string;
   webRef: React.RefObject<WebView | null>;
   state: HostState;
+  /** Every message from the WebView, as the bridge carries it: verified against the WebView's
+   *  token before anything reads it. */
   onMessage: (data: string) => void;
+  /** The WebView's `onLoadEnd`, for a caller that renders it with the host: the WebView's token,
+   *  handed to its page at every load end (its load starts are never an input). */
+  onLoadEnd: () => void;
   /** Launch a host record by bundle SOURCE (#5 D3) — the product path, and (review fix F3) the
    *  dev probe's fixture buttons too, both reading the same real bundle text rather than a
    *  page-side deliver-by-name lookup. */
@@ -197,9 +223,10 @@ export interface MiniAppHost {
   webViewGone: () => void;
 }
 
-export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
+export function useMiniAppHost(opts: UseMiniAppHostOptions): MiniAppHost {
   const ownWebRef = useRef<WebView | null>(null);
   const webRef = opts.webRef ?? ownWebRef;
+  const channel = opts.channel;
   const [s, setS] = useState<HostState>(INITIAL);
   // Refs (not state) so onMessage / the back handler always see the current values w/o re-binding.
   const live = useRef<LiveRealm | null>(null);
@@ -299,6 +326,13 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
 
   const deliverBySource = useCallback((record: AppRecord, source: string, engineAppId?: string, theme?: object) => {
     const id = engineAppId ?? record.appId;
+    // Nothing is sent to a page before its token: a page that never got one could tell RN nothing
+    // RN would accept, so the launch fails at once rather than waiting out its startup deadline.
+    if (channel.current?.authorized !== true) {
+      log.error(CHANNELS.page, 'mini-app failed', { where: 'launch', errorClass: 'NoBridgeToken', appId: id });
+      setS((p) => ({ ...p, currentApp: record.name, lastError: 'no bridge token', crash: { where: 'webview-gone', errorClass: 'NoBridgeToken', hostFault: true } }));
+      return;
+    }
     const realm = bind(record, record.name, id);
     if (!realm) return;
     let js: string;
@@ -313,10 +347,15 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     // Start before page control: native loader/rule-list failure can suppress every page frame.
     startupDeadline.current.begin();
     control(js);
-  }, [bind, control]);
+  }, [bind, control, channel]);
 
-  const onMessage = useCallback((data: string) => {
-    // UNTRUSTED DATA. Parse defensively; act on nothing; never trust a frame by its `kind`.
+  const onMessage = useCallback((raw: string) => {
+    // The shared verifier first (webview-bridge-provenance D2): nothing unsigned, or signed for
+    // another page load, is parsed. The canary and the exposure report end there too.
+    const data = channel.current?.receive(raw) ?? null;
+    if (data === null) return;
+    // Signed by the outer page, still relaying the realm: parse defensively; never trust a frame by
+    // its `kind`.
     let m: any;
     try {
       m = JSON.parse(data);
@@ -371,6 +410,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
           probesFrac: (r.passed ?? '?') + '/' + (r.total ?? '?'),
           generation: r.generation ?? p.generation,
           t7AnyPoison: r.t7 ? !!r.t7.anyPoison : p.t7AnyPoison,
+          bridge: bridgeRecordOf(r.bridge),
         }));
         return;
       }
@@ -386,7 +426,11 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
       default:
         return; // unknown kind → ignore (never act on a frame by its tag)
     }
-  }, [control]);
+  }, [control, channel]);
+
+  const onLoadEnd = useCallback(() => {
+    channel.current?.deliver((js) => webRef.current?.injectJavaScript(js));
+  }, [channel, webRef]);
 
   // Leaving asks the launcher, which takes the app back into its tile first (M3) and unmounts it
   // there, where the realm is torn down: until then the app can still be turned back out, its realm
@@ -434,6 +478,7 @@ export function useMiniAppHost(opts: UseMiniAppHostOptions = {}): MiniAppHost {
     webRef,
     state: s,
     onMessage,
+    onLoadEnd,
     deliverBySource,
     control,
     exit,

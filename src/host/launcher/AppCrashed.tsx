@@ -7,7 +7,9 @@
  *
  * A launch behind its app's current version (a change landed, an Undo moved the app, since it opened)
  * says so instead and offers Reload and Back only: the error is from code no longer current, and a
- * change is made from the current version, so a fix is offered once Reload runs that one.
+ * change is made from the current version, so a fix is offered once Reload runs that one. A host
+ * fault (the WebView got no bridge token, webview-bridge-provenance) offers Reload and Back only too:
+ * there is no error of the app's to fix.
  *
  * It sits in the app's area, so it is drawn in the tokens the launch was delivered with (design-system-v1
  * 18g), not the phone's live ones. Nothing of the realm's error is shown here: the error goes, as plain
@@ -30,6 +32,8 @@ export interface AppCrashedProps {
   bottomClearance: number;
   /** A newer version of the app than this launch runs is current: no "Ask Whim to fix it". */
   behind: boolean;
+  /** The failure is the app's own, so a change can fix it; false for a host fault: no "Ask Whim to fix it". */
+  fixable: boolean;
   onReload: () => void;
   onAskFix: () => void;
   onExit: () => void;
@@ -40,7 +44,7 @@ const MARK = { circle: 64, icon: 32 } as const;
 
 /** The mark, title and body centred in the space above the actions; the actions at the bottom, just
  *  above the orb (the mockups' `#app-error`). At large text sizes the whole screen scrolls. */
-export function AppCrashed({ name, tokens, bottomClearance, behind, onReload, onAskFix, onExit }: Readonly<AppCrashedProps>) {
+export function AppCrashed({ name, tokens, bottomClearance, behind, fixable, onReload, onAskFix, onExit }: Readonly<AppCrashedProps>) {
   const c = tokens.colors;
   return (
     <ScrollView
@@ -56,7 +60,7 @@ export function AppCrashed({ name, tokens, bottomClearance, behind, onReload, on
       </View>
       <View style={styles.actions}>
         <Button tokens={tokens} label={COPY.actionReload} variant="ink" onPress={onReload} />
-        {behind ? null : <Button tokens={tokens} label={COPY.appCrashedAskFix} variant="plain-ember" onPress={onAskFix} />}
+        {behind || !fixable ? null : <Button tokens={tokens} label={COPY.appCrashedAskFix} variant="plain-ember" onPress={onAskFix} />}
         <Button tokens={tokens} label={COPY.launchFailedBack} variant="plain" onPress={onExit} />
       </View>
     </ScrollView>
