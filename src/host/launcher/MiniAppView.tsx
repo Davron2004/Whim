@@ -63,6 +63,8 @@ import { chromeInsetBottom } from './orb-geometry';
 import type { InstalledApp } from './app-index';
 import { AppCrashed } from './AppCrashed';
 import { crashAttachment } from './crash-report';
+import { createRuntimeChannel } from './runtime-channel';
+import type { RuntimeChannel } from './runtime-message-auth';
 
 /** One open of one app: what the launcher hands the container while the app is open. */
 export interface MiniAppLaunch {
@@ -181,6 +183,18 @@ export function MiniAppStage({ launch, onFrame, children }: Readonly<MiniAppStag
   const poolRef = useRef(pool);
   poolRef.current = pool;
   const natives = useRef(new Map<number, WebView>());
+  // Each WebView's provenance channel (`runtime-message-auth`), for its whole life: its token, the
+  // verifier its every message goes through, its drop count. A recreated slot is a new WebView with
+  // a new key, so a new channel and a new token.
+  const channels = useRef(new Map<number, RuntimeChannel>());
+  const channelFor = (key: number) => {
+    let channel = channels.current.get(key);
+    if (!channel) {
+      channel = createRuntimeChannel('pool');
+      channels.current.set(key, channel);
+    }
+    return channel;
+  };
   // One ref callback per WebView, kept for its life, so a re-render never detaches it.
   const attach = useRef(new Map<number, (web: WebView | null) => void>());
   const refFor = (key: number) => {
@@ -189,9 +203,13 @@ export function MiniAppStage({ launch, onFrame, children }: Readonly<MiniAppStag
       ref = (web: WebView | null) => {
         if (web) {
           natives.current.set(key, web);
+          channelFor(key);
         } else {
           natives.current.delete(key);
           attach.current.delete(key);
+          const { dropped } = channels.current.get(key)?.snapshot() ?? { dropped: 0 };
+          if (dropped > 0) log.info(CHANNELS.app, 'runtime webview dropped unsigned messages', { webKey: key, count: dropped });
+          channels.current.delete(key);
         }
       };
       attach.current.set(key, ref);
@@ -216,7 +234,12 @@ export function MiniAppStage({ launch, onFrame, children }: Readonly<MiniAppStag
   const onFailed = useCallback(() => setPool(launchFailed), []);
   const onOpened = useCallback(() => setPool(launchOpened), []);
 
+  // Every WebView gets a token of its own (webview-bridge-provenance D1), minted at its first load end
+  // and handed to its page at every load end, before anything else is sent to it: the bound launch's
+  // delivery, or the waiting page's warm probe. Its load starts are not an input.
   const onSlotLoadEnd = (key: number) => {
+    const web = natives.current.get(key);
+    const authorized = channels.current.get(key)?.deliver((js) => web?.injectJavaScript(js)) ?? false;
     const bound = outlet.current;
     if (bound !== null && bound.key === key) {
       bound.onLoadEnd();
@@ -224,12 +247,19 @@ export function MiniAppStage({ launch, onFrame, children }: Readonly<MiniAppStag
     }
     if (waitingSlot(poolRef.current)?.key !== key) return;
     setPool((p) => pageLoaded(p, key));
-    natives.current.get(key)?.injectJavaScript(WARM_PROBE_JS);
+    if (authorized) web?.injectJavaScript(WARM_PROBE_JS);
   };
+  // The launch's frames go to its host, whose head is the same verifier over this WebView's channel;
+  // every other WebView's go through the verifier here, before anything but a signed warm answer is
+  // dropped.
   const onSlotMessage = (key: number, data: string) => {
     const bound = outlet.current;
-    if (bound !== null && bound.key === key) bound.onMessage(data);
-    else if (data === WARM_ANSWER) setPool((p) => pageAnswered(p, key));
+    if (bound !== null && bound.key === key) {
+      bound.onMessage(data);
+      return;
+    }
+    const body = channels.current.get(key)?.receive(data) ?? null;
+    if (body === WARM_ANSWER) setPool((p) => pageAnswered(p, key));
   };
   const onSlotGone = (key: number) => {
     const bound = outlet.current;
@@ -294,6 +324,7 @@ export function MiniAppStage({ launch, onFrame, children }: Readonly<MiniAppStag
           slot={launchSlot(pool)}
           outlet={outlet}
           natives={natives}
+          channels={channels}
           onFailed={onFailed}
           onOpened={onOpened}
           onPinned={onPinned}
@@ -311,6 +342,8 @@ interface MiniAppViewProps extends MiniAppLaunch {
   slot: PoolSlot | undefined;
   outlet: React.MutableRefObject<LaunchOutlet | null>;
   natives: React.MutableRefObject<Map<number, WebView>>;
+  /** Each WebView's provenance channel, by key. */
+  channels: React.MutableRefObject<Map<number, RuntimeChannel>>;
   /** The launch reached a failure surface: its WebView goes. */
   onFailed: () => void;
   /** The launch painted: the next WebView may start warming beside it. */
@@ -663,7 +696,7 @@ function BackWhileMoving({ onBack }: Readonly<{ onBack: () => void }>) {
 
 export default function MiniAppView({
   record, bundleSource, engineAppId, tappedAt, onExit, onOpenSheet, sheetOpen, onCloseSheet, installedApp, orb,
-  onReload, onAskFix, behind, morph, frame, slot, outlet, natives, onFailed, onOpened, onPinned,
+  onReload, onAskFix, behind, morph, frame, slot, outlet, natives, channels, onFailed, onOpened, onPinned,
 }: Readonly<MiniAppViewProps>) {
   const slotKey = slot?.key ?? null;
   // The WebView this launch's host controls is looked up when used: the one bound to the launch
@@ -674,10 +707,16 @@ export default function MiniAppView({
       return boundKey.current === null ? null : natives.current.get(boundKey.current) ?? null;
     },
   }));
+  // That WebView's provenance channel, which the host's `onMessage` verifies every frame against.
+  const [channelRef] = useState(() => ({
+    get current(): RuntimeChannel | null {
+      return boundKey.current === null ? null : channels.current.get(boundKey.current) ?? null;
+    },
+  }));
   // The launcher's sheet over the running realm (the Whim sheet, design D14): while it is open,
   // back-policy's `overlayOpen` input closes it instead of forwarding the press into the app or
   // exiting (mini-app-back-navigation delta "A host sheet takes back first").
-  const host = useMiniAppHost({ onExit, overlayOpen: sheetOpen, onCloseOverlay: onCloseSheet, webRef, leaving: morph?.leaving === true });
+  const host = useMiniAppHost({ onExit, overlayOpen: sheetOpen, onCloseOverlay: onCloseSheet, webRef, channel: channelRef, leaving: morph?.leaving === true });
 
   // Deliver once the bound WebView's page has loaded, so injectJavaScript is not silently dropped
   // (#5 B1): at once for a WebView handed over already loaded, else at its `onLoadEnd` -- exactly
@@ -831,7 +870,8 @@ export default function MiniAppView({
   // -- is the crash screen (`app-launcher` "A crashed app keeps the orb and offers a way forward"), in
   // the app's place, with the orb over it. Its Reload is a new launch of the app in place: a fresh
   // WebView and realm (a realm reset is a RECREATE, never a re-inject, spike2 §5). "Ask Whim to fix
-  // it" hands the launcher the error as plain, capped text for the request it prefills.
+  // it" hands the launcher the error as plain, capped text for the request it prefills; a host fault
+  // (no bridge token) is not the app's error, so it offers Reload only.
   if (surface === 'app-error') {
     const crash = host.state.crash;
     return (
@@ -842,6 +882,7 @@ export default function MiniAppView({
           bottomClearance={chromeInsetBottom(bottomInset)}
           onReload={onReload}
           behind={behind}
+          fixable={crash?.hostFault !== true}
           onAskFix={() => onAskFix(crash === null ? '' : crashAttachment(crash))}
           onExit={onExit}
         />

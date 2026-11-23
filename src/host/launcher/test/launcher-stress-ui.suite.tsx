@@ -29,7 +29,7 @@ import { iosPop, stackMoveEnds, stackUnmountsMidMove } from './native-screens';
 import { androidBack, button, hostType, isHost, press } from './react-screen';
 import { makingSheetOpen, settle, tap, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { hasButton, home, orb, showing } from './whim-sheet-ui.suite';
-import { opening, paint, send } from './changing-in-use-ui.suite';
+import { opening, pageOf, paint, send } from './changing-in-use-ui.suite';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 import { mulberry32 } from './mulberry32';
 
@@ -201,10 +201,10 @@ async function firePageEvent(tree: Tree, pages: PageLog, event: PageEvent, web: 
     await TestRenderer.act(async () => web.props.onLoadEnd());
   } else if (event === 'answer') {
     pages.answered.add(scripts);
-    await TestRenderer.act(async () => web.props.onMessage({ nativeEvent: { data: WARM_ANSWER } }));
+    await send(pageOf(web), WARM_ANSWER);
   } else {
     pages.painted.add(scripts);
-    await send(web.props.onMessage, paint(generationIn(web)));
+    await send(pageOf(web), paint(generationIn(web)));
     if (opening(tree)) fail('the bound launch’s own paint did not open it');
   }
 }
@@ -314,7 +314,7 @@ async function stress({ seed, platform, steps }: Run, ran: Ran): Promise<void> {
           can: () => appShown() && !sheetUp() && (crashed() || boundWebViews(tree).some((w) => deliveriesInto(w).length > 0)),
           run: async () => {
             const launch = tree.root.findByType(MiniAppView).props.tappedAt;
-            if (!crashed()) await send(boundWebViews(tree)[0].props.onMessage, RENDER_ERROR_FRAME);
+            if (!crashed()) await send(pageOf(boundWebViews(tree)[0]), RENDER_ERROR_FRAME);
             await waitFor(() => crashed(), 'the crash screen');
             await press(button(tree, COPY.actionReload));
             await waitFor(() => appShown() && tree.root.findByType(MiniAppView).props.tappedAt !== launch, 'Reload to open the app again');

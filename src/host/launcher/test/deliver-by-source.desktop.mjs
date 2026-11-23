@@ -19,12 +19,15 @@
 // sandbox-rendering): `paint` reaches RN stamped with the generation the host bound, the page, the
 // iframe and the realm's canvas paint the theme's `bg`, and the viewport allows zoom. And that the
 // launcher's own theme frame (design-system-v1 D3) reaches the realm whole, and that the shipped page
-// waiting warm (task 18.4) holds no app and hands the launch a recreated realm.
+// waiting warm (task 18.4) holds no app and hands the launch a recreated realm. And that RN's half of
+// the bridge provenance check (webview-bridge-provenance D1, D2, D5: `runtime-message-auth`) reads the
+// shipped page as it really posts: its signed warm answer, and its exposure report and canary.
 //
 //   npm run build && node src/host/launcher/test/deliver-by-source.desktop.mjs
 import { chromium } from 'playwright';
 import { build as esbuild } from 'esbuild';
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
+import { randomBytes } from 'node:crypto';
 import { isDeepStrictEqual } from 'node:util';
 import { fileURLToPath, pathToFileURL } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -200,14 +203,16 @@ export { COLORS, TINTS } from './src/design/tokens';`,
   return import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`);
 })();
 
-/** The page the product ships, the pool's warm probe and the host's delivery script builder, from
- *  their sources: the warm check drives the real page with exactly what the host injects. */
-const { RUNTIME_HTML, WARM_PROBE_JS, WARM_ANSWER, deliverBySourceJs } = await (async () => {
+/** The page the product ships, the pool's warm probe, the host's delivery script builder and its
+ *  provenance check, from their sources: the warm check drives the real page with exactly what the
+ *  host injects, and reads what it posts exactly as the host does. */
+const { RUNTIME_HTML, WARM_PROBE_JS, WARM_ANSWER, deliverBySourceJs, acceptRuntimeMessage, authControlJs, mintRuntimeToken, RuntimeChannel, EXPOSURE_CANARY, exposureCode } = await (async () => {
   const out = await esbuild({
     stdin: {
       contents: `export { RUNTIME_HTML } from './src/runtime/generated/runtime-html';
 export { WARM_PROBE_JS, WARM_ANSWER } from './src/host/launcher/webview-pool';
-export { deliverBySourceJs } from './src/host/launcher/deliver';`,
+export { deliverBySourceJs } from './src/host/launcher/deliver';
+export { acceptRuntimeMessage, authControlJs, mintRuntimeToken, RuntimeChannel, EXPOSURE_CANARY, exposureCode } from './src/host/launcher/runtime-message-auth';`,
       loader: 'ts', resolveDir: ROOT, sourcefile: 'host-pool.ts',
     },
     bundle: true, format: 'esm', platform: 'browser', write: false, logLevel: 'warning',
@@ -215,6 +220,8 @@ export { deliverBySourceJs } from './src/host/launcher/deliver';`,
   return import(`data:text/javascript;base64,${Buffer.from(out.outputFiles[0].text).toString('base64')}`);
 })();
 const productPage = await writePage('product', RUNTIME_HTML);
+/** The OS CSPRNG standing in for the `WhimRandom` module. */
+const nodeRandom = { randomHex: (n) => randomBytes(n).toString('hex') };
 
 const LEDGER_ERROR = `class LedgerError extends Error {
   constructor(message: string) { super(message); this.name = 'LedgerError'; }
@@ -437,10 +444,10 @@ async function realmChecks(browser) {
     await page.close();
   }
 
-  // The warm WebView (design-system-v1 task 18.4): the shipped page loaded with no app. It answers
-  // the warm probe and tells RN nothing else; its idle realm has no app in it. The launch the host
-  // then delivers gets a recreated iframe: nothing the idle realm held is in it, and a frame
-  // carrying the idle realm's nonce is refused as a forgery.
+  // The warm WebView (design-system-v1 task 18.4): the shipped page loaded with no app. Handed its
+  // token, it answers the warm probe, signed, and tells RN nothing else; its idle realm has no app in
+  // it. The launch the host then delivers gets a recreated iframe: nothing the idle realm held is in
+  // it, and a frame carrying the idle realm's nonce is refused as a forgery.
   {
     const page = await browser.newPage({ viewport: { width: 400, height: 800 } });
     await page.addInitScript(() => {
@@ -466,12 +473,17 @@ async function realmChecks(browser) {
         held: window.__heldByTheIdleRealm === true,
       };
     });
+    const token = mintRuntimeToken(nodeRandom);
+    await page.evaluate(authControlJs(token));
     await page.evaluate(WARM_PROBE_JS);
     const toRN = async () => (await page.evaluate(() => window.__raw.slice()));
-    const warm = await toRN();
+    const posted = await toRN();
+    // As RN reads them: the body of a post signed with this page load's token, else null (dropped).
+    const verified = (raw) => { const v = acceptRuntimeMessage(raw, token); return v.ok ? v.body : null; };
+    const warm = posted.map(verified).filter((body) => body === null || !body.startsWith('{"__whimHostLog"'));
 
     await page.evaluate(deliverBySourceJs({ name: 'Tip Splitter', source: SRC, generation: 9, theme: { colors } }));
-    const relayed = async () => (await toRN()).slice(warm.length).map((s) => JSON.parse(s));
+    const relayed = async () => (await toRN()).slice(posted.length).map(verified).filter((body) => body !== null).map((body) => JSON.parse(body));
     const paints = async () => (await relayed()).filter((f) => f.kind === 'paint');
     await until(async () => (await paints()).length > 0);
     const launch = page.frames().find((f) => f !== page.mainFrame());
@@ -500,7 +512,9 @@ async function realmChecks(browser) {
   }
 
   // The same page loaded with its scripts off (as iOS starts a WebView while the network-deny rule
-  // list is not compiled, decision #74): the probe gets no warm answer, so the pool never hands it out.
+  // list is not compiled, decision #74): its orchestration never ran, so there is no control to take
+  // the token or answer the probe. The host's injections run there without throwing and the page
+  // posts nothing, so the pool never hands it out.
   {
     const context = await browser.newContext({ javaScriptEnabled: false });
     const page = await context.newPage();
@@ -510,11 +524,101 @@ async function realmChecks(browser) {
       Object.defineProperty(window, '__raw', { value: posted });
       window.ReactNativeWebView = { postMessage: (s) => posted.push(s) };
     });
+    await page.evaluate(authControlJs(mintRuntimeToken(nodeRandom)));
     await page.evaluate(WARM_PROBE_JS);
     const answers = await page.evaluate(() => window.__raw.slice());
-    checks['warm probe with the page’s scripts off'] = answers.length === 1 && answers[0] !== WARM_ANSWER;
-    detail['warm probe with the page’s scripts off'] = `answers=${JSON.stringify(answers)}`;
+    const control = await page.evaluate(() => typeof window.__whimControl);
+    checks['warm probe with the page’s scripts off'] = answers.length === 0 && control === 'undefined';
+    detail['warm probe with the page’s scripts off'] = `answers=${JSON.stringify(answers)} control=${control}`;
     await context.close();
+  }
+
+  // A load end reported twice for one page (Android may; iOS's history shim can post one), then a
+  // launch: RN hands the real page its WebView's token again, the page keeps the one it holds, and
+  // everything it signs from then on (the launch's paint included) is read through RN's channel.
+  {
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      const raw = [];
+      Object.defineProperty(window, '__raw', { value: raw });
+      window.ReactNativeWebView = { postMessage: (s) => raw.push(s) };
+    });
+    await page.goto(pathToFileURL(productPage).href, { waitUntil: 'load', timeout: 20000 });
+    const channel = new RuntimeChannel(nodeRandom);
+    const loadEnd = async () => {
+      let js = '';
+      channel.deliver((script) => { js = script; });
+      await page.evaluate(js);
+      return js;
+    };
+    const preAuth = (await page.evaluate(() => window.__raw.length));
+    const auths = [await loadEnd(), await loadEnd()];
+    await page.evaluate(deliverBySourceJs({ name: 'Tip Splitter', source: SRC, generation: 4, theme: { colors } }));
+    const bodies = [];
+    let fed = preAuth;
+    const feed = async () => {
+      const raw = await page.evaluate(() => window.__raw.slice());
+      while (fed < raw.length) { const body = channel.receive(raw[fed++]); if (body !== null) bodies.push(JSON.parse(body)); }
+      return bodies.some((f) => f.kind === 'paint');
+    };
+    await until(feed, 6000);
+    const seen = {
+      sameToken: auths[0] === auths[1],
+      paints: bodies.filter((f) => f.kind === 'paint').map((f) => f.payload?.generation),
+      dropped: channel.snapshot().dropped,
+    };
+    checks['repeated load end, then a launch'] = isDeepStrictEqual(seen, { sameToken: true, paints: [4], dropped: 0 });
+    detail['repeated load end, then a launch'] = JSON.stringify(seen);
+    await page.close();
+  }
+
+  // The navigated-frame exposure probe (webview-bridge-provenance D5) on a page whose every frame
+  // can see a native bridge stand-in: what the page posts, fed in order through RN's own channel,
+  // is one exposure record per page load, the canary from a sub-frame joined to it, in the
+  // device-diagnostics grammar; nothing else the page signed is dropped. A sub-frame's stand-in
+  // carries its post to the top frame's record (not JSON, so the page itself reads nothing into it).
+  {
+    const page = await browser.newPage();
+    await page.addInitScript(() => {
+      if (window.top === window) {
+        const raw = [];
+        Object.defineProperty(window, '__raw', { value: raw });
+        window.ReactNativeWebView = { postMessage: (s) => raw.push({ main: true, s: String(s) }) };
+        window.addEventListener('message', (ev) => {
+          if (typeof ev.data === 'string' && ev.data.startsWith('native:')) raw.push({ main: false, s: ev.data.slice('native:'.length) });
+        });
+      } else {
+        window.ReactNativeWebView = { postMessage: (s) => window.top.postMessage(`native:${s}`, '*') };
+      }
+    });
+    await page.goto(pathToFileURL(productPage).href, { waitUntil: 'load', timeout: 20000 });
+    const posts = [];
+    const collect = async () => { posts.splice(0, posts.length, ...(await page.evaluate(() => window.__raw.slice()))); };
+    const records = [];
+    const channel = new RuntimeChannel(nodeRandom, { exposure: (r) => records.push(r) });
+    let auth = '';
+    channel.deliver((js) => { auth = js; });
+    await page.evaluate(auth);
+    let fed = 0;
+    const feed = async () => { await collect(); while (fed < posts.length) channel.receive(posts[fed++].s); };
+    await until(async () => { await feed(); return records.length > 0; }, 6000);
+    // The canary and the report take separate paths to RN; whichever comes second has had time to.
+    await new Promise((resolve) => setTimeout(resolve, 500));
+    await feed();
+    const canary = posts.filter((p) => p.s === EXPOSURE_CANARY);
+    const record = channel.snapshot().exposure;
+    const seen = {
+      record: record && { code: exposureCode(record), webview: /^chrome-\d+$/.test(record.webview ?? '') },
+      canaryFrom: canary.map((p) => (p.main ? 'main frame' : 'sub-frame')),
+      dropped: channel.snapshot().dropped,
+    };
+    checks['exposure report as RN reads it'] = isDeepStrictEqual(seen, {
+      record: { code: 'navigated:android+canary', webview: true },
+      canaryFrom: ['sub-frame'],
+      dropped: 1,
+    });
+    detail['exposure report as RN reads it'] = JSON.stringify(seen);
+    await page.close();
   }
   return { checks, detail };
 }

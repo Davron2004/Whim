@@ -38,22 +38,63 @@ export function keyboardFrameListenerCount(): number { return keyboardFrameListe
 export const SafeAreaView = host('SafeAreaView');
 export const SafeAreaProvider = host('SafeAreaProvider');
 export const StatusBar = host('StatusBar');
-/** Every script the host injected into a rendered WebView, oldest first. */
+/** Every script the host injected into a rendered WebView, oldest first, but the token handovers
+ *  (`authInjections`). */
 export const injectedScripts: string[] = [];
+/** Every `window.__whimControl.auth(token)` control the host injected, oldest first. */
+export const authInjections: string[] = [];
+/** The token handover `runtime-message-auth`'s `authControlJs` writes; group 1 is the token. */
+const AUTH_CONTROL = /^window\.__whimControl&&window\.__whimControl\.auth\('([0-9a-f]{32})'\);true;$/;
 const WEBVIEW_CONTAINER = { flex: 1, overflow: 'hidden' };
 /** The WebView exposes `injectJavaScript` through its ref, as react-native-webview does, so a
  *  rendered MiniAppView really delivers its bundle; the scripts land in `injectedScripts`, and the
- *  ones each WebView received in its host element's `injected` prop. Like react-native-webview 14
+ *  ones each WebView received in its host element's `injected` prop. Token handovers land apart, in
+ *  `authInjections` and the element's `authInjected` prop, where `pageToken` reads them. Mounted, it
+ *  starts loading its page, as the native view does: it reports `onLoadStart` once; the test plays
+ *  `onLoadEnd`, and any later load (a reload), itself. Like react-native-webview 14
  *  (`WebView.android.tsx`, `WebView.ios.tsx`), it draws the native view inside a View of its own,
  *  `[{ flex: 1, overflow: 'hidden' }, containerStyle]`: `style` and every other prop reach only the
  *  native view, so the layout and touch handling a parent sees are that container's. */
 export const WebView = React.forwardRef<{ injectJavaScript: (js: string) => void }, HostProps>((props, ref) => {
   const [injected] = React.useState<string[]>(() => []);
-  React.useImperativeHandle(ref, () => ({ injectJavaScript: (js: string) => { injectedScripts.push(js); injected.push(js); } }), [injected]);
+  const [authInjected] = React.useState<string[]>(() => []);
+  React.useImperativeHandle(ref, () => ({
+    injectJavaScript: (js: string) => {
+      if (AUTH_CONTROL.test(js)) {
+        authInjections.push(js);
+        authInjected.push(js);
+      } else {
+        injectedScripts.push(js);
+        injected.push(js);
+      }
+    },
+  }), [injected, authInjected]);
+  const loadStart = React.useRef(props.onLoadStart as ((e: { nativeEvent: object }) => void) | undefined);
+  React.useEffect(() => { loadStart.current?.({ nativeEvent: {} }); }, []);
   const { containerStyle, ...native } = props;
   return React.createElement('View', { style: [WEBVIEW_CONTAINER, containerStyle] },
-    React.createElement('WebView', { ...native, injected }, props.children as React.ReactNode));
+    React.createElement('WebView', { ...native, injected, authInjected }, props.children as React.ReactNode));
 });
+/** The native view reports a load start for its page, as react-native-webview 14 does long after the
+ *  page loaded: on iOS for every `about:blank` sub-frame a page loaded with no base URL creates
+ *  (`RNCWebViewImpl.m` takes `request.URL == mainDocumentURL` for the top frame), on Android for a
+ *  history update (`RNCWebViewClient.doUpdateVisitedHistory`). A host that renders no `onLoadStart`
+ *  hears nothing. */
+export function nativeLoadStart(web: { props: Record<string, unknown> }, url = 'about:blank'): void {
+  (web.props.onLoadStart as ((e: { nativeEvent: object }) => void) | undefined)?.({ nativeEvent: { url, loading: false } });
+}
+/** The token the host handed `web`'s current page load, read from its last recorded `auth` control. */
+export function pageToken(web: { props: Record<string, unknown> }): string {
+  const token = AUTH_CONTROL.exec((web.props.authInjected as string[] | undefined)?.at(-1) ?? '')?.[1];
+  if (token === undefined) throw new Error('no token was handed to this WebView');
+  return token;
+}
+/** `frame` (or its JSON) as the outer page posts it to RN once it holds `token` (`build/assemble.mjs`'s
+ *  `toRN`): `W1.<token>.<JSON>`. `token` is a WebView's own (`pageToken`) unless given as a string. */
+export function signed(token: string | { props: Record<string, unknown> }, frame: unknown): string {
+  const data = typeof frame === 'string' ? frame : JSON.stringify(frame);
+  return `W1.${typeof token === 'string' ? token : pageToken(token)}.${data}`;
+}
 /** What the system does with a `Modal`, as React Native 0.85 shows it (measured on iOS 27):
  *  - A presentation is confirmed through `onShow` on both platforms. iOS presents a modal from the
  *    surface it sits on (the window, or the modal it is inside) and refuses one issued while that
@@ -292,8 +333,22 @@ const whimHaptics = { impact: record('impact'), selection: record('selection'), 
  *  the platform does with a request is the test's: a rig that models it sets `handler`. */
 export const keyboardShows: { tags: number[]; handler: ((tag: number) => void) | null } = { tags: [], handler: null };
 const whimKeyboard = { showFor: (tag: number) => { keyboardShows.tags.push(tag); keyboardShows.handler?.(tag); } };
+/** The `WhimRandom` module (`NativeWhimRandom`), spec-faithful: `byteCount` (an integer 1–64)
+ *  bytes as lowercase hex, seeded by a call counter so successive tokens differ; null outside that
+ *  range. `mode` plays the OS source failing: `fails` answers null to every call, `throws` throws. */
+export const secureRandom: { mode: 'ok' | 'fails' | 'throws'; calls: number } = { mode: 'ok', calls: 0 };
+const whimRandom = {
+  randomHex: (byteCount: number): string | null => {
+    secureRandom.calls += 1;
+    if (secureRandom.mode === 'throws') throw new Error('WhimRandom: the OS source threw');
+    if (secureRandom.mode === 'fails' || !Number.isInteger(byteCount) || byteCount < 1 || byteCount > 64) return null;
+    let hex = '';
+    for (let i = 0; i < byteCount; i++) hex += ((secureRandom.calls * 131 + i * 17) % 256).toString(16).padStart(2, '0');
+    return hex;
+  },
+};
 /** The TurboModules this host registers; every other name resolves to null. */
-const turboModules: Record<string, object> = { WhimHaptics: whimHaptics, WhimKeyboard: whimKeyboard };
+const turboModules: Record<string, object> = { WhimHaptics: whimHaptics, WhimKeyboard: whimKeyboard, WhimRandom: whimRandom };
 export const TurboModuleRegistry = {
   get: (name: string) => (Object.hasOwn(turboModules, name) ? turboModules[name] : null),
   getEnforcing: () => ({ play: () => {}, stop: () => {} }),

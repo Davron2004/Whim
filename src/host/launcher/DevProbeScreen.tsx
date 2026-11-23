@@ -7,21 +7,27 @@
 // containment harness (D6), reachable from the launcher via a __DEV__ entry. It drives the
 // SAME useMiniAppHost loop the product MiniAppView uses, so realm + dispatcher are always bound
 // (the cap-intruder lesson) by construction.
-import React, { useMemo } from 'react';
+import React, { useMemo, useState } from 'react';
 import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
 import { WebView } from '../webview';
 import { log } from '../logging';
 import { logWebViewError } from './webview-error';
-import { useMiniAppHost } from './useMiniAppHost';
+import { useMiniAppHost, type BridgeRecord } from './useMiniAppHost';
 import { DEV_PROBE_FIXTURES, devProbeFixture } from './dev-probe-fixtures';
+import { createRuntimeChannel, useRuntimeChannel } from './runtime-channel';
+import { exposureCode, type RuntimeChannelSnapshot } from './runtime-message-auth';
 
 export interface DevProbeScreenProps {
   onExit: () => void;
 }
 
 export default function DevProbeScreen({ onExit }: Readonly<DevProbeScreenProps>) {
-  const host = useMiniAppHost({ onExit });
+  // The WebView's provenance channel, for the screen's life (its one WebView instance): its token,
+  // the verifier every message goes through, and what it dropped and recorded, shown in the bar.
+  const [channel] = useState(() => ({ current: createRuntimeChannel('dev-probe') }));
+  const host = useMiniAppHost({ onExit, channel });
   const s = host.state;
+  const runtime = useRuntimeChannel(channel.current);
 
   const verdictColor = verdictValue(s.contained, '#94a3b8', '#16a34a', '#dc2626');
   const verdictText = verdictValue(s.contained, 'running…', 'CONTAINED ✓', 'LEAK ✗');
@@ -48,6 +54,9 @@ export default function DevProbeScreen({ onExit }: Readonly<DevProbeScreenProps>
           {s.t7AnyPoison == null ? '' : ` · T7: ${s.t7AnyPoison}`}
           {s.lastError ? ` · err: ${s.lastError}` : ''}
         </Text>
+        <Text style={styles.meta}>
+          bridge: {bridgeText(s.bridge)} · dropped: {runtime.dropped} · exposure: {exposureText(runtime)}
+        </Text>
         <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.btnRow}>
           {buttons.map((name) => {
             const fixture = devProbeFixture(name);
@@ -65,6 +74,7 @@ export default function DevProbeScreen({ onExit }: Readonly<DevProbeScreenProps>
         originWhitelist={['*']}
         source={{ html: host.runtimeHtml }}
         onMessage={(e) => host.onMessage(e.nativeEvent.data)}
+        onLoadEnd={host.onLoadEnd}
         javaScriptEnabled
         domStorageEnabled={false}
         setSupportMultipleWindows={false}
@@ -72,6 +82,23 @@ export default function DevProbeScreen({ onExit }: Readonly<DevProbeScreenProps>
       />
     </SafeAreaView>
   );
+}
+
+/** The verdict's `bridge` field: each native bridge object present in the frame at start, and removed. */
+function bridgeText(bridge: BridgeRecord | null): string {
+  if (bridge === null) return '—';
+  const side = (b: BridgeRecord['android']) => {
+    if (!b.present) return 'absent';
+    return b.removed ? 'present/removed' : 'present/NOT removed';
+  };
+  return `android ${side(bridge.android)}, ios ${side(bridge.ios)}`;
+}
+
+/** The WebView's exposure record (the canary even before its report). */
+function exposureText(runtime: RuntimeChannelSnapshot): string {
+  const e = runtime.exposure;
+  if (e === null) return runtime.canary ? 'pending (canary reached native)' : 'pending';
+  return `${exposureCode(e)} · visible android=${e.visible.android} ios=${e.visible.ios} · canary=${e.canaryReachedNative} · ${e.webview ?? 'unknown'}`;
 }
 
 function verdictValue<T>(contained: boolean | null, running: T, containedValue: T, leakValue: T): T {

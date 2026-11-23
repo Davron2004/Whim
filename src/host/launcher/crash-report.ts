@@ -21,6 +21,9 @@ export interface AppCrash {
   /** The error's class name: the realm's own string for `bundle`, `mount`, `render` and a `deliver`
    *  throw; the host's own for a startup deadline or a WebView that went. */
   readonly errorClass: string;
+  /** The host failed, not the app's code (its WebView got no bridge token): there is no error of the
+   *  app's to fix, so the crash screen offers Reload and no "Ask Whim to fix it". */
+  readonly hostFault?: true;
 }
 
 /** The most characters of the class name an attachment carries. */

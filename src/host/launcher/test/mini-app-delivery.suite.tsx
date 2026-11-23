@@ -10,7 +10,7 @@ import { createMmkvBackend } from '../../version-store/fs/mmkv-backend';
 import { SEED_VERSION } from '../seed';
 import { log } from '../../logging';
 import { resetNativeStorage } from './native-storage';
-import { Dimensions, hardwareBack, injectedScripts, setColorScheme, StyleSheet } from './native-host';
+import { Dimensions, hardwareBack, injectedScripts, setColorScheme, signed, StyleSheet } from './native-host';
 import { boundWebView, button, press, renderScreen, unmountScreen, hostType } from './react-screen';
 import { COPY } from '../copy';
 import { COLORS } from '../../../design/tokens';
@@ -83,7 +83,7 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
         const generation = Number(/,generation:(\d+)/.exec(injectedScripts[0] ?? '')?.[1]);
         now += 50;
         const paint = { kind: 'paint', trusted: true, payload: { generation, mountToFirstPaintMs: 18, appName: 'Timer' } };
-        await TestRenderer.act(async () => boundWebView(tree).props.onMessage({ nativeEvent: { data: JSON.stringify(paint) } }));
+        await TestRenderer.act(async () => boundWebView(tree).props.onMessage({ nativeEvent: { data: signed(boundWebView(tree), paint) } }));
         const timed = log.buffer.snapshot().filter((r) => r.message === 'tap to first paint').map((r) => r.fields);
         h.eq(timed, [{ tapToPaintMs: 200, paintMs: 18, webView: 'loading' }],
           'the 120 ms bundle read, the page load and the paint, from the tap, in the WebView that was still loading on Home');
@@ -100,7 +100,7 @@ export async function runMiniAppDeliveryTests(h: Harness): Promise<void> {
       await TestRenderer.act(async () => boundWebView(tree).props.onLoadEnd());
       const generation = Number(/,generation:(\d+)/.exec(injectedScripts[0] ?? '')?.[1]);
       const paint = { kind: 'paint', trusted: true, payload: { generation, mountToFirstPaintMs: 18, appName: 'Timer' } };
-      await TestRenderer.act(async () => opened.props.onMessage({ nativeEvent: { data: JSON.stringify(paint) } }));
+      await TestRenderer.act(async () => opened.props.onMessage({ nativeEvent: { data: signed(opened, paint) } }));
       h.eq(webViews(tree).length, 2, 'a replacement WebView waits beside the open app');
       h.ok(boundWebView(tree) === opened, 'the helper picks the app’s own WebView, not the one waiting');
     });

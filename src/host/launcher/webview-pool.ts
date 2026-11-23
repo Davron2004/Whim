@@ -50,10 +50,11 @@ export interface WebViewPool {
 
 export const EMPTY_POOL: WebViewPool = { opening: null, launch: null, slots: [], next: 1 };
 
-/** Injected into a waiting page once it has loaded: posts `WARM_ANSWER` iff the page's own
- *  orchestration script ran. It reads nothing and leaves nothing behind. */
-export const WARM_PROBE_JS = 'window.ReactNativeWebView.postMessage(JSON.stringify({__whimWarm:typeof window.__whimControl==="object"}));true;';
-/** The probe's answer from a page whose scripts run, exactly as the bridge carries it. */
+/** Injected into a waiting page once it has loaded, after its token: the page answers `WARM_ANSWER`,
+ *  signed, iff its own orchestration script ran; a page whose scripts do not run answers nothing. It
+ *  reads nothing and leaves nothing behind. */
+export const WARM_PROBE_JS = 'window.__whimControl&&window.__whimControl.warm();true;';
+/** The body of the page's answer, once the envelope is verified (`runtime-message-auth`). */
 export const WARM_ANSWER = '{"__whimWarm":true}';
 
 /** The WebView waiting in the pool, if any. */

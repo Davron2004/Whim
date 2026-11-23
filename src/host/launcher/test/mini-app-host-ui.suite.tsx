@@ -18,7 +18,7 @@ import { APP_BUNDLES } from '../../../runtime/generated/app-bundles';
 import { APP_RECORDS } from '../../../runtime/generated/app-records';
 import { DiagnosticsBatch } from '@whim/contract';
 import { log } from '../../logging';
-import { accessibilitySettings, emitAccessibility, hardwareBack, injectedScripts, Platform, setColorScheme, StyleSheet, windowMetrics } from './native-host';
+import { accessibilitySettings, emitAccessibility, hardwareBack, injectedScripts, pageToken, Platform, setColorScheme, signed, StyleSheet, windowMetrics } from './native-host';
 import { keyboardWindow, moveKeyboard, resetKeyboard } from './native-keyboard-controller';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 import { closedDatabases, resetNativeStorage } from './native-storage';
@@ -205,7 +205,7 @@ async function withMiniApp(
       webView,
       loadEnd: async () => { await TestRenderer.act(async () => webView()!.props.onLoadEnd()); },
       frame: async (frame) => {
-        await TestRenderer.act(async () => webView()!.props.onMessage({ nativeEvent: { data: JSON.stringify(frame) } }));
+        await TestRenderer.act(async () => webView()!.props.onMessage({ nativeEvent: { data: signed(webView()!, frame) } }));
       },
       shown: () => textOf(tree.root),
       opening: () => isOpening(tree),
@@ -280,9 +280,10 @@ function countArmedDeadlines(): { armed: () => number; restore: () => void } {
 type Instance = TestRenderer.ReactTestInstance;
 type OnMessage = (e: { nativeEvent: { data: string } }) => void;
 
-/** A frame through a WebView's `onMessage` handler as RN holds it, even after the WebView is gone. */
-const frameThrough = (onMessage: OnMessage, frame: unknown) =>
-  TestRenderer.act(async () => onMessage({ nativeEvent: { data: JSON.stringify(frame) } }));
+/** A frame through a WebView's `onMessage` handler as RN holds it, even after the WebView is gone,
+ *  signed with the token its page held. */
+const frameThrough = (onMessage: OnMessage, token: string, frame: unknown) =>
+  TestRenderer.act(async () => onMessage({ nativeEvent: { data: signed(token, frame) } }));
 
 interface Stage {
   tree: Tree;
@@ -290,7 +291,8 @@ interface Stage {
   show: (launch: MiniAppLaunch | null) => Promise<void>;
   /** Every WebView the container holds, waiting or bound. */
   webViews: () => Instance[];
-  /** A frame (or a raw string) from `web`'s page, through the handler the WebView was rendered with. */
+  /** A frame (or a raw string) from `web`'s page, signed with its token, through the handler the
+   *  WebView was rendered with. */
   send: (web: Instance, frame: unknown) => Promise<void>;
   /** Lets a dispatched syscall's reply come back. */
   settle: () => Promise<void>;
@@ -308,7 +310,7 @@ async function withStage(body: (s: Stage) => Promise<void>): Promise<void> {
       show: async (launch) => { await TestRenderer.act(async () => { tree.update(<MiniAppStage launch={launch} onFrame={ignoreFrame} />); }); },
       webViews: () => tree.root.findAll(isWebView),
       send: async (web, frame) => {
-        const data = typeof frame === 'string' ? frame : JSON.stringify(frame);
+        const data = signed(web, frame);
         await TestRenderer.act(async () => web.props.onMessage({ nativeEvent: { data } }));
       },
       settle: async () => { await TestRenderer.act(async () => { await new Promise((resolve) => setImmediate(resolve)); }); },
@@ -454,6 +456,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
     await withMiniApp(TIP, async ({ webView, loadEnd, frame, tree }) => {
       await loadEnd();
       const failedRealm = webView()!.props.onMessage as (e: { nativeEvent: { data: string } }) => void;
+      const failedToken = pageToken(webView()!);
       await frame({ kind: 'error', trusted: true, payload: { where: 'mount', name: 'TypeError' } });
       await press(button(tree, COPY.actionReload));
       await loadEnd();
@@ -462,7 +465,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       const accepted = JSON.stringify({ kind: 'delivery', trusted: true, payload: { accepted: true, generation: 1 } });
       const deadlines = countArmedDeadlines();
       try {
-        await TestRenderer.act(async () => failedRealm({ nativeEvent: { data: accepted } }));
+        await TestRenderer.act(async () => failedRealm({ nativeEvent: { data: signed(failedToken, accepted) } }));
         h.eq(deadlines.armed(), 0, 'the failed realm’s acknowledgement does not arm the deadline again');
         await frame(JSON.parse(accepted));
         h.eq(deadlines.armed(), 1, 'the new realm’s own does, for its full allowance');
@@ -617,6 +620,7 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       h.eq(repliesIn(a).map((r) => r.ok), [true], 'A writes a note to its own storage');
       // A's WebView's own handler, as RN still holds it for frames queued before A closed.
       const fromA = a.props.onMessage as OnMessage;
+      const tokenA = pageToken(a);
 
       await show(null);
       await show(launchOf(LATENCY));
@@ -628,9 +632,9 @@ export async function runMiniAppHostUiTests(h: Harness): Promise<void> {
       h.eq([deliveriesInto(b).length, (b.props.injected as string[]).length], [1, 1], 'its WebView has received B’s delivery and nothing else');
       h.ok(!deliveriesInto(b)[0].includes(JSON.stringify(APP_BUNDLES[WATER.appId])), 'none of A’s code');
 
-      await frameThrough(fromA, firstPaint(genA));
-      await frameThrough(fromA, firstPaint(genB));
-      await frameThrough(fromA, syscall(genB, 9, 'storage.kv.get', { key: 'note' }));
+      await frameThrough(fromA, tokenA, firstPaint(genA));
+      await frameThrough(fromA, tokenA, firstPaint(genB));
+      await frameThrough(fromA, tokenA, syscall(genB, 9, 'storage.kv.get', { key: 'note' }));
       await settle();
       h.ok(isOpening(tree) && !pageIsShown(tree), 'a paint still queued from A’s WebView opens nothing, even one claiming B’s generation');
       h.eq(repliesIn(b), [], 'and a syscall still queued from it is answered nowhere');

@@ -21,7 +21,7 @@ import { TilePlate } from '../../ui/AppTile';
 import { TILE, TILE_SIDE } from '../../ui/AppTile-geometry';
 import { springConfig, timingOf } from '../../ui/tokens-pure';
 import { resetNativeStorage } from './native-storage';
-import { accessibilitySettings, Dimensions, emitAccessibility, hardwareBack, injectedScripts, setColorScheme, StyleSheet } from './native-host';
+import { accessibilitySettings, Dimensions, emitAccessibility, hardwareBack, injectedScripts, setColorScheme, signed, StyleSheet } from './native-host';
 import { Easing, makeMutable, withSpring, withTiming } from 'react-native-reanimated';
 import { animations, elapse, elapseSprings, holdAnimations, isStep, measuring, ReduceMotion, runningAnimations, type Step } from './native-reanimated';
 import { stackMoveEnds, stackUnmountsMidMove } from './native-screens';
@@ -174,7 +174,7 @@ async function deliver(tree: Tree): Promise<number> {
 /** A trusted first paint through the bound WebView, stamped `generation` (by default the last delivery's). */
 async function paintAt(tree: Tree, generation: number): Promise<void> {
   const frame = { kind: 'paint', trusted: true, payload: { generation, mountToFirstPaintMs: 12, appName: 'Timer' } };
-  await TestRenderer.act(async () => boundWebView(tree).props.onMessage({ nativeEvent: { data: JSON.stringify(frame) } }));
+  await TestRenderer.act(async () => boundWebView(tree).props.onMessage({ nativeEvent: { data: signed(boundWebView(tree), frame) } }));
 }
 async function paint(tree: Tree): Promise<void> {
   await paintAt(tree, await deliver(tree));
@@ -493,7 +493,7 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       h.ok(pageShown(tree), 'and its page shows again');
       const generation = Number(/,generation:(\d+)/.exec(injectedScripts.at(-1) ?? '')?.[1]);
       const write = { kind: 'syscall', trusted: false, payload: { whim: 'syscall', v: SYSCALL_VERSION, id: 1, gen: generation, method: 'diag.echo', params: { payload: 1 } } };
-      await TestRenderer.act(async () => web.props.onMessage({ nativeEvent: { data: JSON.stringify(write) } }));
+      await TestRenderer.act(async () => web.props.onMessage({ nativeEvent: { data: signed(web, write) } }));
       await settle();
       const replies = (web.props.injected as string[]).filter((s) => s.includes('__whimRelaySysret('));
       h.ok(replies.length === 1 && replies[0].includes('\\"ok\\":true'), `its realm was never torn down: a call after the reopen is still answered (${replies.join(' ').slice(0, 160)})`);
@@ -761,7 +761,7 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       h.ok(touchAt(tree, ...diceCentre) === 'home', `the Dice tile, outside the bg (${JSON.stringify(shapeOf(tree))}), takes the touch`);
       const answers = holdSyscalls();
       try {
-        await TestRenderer.act(async () => boundWebView(tree).props.onMessage({ nativeEvent: { data: syscallAt(first, 7) } }));
+        await TestRenderer.act(async () => boundWebView(tree).props.onMessage({ nativeEvent: { data: signed(boundWebView(tree), syscallAt(first, 7)) } }));
         const before = relayed();
         await tapTile(tree, 'Dice');
         await waitFor(() => appOpen(tree) && tree.root.findByType(MiniAppView).props.installedApp.id === 'dice', 'Dice open');
@@ -791,7 +791,7 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       const answers = holdSyscalls();
       try {
         const before = relayed();
-        await TestRenderer.act(async () => web.props.onMessage({ nativeEvent: { data: syscallAt(generation, 9) } }));
+        await TestRenderer.act(async () => web.props.onMessage({ nativeEvent: { data: signed(web, syscallAt(generation, 9)) } }));
         await TestRenderer.act(async () => release());
         h.ok(!appOpen(tree) && homeShown(tree), 'the close ends on Home');
         answers();
