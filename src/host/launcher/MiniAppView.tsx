@@ -458,7 +458,6 @@ function useAppMorph({ morph, appId, frame, reduceMotion, look, failed }: MorphI
       tileSettled.value = true;
       scheduleOnRN(tileSettledNow);
     },
-    [frame, tile, leaving],
   );
   const coveredNow = useCallback(() => {
     setCovered(true);
@@ -471,7 +470,6 @@ function useAppMorph({ morph, appId, frame, reduceMotion, look, failed }: MorphI
     (now, before) => {
       if (now && before !== true) scheduleOnRN(coveredNow);
     },
-    [coveredNow],
   );
 
   // Android back while it comes out of its tile turns it round, even before its realm is bound (when
@@ -555,7 +553,6 @@ function useAppMorph({ morph, appId, frame, reduceMotion, look, failed }: MorphI
     (landed, before) => {
       if (landed && before !== true) scheduleOnRN(closed);
     },
-    [leaving, homeUnder, failed, reduceMotion, closed],
   );
 
   const plateStyle = useAnimatedStyle(() => ({ opacity: plate.value }));

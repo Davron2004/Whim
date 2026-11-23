@@ -218,7 +218,7 @@ export async function runMakeItMotionUiTests(h: Harness): Promise<void> {
       } finally { await leave(tree, release); }
     };
     h.eq(await play(false), { travels: 1, flying: true, own: [], planOut: 1, makingIn: true, plainFades: 0 }, 'off: one travel; the Making page draws no ember of its own until it lands');
-    h.eq(await play(true), { travels: 0, flying: false, own: [0], planOut: 1, makingIn: true, plainFades: 0 }, 'on: no travel; the Making page’s own ember starts unseen and fades in with the page, every fade the reduced one the root ReducedMotionConfig plays');
+    h.eq(await play(true), { travels: 0, flying: false, own: [0], planOut: 1, makingIn: true, plainFades: 0 }, 'on: no travel; the Making page’s own ember starts unseen and fades in with the page, every fade the reduced one Reanimated plays under Reduce Motion');
   });
 
   await h.test('M9: the plan page leaving under the Making page gives up its step back at once — no back control, and Android back is the sheet’s close again', async () => {

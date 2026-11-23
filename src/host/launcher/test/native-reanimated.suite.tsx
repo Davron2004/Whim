@@ -372,12 +372,12 @@ export async function runNativeReanimatedTests(h: Harness): Promise<void> {
     h.eq(seen.length, 3, 'nothing reacts once the component is gone');
   });
 
-  await h.test('reanimated double: a reaction whose deps change is a new mapper — it listens to what the new prepare reads and first runs as one of those is next assigned (the next frame), its previous result kept', async () => {
+  await h.test('reanimated double: a reaction whose captured value changes is a new mapper, with no deps array (native ignores one) — it listens to what the new prepare reads and first runs as one of those is next assigned (the next frame), its previous result kept', async () => {
     const seen: [boolean, boolean | null][] = [];
     let y!: SharedValue<number>;
     function Probe({ leaving }: Readonly<{ leaving: boolean }>) {
       y = useSharedValue(0);
-      useAnimatedReaction(() => leaving && y.value >= 10, (now, before) => { seen.push([now, before]); }, [leaving]);
+      useAnimatedReaction(() => leaving && y.value >= 10, (now, before) => { seen.push([now, before]); });
       return null;
     }
     const tree = await renderScreen(<Probe leaving={false} />);

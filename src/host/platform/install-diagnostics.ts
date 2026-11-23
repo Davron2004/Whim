@@ -15,7 +15,7 @@
  * error thrown while the app is loading is already captured.
  */
 
-import { AppState, Platform } from 'react-native';
+import { AppState, LogBox, Platform } from 'react-native';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
 import { installCrashCapture, renderCrashRecorder } from '../logging/crash-capture';
@@ -32,6 +32,15 @@ log.diagnostics.configure({
   target: diagnosticsTarget(kv, installedAppInfo),
   osVersion: String(Platform.Version),
 });
+
+// The one documented deep import (#281, below): React Native's babel preset appends a console.warn
+// naming it to this module, which LogBox would raise as a toast on every dev launch. Only that
+// exact message is silenced; any other deep import still warns.
+if (__DEV__) {
+  LogBox.ignoreLogs([
+    "Deep imports from the 'react-native' package are deprecated ('react-native/Libraries/promiseRejectionTrackingOptions').",
+  ]);
+}
 
 /** React Native installs its own rejection tracking only in a dev build (its yellow-box warning);
  *  the hook below replaces it there, so it defers to it. A release build has none. */

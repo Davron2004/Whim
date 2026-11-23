@@ -102,7 +102,7 @@ const isSmoothReflow = (layout: unknown): boolean => {
   const l = layout as LayoutAnimation | undefined;
   return l?.preset === 'LinearTransition' && l.config.springify === true && same({ mass: l.config.mass, stiffness: l.config.stiffness, damping: l.config.damping }, SMOOTH);
 };
-/** §4.5's reduced reflow: a cross-fade in place over `fade-in`, which the root ReducedMotionConfig must not skip. */
+/** §4.5's reduced reflow: a cross-fade in place over `fade-in`, which Reanimated's Reduce Motion default must not skip. */
 const isReducedReflow = (layout: unknown): boolean => {
   const l = layout as LayoutAnimation | undefined;
   return l?.preset === 'FadingTransition' && l.config.duration === FADE_IN.duration && playedUnder(l, true) !== null;
@@ -210,7 +210,7 @@ export async function runPlanMotionUiTests(h: Harness): Promise<void> {
       await show(tree, asked());
       for (const q of [ALERT, EXTRAS]) {
         const entering = questionFrame(tree, q).props.entering;
-        h.ok(isFadeInEntering(entering) && playedUnder(entering, true) !== null, `"${q.question}" still fades in: the root ReducedMotionConfig does not skip it`);
+        h.ok(isFadeInEntering(entering) && playedUnder(entering, true) !== null, `"${q.question}" still fades in: Reanimated's Reduce Motion default does not skip it`);
       }
       const release = await arrive(tree);
       h.ok(ROW_TEXTS.every((text) => same(drawn(rowFrame(tree, text)), { opacity: 0, y: 0 })), 'held at the first frame, every row is unseen in its own place');

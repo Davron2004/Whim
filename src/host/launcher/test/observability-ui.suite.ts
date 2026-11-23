@@ -264,7 +264,7 @@ export async function runObservabilityUiTests(h: Harness): Promise<void> {
   });
 
   await h.test('overlay: a row shows its time and its structured fields', () => {
-    h.eq(formatRecordTime(Date.UTC(2026, 7, 8, 9, 30, 15, 250)), '09:30:15.250', 'timestamps render as HH:MM:SS.mmm');
+    h.eq(formatRecordTime(Date.UTC(2026, 7, 8, 9, 30, 15, 250)), '09:30:15.250 UTC', 'timestamps render as HH:MM:SS.mmm marked UTC');
     h.eq(formatFields({}), '', 'a record with no fields adds no field line');
     h.eq(formatFields({ screen: 'home', tries: 2 }), 'screen=home · tries=2', 'fields render as name=value');
   });

@@ -1014,6 +1014,37 @@ export async function runHomeGridUiTests(h: Harness): Promise<void> {
     } finally { await unmountScreen(real); }
   });
 
+  await h.test('header: a long-press on the title opens the developer probe on release, not while the finger is down', async () => {
+    await resetPhone();
+    let opened = 0;
+    const tree = await renderHome({ apps: [TIMER], onOpenDevProbe: () => { opened += 1; } });
+    try {
+      const title = tree.root.find((n) => hostType(n) === 'Pressable' && textOf(n) === COPY.homeTitle);
+      // A press-out on the finger's lift has no touches left.
+      const lifted = { nativeEvent: { touches: [] } };
+      await TestRenderer.act(async () => { title.props.onLongPress(); });
+      h.eq(opened, 0, 'the long-press alone does not navigate while the responder is held');
+      await TestRenderer.act(async () => { title.props.onPressOut(lifted); });
+      h.eq(opened, 1, 'the lift opens the probe');
+      await TestRenderer.act(async () => { title.props.onPressOut(lifted); });
+      h.eq(opened, 1, 'a later lift with no long-press opens nothing');
+    } finally { await unmountScreen(tree); }
+  });
+
+  await h.test('header: a long-press that slides off the title, its finger still down, opens nothing and disarms', async () => {
+    await resetPhone();
+    let opened = 0;
+    const tree = await renderHome({ apps: [TIMER], onOpenDevProbe: () => { opened += 1; } });
+    try {
+      const title = tree.root.find((n) => hostType(n) === 'Pressable' && textOf(n) === COPY.homeTitle);
+      await TestRenderer.act(async () => { title.props.onLongPress(); });
+      await TestRenderer.act(async () => { title.props.onPressOut({ nativeEvent: { touches: [{ pageX: 0, pageY: 0 }] } }); });
+      h.eq(opened, 0, 'a press-out with the finger still down does not navigate mid-gesture');
+      await TestRenderer.act(async () => { title.props.onPressOut({ nativeEvent: { touches: [] } }); });
+      h.eq(opened, 0, 'the slide-off cleared the arm: a later lift without a new long-press opens nothing');
+    } finally { await unmountScreen(tree); }
+  });
+
   await h.test('skeleton: nothing for an empty grid — it is promised content', async () => {
     await resetPhone();
     const skeleton = await renderScreen(<HomeSkeleton count={0} />);

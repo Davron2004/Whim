@@ -12,7 +12,6 @@ import React from 'react';
 import { StyleSheet } from 'react-native';
 import { GestureHandlerRootView } from 'react-native-gesture-handler';
 import { KeyboardProvider } from 'react-native-keyboard-controller';
-import { ReducedMotionConfig, ReduceMotion } from 'react-native-reanimated';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
 import { enableScreens } from 'react-native-screens';
 import LauncherRoot from './src/host/launcher/LauncherRoot';
@@ -56,14 +55,14 @@ export default function App() {
 
   // Around everything: a render error no inner boundary handles is recorded, then rethrown into
   // React Native's own fatal handling (`RootErrorBoundary`). Inside it the roots the native UI
-  // libraries need: gestures, the keyboard's frames, and Reanimated motion following the OS
-  // Reduce Motion setting (design.md D9, system.md §4.5).
+  // libraries need: gestures and the keyboard's frames. Reanimated follows the OS Reduce Motion
+  // setting by itself (design.md D9, system.md §4.5): it reads it at startup, so no root config is
+  // mounted (its `ReducedMotionConfig` only re-applied that value and raised a dev warning).
   return (
     <RootErrorBoundary onError={recordRenderCrash}>
       <GestureHandlerRootView style={styles.root}>
         <SafeAreaProvider>
           <KeyboardProvider>
-            <ReducedMotionConfig mode={ReduceMotion.System} />
             {content}
           </KeyboardProvider>
         </SafeAreaProvider>

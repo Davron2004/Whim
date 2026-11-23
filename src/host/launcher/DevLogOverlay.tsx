@@ -13,7 +13,7 @@
 // This is a developer surface, like `DevProbeScreen` — its labels are mechanism words and are
 // deliberately NOT in `copy.ts`, which is the product surface's table.
 import React, { useEffect, useState } from 'react';
-import { FlatList, Modal, TouchableOpacity, View } from 'react-native';
+import { FlatList, Modal, StatusBar, TouchableOpacity, View } from 'react-native';
 import { SafeAreaProvider, useSafeAreaInsets } from 'react-native-safe-area-context';
 import { RADII, SPACE } from '../../design/tokens';
 // `@whim/contract` is a TYPE-ONLY import (design D6) — importing the zod schema VALUES would pull
@@ -35,6 +35,7 @@ import {
 import { Text } from '../ui/Text';
 import { useTokens } from '../ui/tokens';
 import { makeStyles } from '../ui/tokens-pure';
+import { statusBarStyleOver } from '../ui/status-bar-style';
 
 const LABELS = { title: 'Logs', close: 'Close', empty: 'Nothing logged yet', all: 'all' } as const;
 
@@ -46,7 +47,8 @@ export interface DevLogOverlayProps {
 }
 
 export default function DevLogOverlay({ visible, onClose, buffer = log.buffer }: Readonly<DevLogOverlayProps>) {
-  const s = styles(useTokens());
+  const t = useTokens();
+  const s = styles(t);
   const [channel, setChannel] = useState<Channel | typeof ALL_CHANNELS_FILTER>(DEFAULT_DEV_LOG_FILTER.channel);
   const [minLevel, setMinLevel] = useState<LogLevel>(DEFAULT_DEV_LOG_FILTER.minLevel);
   const [snapshot, setSnapshot] = useState<readonly DevLogRecord[]>([]);
@@ -65,6 +67,10 @@ export default function DevLogOverlay({ visible, onClose, buffer = log.buffer }:
   // window's own insets.
   return (
     <Modal visible={visible} animationType="fade" statusBarTranslucent navigationBarTranslucent onRequestClose={onClose}>
+      {/* The bar reads on the panel's own bg, like every shell screen (`shellFrame`), not on whatever
+          the panel opened over: DevProbe asks for light content, which stayed white on a light panel
+          (wbp-d8). Mounted with the panel only, so closing it hands the bar back to the screen. */}
+      {visible && <StatusBar barStyle={statusBarStyleOver(t.colors.bg)} />}
       <SafeAreaProvider>
         <InsetFrame>
             <View style={s.header}>

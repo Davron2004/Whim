@@ -30,7 +30,7 @@ import { createPersistentStore } from '../version-store';
 import { createMmkvBackend } from '../version-store/fs/mmkv-backend';
 import type { KVBackend } from '../version-store/fs/kv-fs';
 import { copyStorage, deleteStorage, hasSavedData, peekAppliedSchema } from '../storage-engine';
-import { ToastHost, useToast, type ToastApi } from '../ui/Toast';
+import { TOAST, ToastHost, useToast, type ToastApi } from '../ui/Toast';
 import { haptics } from '../haptics';
 import { Text } from '../ui/Text';
 import { useTokens, type ShellTokens } from '../ui/tokens';
@@ -60,7 +60,7 @@ import {
 import { APP_CONTEXT_DESCRIPTION_MAX_CHARS, buildGenerateRequest, buildRewriteAppContext } from './generation-request';
 import { seedFirstRun, SeedSpec } from './seed';
 import { COPY, LEGAL_COPY, changedTitle, crashFixWords, readyTitle } from './copy';
-import { ORB_DISC, ORB_TARGET, ORB_TARGET_EDGE } from './orb-geometry';
+import { ORB_DISC, ORB_TARGET, ORB_TARGET_EDGE, chromeInsetBottom } from './orb-geometry';
 import HomeScreen from './HomeScreen';
 import { MiniAppStage, type MiniAppLaunch } from './MiniAppView';
 import DevProbeScreen from './DevProbeScreen';
@@ -745,7 +745,10 @@ export default function LauncherRoot({
 function DevLogTools() {
   const { colors } = useTokens();
   const [open, setOpen] = useState(false);
-  // Above the navigation bar the app draws under (edge to edge on every Android version).
+  // Above the orb's footprint (either corner), the composer's band and a single-line toast standing
+  // on them, all over the navigation bar the app draws under (edge to edge on every Android
+  // version). It renders after the ToastHost, so where they overlap it would take the toast's
+  // touches, its Undo included.
   const bottomInset = useSafeAreaInsets().bottom;
   if (!devLogOverlayEnabled(__DEV__)) {
     return null;
@@ -755,7 +758,7 @@ function DevLogTools() {
       <TouchableOpacity
         onPress={() => setOpen(true)}
         accessibilityLabel={DEV_LOG_LABEL}
-        style={[styles.devLogBtn, { bottom: bottomInset + SPACE[4], backgroundColor: colors.fill }]}
+        style={[styles.devLogBtn, { bottom: chromeInsetBottom(bottomInset) + TOAST.minHeight + SPACE[4], backgroundColor: colors.fill }]}
       >
         <Text type="caption" color="text-2">{DEV_LOG_LABEL}</Text>
       </TouchableOpacity>
