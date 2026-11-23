@@ -2,7 +2,9 @@
 
 ## Purpose
 TBD - created by archiving change developer-observability. Update Purpose after archive.
+
 ## Requirements
+
 ### Requirement: Only an allowlisted projection of an error record leaves the device
 The device SHALL send a log record off the phone only as its projection onto a closed diagnostic
 shape, computed after the seam's redaction. The batch body SHALL carry exactly `osVersion`
@@ -10,8 +12,10 @@ beyond its records; platform, app version and build travel in the request envelo
 (`request-envelope`). Each record SHALL carry exactly `at`, `level`,
 `channel`, `message`, and a subset of the allowlisted fields `screen`, `errorClass`, `where`,
 `stage`, `reason`, `kind`, `status`, `errorCode`, `domain`, `readyState`,
-`observedRepairAttempts`, `requestId`, `route`, `count` and `stack`; every other field SHALL be
-dropped. String values SHALL be capped at 128 characters, except `stack`, which SHALL be capped at
+`observedRepairAttempts`, `requestId`, `route`, `count`, `stack`, `exposure` and `webview`;
+every other field SHALL be dropped. `exposure` and `webview` SHALL appear only on the bridge-exposure
+record, `exposure` SHALL match its closed grammar and `webview` SHALL be an engine name and major
+version only (`chrome-<n>` or `webkit`). String values SHALL be capped at 128 characters, except `stack`, which SHALL be capped at
 4 KB with its first line removed. `route` SHALL be a path only, never a URL with a host or query.
 A record originating in a mini-app SHALL NOT carry `stack` or any message text; its error name
 SHALL travel as `errorClass`, mapped onto a closed set of built-in JavaScript error names
@@ -46,10 +50,16 @@ app name, generated source, report note or stored user data SHALL appear in a pr
 - **WHEN** a generation ends in a failure whose sentence names screens from the user's plan (e.g. "repeated: Alice's Lisbon Tab")
 - **THEN** the uploaded record's `reason` is a closed code, and no word of the sentence appears in the body
 
+#### Scenario: Exposure fields outside the exposure record are dropped
+- **WHEN** an ordinary error record carries an `exposure` or `webview` field
+- **THEN** the projection carries neither
+
 ### Requirement: Error-level records are uploaded, batched, deduplicated and capped
 The diagnostics transport SHALL be a transport of the logging seam and SHALL forward only
-`error`-level records. It SHALL deduplicate by `(channel, message, errorClass, where)` within one
-app session, incrementing `count` on the retained record instead of adding another. It SHALL hold
+`error`-level records from the seam; the only non-error record it uploads is the `info`-level
+bridge-exposure record, which the host enqueues already projected. It SHALL deduplicate by
+`(channel, message, errorClass, where)` within one app session, and the bridge-exposure record by
+`(message, exposure, webview)`, incrementing `count` on the retained record instead of adding another. It SHALL hold
 at most 50 distinct records per session and SHALL drop records beyond that. It SHALL flush at 20
 pending records, every 30 seconds, and when the app moves to the background. Each flush SHALL be
 one `POST /v1/diagnostics` attempt with no retry; a failure SHALL be recorded in the ring buffer
@@ -195,3 +205,21 @@ The app SHALL reduce every stack frame's location to its file name plus line and
 - **WHEN** a trimmed release stack is symbolicated with the build's source map
 - **THEN** it resolves to the same source locations as before trimming
 
+### Requirement: Bridge-exposure results are uploaded under the error-details consent
+The host SHALL upload each distinct navigated-frame exposure result (`webview-message-provenance`) as one `info`-level `bridge-exposure` record carrying `exposure` and `webview`, through the same consent gate as error records, and the record MUST NOT carry a token, a URL, an app id or any mini-app data.
+
+#### Scenario: The exposure value uses a closed grammar
+- **WHEN** a result is projected
+- **THEN** `exposure` is `refused`, `timed-out` or `navigated:<visible>` (`<visible>` one of `none`, `android`, `ios`, `android+ios`), with `+canary` appended when the canary reached native code, and `webview` is `chrome-<major>` or `webkit`
+
+#### Scenario: One record per distinct result per session
+- **WHEN** four pool WebViews in one session each report `navigated:none` on `chrome-131`
+- **THEN** the session uploads one `bridge-exposure` record for that result with `count` 4
+
+#### Scenario: A changed result is a new record
+- **WHEN** a later page load in the same session reports `navigated:android+canary`
+- **THEN** it is uploaded as its own record, not merged into the earlier one
+
+#### Scenario: No consent, no exposure upload
+- **WHEN** the error-details switch is off, or no current consent grant exists, and an exposure result is recorded
+- **THEN** nothing is sent, and the result is not sent after consent or the switch is later turned on
