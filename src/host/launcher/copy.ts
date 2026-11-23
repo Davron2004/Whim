@@ -673,9 +673,9 @@ const HOSTING_SINCE_V1: readonly WideningId[] = ['role:hosting-providers', ...V1
 export const CONSENT_WHATS_NEW: Readonly<Record<string, Readonly<Record<number, ConsentWhatsNewLine>>>> = {
   en: {
     1: {
-      text: 'New: error details when something goes wrong, and checks by Apple or Google that requests come from the real Whim app. We may keep reports for up to 12 months, and usage records for up to 12 months after last use, instead of 90 days. We now also say that companies that run our servers, logs and email handle your requests, your phone ID, usage records, connection logs and reports; that we use your requests, usage records and connection logs to run Whim and keep it safe; and when we’d share data with authorities, because the law requires it or for fraud, security or safety problems, or with a new owner if Whim changes hands.',
+      text: 'New: error details and automatic app safety checks, and checks by Apple or Google that requests come from the real Whim app. We may keep reports for up to 12 months, and usage records for up to 12 months after last use, instead of 90 days. We now also say that companies that run our servers, logs and email handle your requests, your phone ID, usage records, connection logs and reports; that we use your requests, usage records and connection logs to run Whim and keep it safe; and when we’d share data with authorities, because the law requires it or for fraud, security or safety problems, or with a new owner if Whim changes hands.',
       covers: {
-        'category:error-details': 'error details when something goes wrong',
+        'category:error-details': 'error details and automatic app safety checks',
         'category:app-integrity': 'checks by Apple or Google that requests come from the real Whim app',
         'role:platform': 'checks by Apple or Google',
         'keep:reports': 'keep reports for up to 12 months',
@@ -694,9 +694,9 @@ export const CONSENT_WHATS_NEW: Readonly<Record<string, Readonly<Record<number, 
   },
   fr: {
     1: {
-      text: 'Nouveau\u00a0: les détails d’erreur quand quelque chose ne va pas, et les vérifications par Apple ou Google que les demandes proviennent de la véritable app Whim. Nous pouvons conserver les signalements jusqu’à 12 mois, et les registres d’utilisation jusqu’à 12 mois après la dernière utilisation, au lieu de 90 jours. Nous précisons aussi maintenant que des entreprises qui exploitent nos serveurs, nos journaux et nos courriels traitent vos demandes, l’identifiant de votre téléphone, les registres d’utilisation, les données de connexion et les signalements\u00a0; que nous utilisons vos demandes, les registres d’utilisation et les données de connexion pour faire fonctionner Whim et le garder sûr\u00a0; et dans quels cas nous communiquerions des renseignements aux autorités, parce que la loi l’exige ou pour des problèmes de fraude, de sécurité ou de sûreté, ou à un nouveau propriétaire si Whim change de mains.',
+      text: 'Nouveau\u00a0: les détails d’erreur et les contrôles de sécurité automatiques, et les vérifications par Apple ou Google que les demandes proviennent de la véritable app Whim. Nous pouvons conserver les signalements jusqu’à 12 mois, et les registres d’utilisation jusqu’à 12 mois après la dernière utilisation, au lieu de 90 jours. Nous précisons aussi maintenant que des entreprises qui exploitent nos serveurs, nos journaux et nos courriels traitent vos demandes, l’identifiant de votre téléphone, les registres d’utilisation, les données de connexion et les signalements\u00a0; que nous utilisons vos demandes, les registres d’utilisation et les données de connexion pour faire fonctionner Whim et le garder sûr\u00a0; et dans quels cas nous communiquerions des renseignements aux autorités, parce que la loi l’exige ou pour des problèmes de fraude, de sécurité ou de sûreté, ou à un nouveau propriétaire si Whim change de mains.',
       covers: {
-        'category:error-details': 'détails d’erreur quand quelque chose ne va pas',
+        'category:error-details': 'détails d’erreur et les contrôles de sécurité automatiques',
         'category:app-integrity': 'vérifications par Apple ou Google que les demandes proviennent de la véritable app Whim',
         'role:platform': 'vérifications par Apple ou Google',
         'keep:reports': 'conserver les signalements jusqu’à 12 mois',
