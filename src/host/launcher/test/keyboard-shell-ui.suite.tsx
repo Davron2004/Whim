@@ -1205,6 +1205,20 @@ export async function runKeyboardShellUiTests(h: Harness): Promise<void> {
     }
   });
 
+  await h.test('iOS: the Done bar’s in-tree host, which React Native can leave showing beside the field, is clear and lets taps through to the field (wbp-d3)', async () => {
+    await on(IOS, report(), async ({ tree }) => {
+      await draftLoaded();
+      const bars = doneBars(tree);
+      h.ok(bars.length > 0, 'the field has a Done bar');
+      for (const bar of bars) {
+        // A host left showing paints the bar's keyboard-wide fill over the field and takes its taps;
+        // at opacity 0 iOS neither draws it nor hit-tests it. The bar on the keyboard is a separate
+        // view, so its own fill stays (the scheme test above).
+        h.eq(flat(bar).opacity, 0, `the host of Done bar ${String(bar.props.nativeID)} is fully transparent`);
+      }
+    });
+  });
+
   await h.test('describe on iOS: Done, the footer’s empty space and a drag put the keyboard away without continuing', async () => {
     const s = spies();
     await on(IOS, compose(s.fn('continue'), s.fn('change')), async ({ tree }) => {
