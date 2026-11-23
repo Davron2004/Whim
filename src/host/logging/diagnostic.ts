@@ -33,9 +33,21 @@ export const DIAGNOSTIC_FIELDS = [
   'route',
   'count',
   'stack',
+  'exposure',
+  'webview',
 ] as const;
 
 type DiagnosticField = (typeof DIAGNOSTIC_FIELDS)[number];
+
+/** The message of the one record that may carry `exposure` and `webview`: a navigated-frame
+ *  exposure result (spec device-diagnostics "Bridge-exposure results are uploaded under the
+ *  error-details consent"). Logged on the host's channel at `info`. */
+export const BRIDGE_EXPOSURE_MESSAGE = 'bridge-exposure';
+
+/** The `exposure` grammar: `refused` | `timed-out` | `navigated:<visible>[+canary]`. */
+const EXPOSURE_GRAMMAR = /^(?:refused|timed-out|navigated:(?:none|android|ios|android\+ios)(?:\+canary)?)$/;
+/** The `webview` grammar: an engine name and major version only. */
+const WEBVIEW_GRAMMAR = /^(?:chrome-\d{1,4}|webkit)$/;
 
 /** Every string a projection carries is cut to this many characters (the contract's cap). */
 export const DIAGNOSTIC_STRING_MAX = 128;
@@ -128,6 +140,17 @@ function fromMiniApp(record: DevLogRecord): boolean {
   return !(typeof where === 'string' && HOST_SITES_ON_PAGE_CHANNEL.has(where));
 }
 
+/** Whether a record is the bridge-exposure record, the only one that may carry `exposure` and
+ *  `webview`. */
+function isBridgeExposure(record: { readonly level?: unknown; readonly channel?: unknown; readonly message?: unknown }): boolean {
+  return record.level === 'info' && record.channel === CHANNELS.app && record.message === BRIDGE_EXPOSURE_MESSAGE;
+}
+
+/** `value` when it is a string matching `grammar`, else `undefined`. */
+function inGrammar(value: unknown, grammar: RegExp): string | undefined {
+  return typeof value === 'string' && grammar.test(value) ? value : undefined;
+}
+
 function miniAppErrorClass(value: unknown): string {
   return typeof value === 'string' && BUILTIN_ERROR_NAMES.has(value) ? value : OTHER_ERROR_CLASS;
 }
@@ -136,7 +159,9 @@ function miniAppErrorClass(value: unknown): string {
  * Project a redacted seam record onto the diagnostic allowlist. Unknown fields are dropped,
  * strings capped, `route` reduced to a path, `stack` to its frames, and a `reason` outside
  * {@link DIAGNOSTIC_REASONS} dropped. A mini-app record keeps only
- * its site (`where`) and its class (`errorClass`, mapped onto the built-in names).
+ * its site (`where`) and its class (`errorClass`, mapped onto the built-in names). The
+ * bridge-exposure record keeps only `exposure` and `webview`, each in its grammar; every other
+ * record drops both.
  */
 export function toDiagnostic(record: DevLogRecord): DiagnosticRecord {
   const out: DiagnosticRecord = {
@@ -145,6 +170,7 @@ export function toDiagnostic(record: DevLogRecord): DiagnosticRecord {
     channel: capString(record.channel),
     message: capString(record.message),
   };
+  if (isBridgeExposure(record)) return withExposure(out, record.fields);
   if (fromMiniApp(record)) {
     const where = boundedValue(record.fields.where);
     if (where !== undefined) out.where = where;
@@ -153,15 +179,37 @@ export function toDiagnostic(record: DevLogRecord): DiagnosticRecord {
   }
   const projected: Partial<Record<DiagnosticField, string | number>> = {};
   for (const field of DIAGNOSTIC_FIELDS) {
-    const raw = record.fields[field];
-    let value: string | number | undefined;
-    if (field === 'route') value = pathOnly(raw);
-    else if (field === 'stack') value = framesOnly(raw);
-    else if (field === 'reason') value = closedReason(raw);
-    else value = boundedValue(raw);
+    const value = projectedField(field, record.fields[field]);
     if (value !== undefined) projected[field] = value;
   }
   return { ...out, ...projected } as DiagnosticRecord;
+}
+
+/** One allowlisted field of an ordinary record, as it may leave; `exposure` and `webview` never do. */
+function projectedField(field: DiagnosticField, raw: unknown): string | number | undefined {
+  if (field === 'route') return pathOnly(raw);
+  if (field === 'stack') return framesOnly(raw);
+  if (field === 'reason') return closedReason(raw);
+  if (field === 'exposure' || field === 'webview') return undefined;
+  return boundedValue(raw);
+}
+
+/** The bridge-exposure record's projection: its base fields, plus `exposure` and `webview` when
+ *  both are in their grammar. */
+function withExposure(base: DiagnosticRecord, fields: DevLogRecord['fields']): DiagnosticRecord {
+  const exposure = inGrammar(fields.exposure, EXPOSURE_GRAMMAR);
+  const webview = inGrammar(fields.webview, WEBVIEW_GRAMMAR);
+  return exposure !== undefined && webview !== undefined ? { ...base, exposure, webview } : base;
+}
+
+/**
+ * A navigated-frame exposure result as the record that is uploaded: `info`, on the host's channel,
+ * `bridge-exposure`, carrying only `exposure` and `webview`. `null` when `webview` is `null` (the
+ * page could not name its engine) or either value is outside its grammar: such a result is not sent.
+ */
+export function bridgeExposureDiagnostic(at: number, exposure: string, webview: string | null): DiagnosticRecord | null {
+  const projected = toDiagnostic({ at, level: 'info', channel: CHANNELS.app, message: BRIDGE_EXPOSURE_MESSAGE, fields: { exposure, webview } });
+  return projected.exposure !== undefined && projected.webview !== undefined ? projected : null;
 }
 
 const LEVELS: ReadonlySet<string> = new Set(['debug', 'info', 'warn', 'error']);
@@ -186,6 +234,9 @@ export function isDiagnosticRecord(value: unknown): value is DiagnosticRecord {
     if (key === 'stack') return typeof field === 'string' && field.length <= DIAGNOSTIC_STACK_MAX;
     if (key === 'route') return typeof field === 'string' && pathOnly(field) === field;
     if (key === 'reason') return closedReason(field) !== undefined;
+    if (key === 'exposure' || key === 'webview') {
+      return isBridgeExposure(record) && inGrammar(record.exposure, EXPOSURE_GRAMMAR) !== undefined && inGrammar(record.webview, WEBVIEW_GRAMMAR) !== undefined;
+    }
     return boundedValue(field) === field;
   });
 }

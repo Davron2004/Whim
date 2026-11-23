@@ -533,12 +533,19 @@ const DiagnosticString = z.string().max(128);
 /** An allowlisted diagnostic field's value: a bounded string or a finite number. */
 const DiagnosticValue = z.union([DiagnosticString, z.number().finite()]);
 
+/** The message of the one record that may carry `exposure` and `webview`: a navigated-frame
+ *  exposure result (device-diagnostics "Bridge-exposure results are uploaded under the
+ *  error-details consent"). */
+const BRIDGE_EXPOSURE_MESSAGE = 'bridge-exposure';
+
 /** One device error record, projected onto the closed allowlist (developer-observability D2,
  *  device-diagnostics "Only an allowlisted projection of an error record leaves the device").
  *  `.strict()`: a field outside the allowlist is refused, never dropped, so an old or tampered
  *  client cannot widen what the server logs. `route` is a path only — no host, no query, no
  *  fragment. `stack` is capped at 4 KB and never starts with the error's message line (the
- *  device drops it; the server cannot tell, so the cap is all it enforces). */
+ *  device drops it; the server cannot tell, so the cap is all it enforces). `exposure` (its closed
+ *  grammar) and `webview` (engine and major version only) travel together, and only on the
+ *  `info`-level bridge-exposure record. */
 export const DiagnosticRecord = z
   .object({
     at: z.number().finite(),
@@ -560,8 +567,22 @@ export const DiagnosticRecord = z
     route: DiagnosticString.regex(/^\/[^?#]*$/).optional(),
     count: DiagnosticValue.optional(),
     stack: z.string().max(4096).optional(),
+    exposure: z
+      .string()
+      .regex(/^(?:refused|timed-out|navigated:(?:none|android|ios|android\+ios)(?:\+canary)?)$/)
+      .optional(),
+    webview: z
+      .string()
+      .regex(/^(?:chrome-\d{1,4}|webkit)$/)
+      .optional(),
   })
-  .strict();
+  .strict()
+  .refine(
+    (r) =>
+      (r.exposure === undefined && r.webview === undefined) ||
+      (r.exposure !== undefined && r.webview !== undefined && r.level === 'info' && r.message === BRIDGE_EXPOSURE_MESSAGE),
+    { message: 'exposure and webview travel together, and only on the info-level bridge-exposure record' },
+  );
 export type DiagnosticRecord = z.infer<typeof DiagnosticRecord>;
 
 /** `POST /v1/diagnostics`'s body: the OS version and 1–50 records, nothing else. Platform, app

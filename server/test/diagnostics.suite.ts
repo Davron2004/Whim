@@ -17,6 +17,8 @@ import {
   PLATFORM_HEADER,
   type ApiError,
 } from '@whim/contract';
+import { exposureCode } from '../../src/host/launcher/runtime-message-auth';
+import { bridgeExposureDiagnostic } from '../../src/host/logging/diagnostic';
 import { createApp } from '../src/app';
 import { loadServerConfig, type ServerConfig } from '../src/config';
 import { createStubPipeline } from '../src/pipeline';
@@ -243,8 +245,49 @@ async function testDailyAllowances(): Promise<void> {
   }
 }
 
+/** The record the phone uploads for one exposure result, as the device's own projection makes it. */
+function exposureRecord(result: Parameters<typeof exposureCode>[0], count: number): Record<string, unknown> {
+  const projected = bridgeExposureDiagnostic(AT_2200_UTC - 1000, exposureCode(result), result.webview);
+  if (projected === null) throw new Error('setup: the device would not upload this result');
+  return { ...projected, count };
+}
+
+async function testExposureRecordsBecomeLogLines(): Promise<void> {
+  section('POST /v1/diagnostics — a bridge-exposure record is logged with its result; a malformed one is refused');
+
+  const h = harness();
+  const capture = captureLogs();
+  let accepted: Response;
+  let malformed: Response;
+  let onAnError: Response;
+  try {
+    accepted = await postBatch(h, [
+      exposureRecord({ outcome: 'navigated', visible: { android: true, ios: false }, canaryReachedNative: true, webview: 'chrome-131' }, 4),
+      exposureRecord({ outcome: 'refused', visible: { android: false, ios: false }, canaryReachedNative: false, webview: 'webkit' }, 1),
+    ]);
+    malformed = await postBatch(h, [{ ...exposureRecord({ outcome: 'timedOut', visible: { android: false, ios: false }, canaryReachedNative: false, webview: 'chrome-89' }, 1), exposure: 'navigated:everything' }]);
+    onAnError = await postBatch(h, [record('error', 'mini-app failed', { exposure: 'navigated:android', webview: 'chrome-131' })]);
+  } finally {
+    capture.stop();
+  }
+  eq('a batch of two bridge-exposure records → 204', accepted.status, 204);
+  eq(
+    '  ... each logged at info with its code, engine and count',
+    deviceLines(capture).map((l) => [l.level, l.msg, l.exposure, l.webview, l.count]),
+    [
+      [PINO_LEVEL.info, 'bridge-exposure', 'navigated:android+canary', 'chrome-131', 4],
+      [PINO_LEVEL.info, 'bridge-exposure', 'refused', 'webkit', 1],
+    ],
+  );
+  eq('an exposure outside the grammar → 400', [malformed.status, await errorCode(malformed)], [400, 'invalid_request']);
+  eq('an error record carrying an exposure → 400', [onAnError.status, await errorCode(onAnError)], [400, 'invalid_request']);
+  eq('only the accepted batch was logged', deviceLines(capture).length, 2);
+  h.close();
+}
+
 export async function runDiagnosticsTests(): Promise<void> {
   await testAcceptedRecordsBecomeLogLines();
+  await testExposureRecordsBecomeLogLines();
   await testRefusedBatchesLogNothing();
   await testDailyAllowances();
 }

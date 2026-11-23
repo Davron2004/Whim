@@ -357,7 +357,7 @@ export const COPY = {
   consentSentRequest: 'What you ask for: your description, your answers and the plan you approve',
   consentSentEdit: 'When you change an app: its name, code and description, and the layout of its data, never the data itself',
   consentSentDevice: 'An ID Whim makes for this phone, used for daily limits and usage totals.',
-  consentSentErrors: 'Error details when something goes wrong. They’re technical only, not what you typed or saved.',
+  consentSentErrors: 'Error details and automatic app safety checks. Technical only, never what you typed or saved.',
   consentWhyTitle: 'Why',
   consentWhy: 'To make your apps and run Whim: daily limits, stopping abuse, keeping costs in check, and finding and fixing problems.',
   consentWhoTitle: 'Who gets it',
@@ -395,7 +395,7 @@ export const COPY = {
   firstRunSentTitle: 'What’s sent, and who gets it',
   firstRunSentRequest: 'What you ask for, your answers and the plan you approve.',
   firstRunSentDevice: 'An ID Whim makes for this phone.',
-  firstRunSentErrors: 'Error details if something goes wrong.',
+  firstRunSentErrors: 'Error details and app safety checks.',
   firstRunWhoAnycognition: 'They go to AnyCognition, which makes Whim.',
   firstRunWhoHosting: 'Companies that host Whim for us handle them too.',
   firstRunWhoAi: 'The AI companies get what you ask for, your answers and the plan.',
@@ -472,7 +472,7 @@ export const COPY = {
   settingsAdvancedSectionTitle: 'Advanced',
   // Advanced (legal-surface-v2 design D10; spec privacy-settings).
   settingsErrorDetailsTitle: 'Send error details',
-  settingsErrorDetailsHint: 'When something goes wrong, Whim sends technical details so we can fix it. Not what you typed or saved.',
+  settingsErrorDetailsHint: 'Whim sends error details and app safety check results so we can fix problems. Never what you typed or saved.',
   // This phone: the ID sent as `x-whim-device`, and the confirm sheet before replacing it.
   settingsThisPhoneSection: 'This phone',
   settingsDeviceIdTitle: 'Phone ID',
@@ -813,7 +813,7 @@ const FRENCH: LegalCopyTable = {
     'Lorsque vous modifiez une app\u00a0: son nom, son code et sa description, et la structure de ses données, jamais les données elles-mêmes',
   consentSentDevice: 'Un identifiant que Whim crée pour ce téléphone, utilisé pour les limites quotidiennes et les totaux d’utilisation.',
   consentSentErrors:
-    'Des détails d’erreur quand quelque chose ne va pas. Ils sont uniquement techniques, jamais ce que vous avez tapé ou enregistré.',
+    'Des détails d’erreur et des contrôles de sécurité automatiques. Uniquement techniques, jamais ce que vous tapez ou enregistrez.',
   consentWhyTitle: 'Pourquoi',
   consentWhy:
     'Pour créer vos apps et faire fonctionner Whim\u00a0: limites quotidiennes, prévention des abus, maîtrise des coûts, et détection et correction des problèmes.',
@@ -839,7 +839,7 @@ const FRENCH: LegalCopyTable = {
   firstRunSentTitle: 'Ce qui est envoyé, et qui le reçoit',
   firstRunSentRequest: 'Ce que vous demandez, vos réponses et le plan que vous approuvez.',
   firstRunSentDevice: 'Un identifiant que Whim crée pour ce téléphone.',
-  firstRunSentErrors: 'Des détails d’erreur quand quelque chose ne va pas.',
+  firstRunSentErrors: 'Des détails d’erreur et des contrôles de sécurité.',
   firstRunWhoAnycognition: 'Ils vont à AnyCognition, qui conçoit Whim.',
   firstRunWhoHosting: 'Les entreprises qui hébergent Whim pour nous les traitent aussi.',
   firstRunWhoAi: 'Les entreprises d’IA reçoivent ce que vous demandez, vos réponses et le plan.',

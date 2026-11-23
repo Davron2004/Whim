@@ -29,6 +29,7 @@ import {
   WireAppRecord,
   WireEnvelope,
 } from '@whim/contract';
+import { exposureCode, type ExposureRecord } from '../../src/host/launcher/runtime-message-auth';
 import { check, eq, section } from './harness';
 
 const tinyRecord = {
@@ -90,6 +91,44 @@ function runDiagnosticsBatchTests(): void {
   check('a route carrying a query is rejected', !accepts(batch([{ ...FULL_DIAGNOSTIC, route: '/v1/generate?x=1' }])));
   check('an unknown level is rejected', !accepts(batch([{ ...FULL_DIAGNOSTIC, level: 'fatal' }])));
   check('a nested object in an allowlisted field is rejected', !accepts(batch([{ ...FULL_DIAGNOSTIC, reason: { detail: 'x' } }])));
+
+  // The bridge-exposure record (device-diagnostics "Bridge-exposure results are uploaded under the
+  // error-details consent"): every code the device's own coder produces, on both engine forms.
+  const hidden = { android: false, ios: false };
+  const results: ExposureRecord[] = [
+    { outcome: 'refused', visible: hidden, canaryReachedNative: true, webview: 'webkit' },
+    { outcome: 'timedOut', visible: hidden, canaryReachedNative: false, webview: 'chrome-89' },
+    ...[false, true].flatMap((android) =>
+      [false, true].flatMap((ios) => [false, true].map((canary): ExposureRecord => ({ outcome: 'navigated', visible: { android, ios }, canaryReachedNative: canary, webview: 'chrome-131' }))),
+    ),
+  ];
+  const exposure = (code: string, extra: Record<string, unknown> = {}): Record<string, unknown> => ({
+    at: 1_790_000_000_000,
+    level: 'info',
+    channel: 'whim',
+    message: 'bridge-exposure',
+    exposure: code,
+    webview: 'chrome-131',
+    count: 4,
+    ...extra,
+  });
+  const codes = [...new Set(results.map(exposureCode))];
+  eq('the fixtures reach all ten exposure codes', codes.length, 10);
+  for (const code of codes) {
+    for (const webview of ['chrome-131', 'webkit']) {
+      check(`a bridge-exposure record "${code}" on ${webview} parses`, accepts(batch([exposure(code, { webview })])));
+    }
+  }
+  for (const code of ['navigated:windows', 'refused+canary', 'navigated:none+canary+canary', 'Navigated:none', 'timedOut', 'navigated:android ', '']) {
+    check(`a malformed exposure ${JSON.stringify(code)} is rejected`, !accepts(batch([exposure(code)])));
+  }
+  for (const webview of ['unknown', 'chrome-131.0.6778.39', 'firefox-120', 'chrome-', 'chrome-12345', 'webkit-605']) {
+    check(`a webview ${JSON.stringify(webview)} that is not an engine and major version is rejected`, !accepts(batch([exposure('refused', { webview })])));
+  }
+  check('an exposure on an error record is rejected', !accepts(batch([{ ...FULL_DIAGNOSTIC, exposure: 'refused', webview: 'webkit' }])));
+  check('an exposure on an info record with another message is rejected', !accepts(batch([exposure('refused', { message: 'mini-app failed' })])));
+  check('an exposure without its webview is rejected', !accepts(batch([exposure('refused', { webview: undefined })])));
+  check('a webview without its exposure is rejected', !accepts(batch([exposure('refused', { exposure: undefined })])));
 
   check('a batch of 50 records parses', accepts(batch(Array.from({ length: 50 }, () => FULL_DIAGNOSTIC))));
   check('a batch of 51 records is rejected', !accepts(batch(Array.from({ length: 51 }, () => FULL_DIAGNOSTIC))));

@@ -12,6 +12,8 @@
  *   - "Error-level records are uploaded, batched, deduplicated and capped" (every scenario)
  *   - "Uploads require a current AI-data consent grant" (both scenarios, through the real gate)
  *   - "Uncaught host errors and fatal JS errors are captured" (the slot and both hooks)
+ *   - "Bridge-exposure results are uploaded under the error-details consent" (every scenario; the
+ *     results come from a real `RuntimeChannel` reading a signed report, coded by `exposureCode`)
  *
  * Runs under Node via `npm run launcher:test` (registered in `../../launcher/test/acceptance.ts`).
  */
@@ -29,8 +31,9 @@ import { getDeviceId } from '../../launcher/device-id';
 import { appInfoFrom } from '../../launcher/app-info';
 import { diagnosticsTarget } from '../../launcher/diagnostics-target';
 import { httpErrorFrom } from '../../launcher/transport-shared';
+import { EXPOSURE_CANARY, exposureCode, RuntimeChannel, type ExposureRecord } from '../../launcher/runtime-message-auth';
 import { CHANNELS } from '../channels';
-import { DIAGNOSTIC_FIELDS, toDiagnostic } from '../diagnostic';
+import { BRIDGE_EXPOSURE_MESSAGE, DIAGNOSTIC_FIELDS, bridgeExposureDiagnostic, toDiagnostic } from '../diagnostic';
 import { DIAGNOSTICS_PATH } from '../diagnostics';
 import type { DiagnosticsOptions, DiagnosticsTarget, PostDiagnostics } from '../diagnostics';
 import { installCrashCapture, renderCrashRecorder } from '../crash-capture';
@@ -116,6 +119,41 @@ function gatedSeam(kv: MapKVBackend, uploads: Upload[]): Seam {
     console: false,
     diagnostics: { target: diagnosticsTarget(kv, () => APP_INFO), osVersion: '15', post: recordingPost(uploads) },
   });
+}
+
+/** The token a test page load is handed: the bytes a secure source returned, as hex. */
+const PAGE_TOKEN = 'ab'.repeat(16);
+
+/** When the exposure canary reaches the channel relative to the page's report. */
+type CanaryArrival = 'none' | 'before' | 'after';
+
+/** The exposure records a real runtime channel records for one page load whose outer page reports
+ *  `payload`, in the order its exposure hook fires them (twice when the canary comes after). */
+function reportedExposure(payload: Record<string, unknown>, canary: CanaryArrival = 'none'): ExposureRecord[] {
+  const fired: ExposureRecord[] = [];
+  const channel = new RuntimeChannel({ randomHex: (bytes) => 'ab'.repeat(bytes) }, { exposure: (record) => fired.push(record) });
+  channel.deliver(() => undefined);
+  if (canary === 'before') channel.receive(EXPOSURE_CANARY);
+  channel.receive(`W1.${PAGE_TOKEN}.${JSON.stringify({ kind: 'bridge-exposure', payload })}`);
+  if (canary === 'after') channel.receive(EXPOSURE_CANARY);
+  return fired;
+}
+
+/** A navigated-frame report from the outer page. */
+function navigated(android: boolean, ios: boolean, webview: string): Record<string, unknown> {
+  return { outcome: 'navigated', visible: { android, ios }, webview };
+}
+
+/** What the RN exposure handler queues for one recorded result (`runtime-channel.ts#onExposure`). */
+function exposureUpload(record: ExposureRecord, at = 1_790_000_000_000): DiagnosticRecord | null {
+  return bridgeExposureDiagnostic(at, exposureCode(record), record.webview);
+}
+
+/** The one upload a recorded result queues; throws when the handler would queue nothing. */
+function queuedExposure(record: ExposureRecord): DiagnosticRecord {
+  const upload = exposureUpload(record);
+  if (upload === null) throw new Error(`fixture: ${exposureCode(record)} on ${String(record.webview)} queues no upload`);
+  return upload;
 }
 
 export async function runDiagnosticsTests(h: Harness): Promise<void> {
@@ -476,6 +514,143 @@ export async function runDiagnosticsTests(h: Harness): Promise<void> {
     h.eq(uploaded(uploads).map(r => r.kind), ['switch-on'], 'the next record goes, read fresh at the decision');
   });
 
+  // ── Bridge-exposure results are uploaded under the error-details consent ──────────────────
+
+  await h.test('exposure: a result is projected as one info-level bridge-exposure record carrying only its code and engine', () => {
+    const [record] = reportedExposure({ ...navigated(true, false, 'chrome-131'), url: 'https://evil.example/frame', appId: 'tip-splitter', token: PAGE_TOKEN }, 'before');
+    const upload = queuedExposure(record);
+    h.eq(
+      upload,
+      { at: 1_790_000_000_000, level: 'info', channel: CHANNELS.app, message: BRIDGE_EXPOSURE_MESSAGE, exposure: 'navigated:android+canary', webview: 'chrome-131' },
+      'the code, the engine, and the four base fields; nothing else from the report or the channel',
+    );
+    const body = JSON.stringify(upload);
+    h.ok(![PAGE_TOKEN, 'evil.example', 'http', 'tip-splitter', 'surface', 'canaryReachedNative'].some((leak) => body.includes(leak)), 'no token, URL, app id, surface or flag reaches the body');
+    h.ok(DiagnosticRecordSchema.safeParse(upload).success, 'and the server’s schema accepts it');
+  });
+
+  await h.test('exposure: every code the channel can produce is in the device’s grammar and the server’s', () => {
+    const payloads: [string, Record<string, unknown>][] = [
+      ['refused', { outcome: 'refused', visible: { android: false, ios: false }, webview: 'webkit' }],
+      ['timed out', { outcome: 'timedOut', visible: { android: false, ios: false }, webview: 'chrome-89' }],
+      ...[false, true].flatMap((android) => [false, true].map((ios): [string, Record<string, unknown>] => [`navigated android=${android} ios=${ios}`, navigated(android, ios, 'chrome-131')])),
+    ];
+    const codes: string[] = [];
+    for (const [what, payload] of payloads) {
+      for (const canary of ['none', 'before'] as const) {
+        const [record] = reportedExposure(payload, canary);
+        const upload = exposureUpload(record);
+        codes.push(exposureCode(record));
+        h.ok(upload !== null && upload.exposure === exposureCode(record), `${what}, canary ${canary}: the device projects ${exposureCode(record)}`);
+        h.ok(DiagnosticsBatchSchema.safeParse({ osVersion: '15', records: [upload] }).success, `${what}, canary ${canary}: the server accepts it`);
+      }
+    }
+    h.eq(
+      [...new Set(codes)].sort((a, b) => a.localeCompare(b)),
+      ['navigated:android', 'navigated:android+canary', 'navigated:android+ios', 'navigated:android+ios+canary', 'navigated:ios', 'navigated:ios+canary', 'navigated:none', 'navigated:none+canary', 'refused', 'timed-out'],
+      'the fixtures reach every code of the grammar',
+    );
+  });
+
+  await h.test('exposure: a page that could not name its engine is not uploaded', () => {
+    const [record] = reportedExposure(navigated(true, true, 'unknown'));
+    h.eq(record.webview, null, 'setup: the channel records an unnamed engine as null');
+    h.eq(exposureUpload(record), null, 'the handler queues nothing for it');
+  });
+
+  await h.test('projection: exposure fields outside the exposure record are dropped', () => {
+    const seam = createSeam({ console: false });
+    const smuggled = { exposure: 'navigated:android', webview: 'chrome-131', errorClass: 'TypeError' };
+    seam.error(CHANNELS.app, 'render failed', smuggled);
+    const ordinary = toDiagnostic(lastRecord(seam));
+    h.eq(ordinary.errorClass, 'TypeError', 'an ordinary error record keeps its own fields');
+    h.ok(!('exposure' in ordinary) && !('webview' in ordinary), 'but carries neither exposure nor webview');
+    seam.error(CHANNELS.app, BRIDGE_EXPOSURE_MESSAGE, smuggled);
+    const errorNamedLikeIt = toDiagnostic(lastRecord(seam));
+    h.ok(!('exposure' in errorNamedLikeIt) && !('webview' in errorNamedLikeIt), 'nor does an error-level record that borrows the bridge-exposure message');
+    seam.info(CHANNELS.page, BRIDGE_EXPOSURE_MESSAGE, smuggled);
+    const pageChannel = toDiagnostic(lastRecord(seam));
+    h.ok(!('exposure' in pageChannel) && !('webview' in pageChannel), 'nor one on the page channel');
+    seam.info(CHANNELS.app, BRIDGE_EXPOSURE_MESSAGE, { exposure: 'navigated:windows', webview: 'chrome-131.0.6778.39' });
+    const offGrammar = toDiagnostic(lastRecord(seam));
+    h.ok(!('exposure' in offGrammar) && !('webview' in offGrammar), 'and the exposure record itself drops values outside their grammar');
+  });
+
+  await h.test('exposure upload: four pool WebViews reporting the same result in one session are one record with count 4', async () => {
+    const uploads: Upload[] = [];
+    const seam = uploadingSeam(uploads);
+    for (let slot = 0; slot < 4; slot++) {
+      const [record] = reportedExposure(navigated(false, false, 'chrome-131'));
+      seam.diagnostics.enqueueDiagnostic(queuedExposure(record));
+    }
+    await seam.diagnostics.flush();
+    h.eq(uploaded(uploads).map((r) => [r.message, r.exposure, r.webview, r.count]), [[BRIDGE_EXPOSURE_MESSAGE, 'navigated:none', 'chrome-131', 4]], 'one record for the result, with count 4');
+    h.ok(DiagnosticsBatchSchema.safeParse(uploads[0]?.batch).success, 'in a body the server’s schema accepts');
+  });
+
+  await h.test('exposure upload: a changed result in the same session is its own record, not merged into the earlier one', async () => {
+    const uploads: Upload[] = [];
+    const seam = uploadingSeam(uploads);
+    const [first] = reportedExposure(navigated(false, false, 'chrome-131'));
+    seam.diagnostics.enqueueDiagnostic(queuedExposure(first));
+    await seam.diagnostics.flush();
+    const [later] = reportedExposure(navigated(true, false, 'chrome-131'), 'before');
+    seam.diagnostics.enqueueDiagnostic(queuedExposure(later));
+    const [otherEngine] = reportedExposure(navigated(false, false, 'chrome-89'));
+    seam.diagnostics.enqueueDiagnostic(queuedExposure(otherEngine));
+    await seam.diagnostics.flush();
+    h.eq(
+      uploaded(uploads).map((r) => [r.exposure, r.webview, r.count]),
+      [['navigated:none', 'chrome-131', 1], ['navigated:android+canary', 'chrome-131', 1], ['navigated:none', 'chrome-89', 1]],
+      'the later page load’s result and the other engine each upload as their own record',
+    );
+  });
+
+  await h.test('exposure upload: a canary arriving after the report changes the result, which uploads as a second record', async () => {
+    const uploads: Upload[] = [];
+    const seam = uploadingSeam(uploads);
+    const fired = reportedExposure(navigated(true, false, 'chrome-131'), 'after');
+    h.eq(fired.map(exposureCode), ['navigated:android', 'navigated:android+canary'], 'setup: the channel fires the result, then the changed one');
+    for (const record of fired) seam.diagnostics.enqueueDiagnostic(queuedExposure(record));
+    await seam.diagnostics.flush();
+    h.eq(uploaded(uploads).map((r) => [r.exposure, r.count]), [['navigated:android', 1], ['navigated:android+canary', 1]], 'both results are uploaded, each once');
+  });
+
+  await h.test('exposure upload: an error record and an exposure record never merge', async () => {
+    const uploads: Upload[] = [];
+    const seam = uploadingSeam(uploads);
+    seam.error(CHANNELS.app, BRIDGE_EXPOSURE_MESSAGE, {});
+    const [record] = reportedExposure(navigated(false, false, 'webkit'));
+    seam.diagnostics.enqueueDiagnostic(queuedExposure(record));
+    await seam.diagnostics.flush();
+    h.eq(uploaded(uploads).map((r) => [r.level, r.exposure ?? null, r.count]), [['error', null, 1], ['info', 'navigated:none', 1]], 'two records, each with its own count');
+  });
+
+  await h.test('exposure consent: with "Send error details" off, or no grant, a result is not sent, and not sent after the switch or a grant', async () => {
+    const [record] = reportedExposure(navigated(true, false, 'chrome-131'));
+    const switchedOff = consentedStore();
+    setErrorDetails(switchedOff, false);
+    const ungranted = new MapKVBackend();
+    acceptTerms(ungranted, '2026-09-24T00:00:00.000Z');
+    saveServerUrl(ungranted, SERVER);
+    for (const [what, kv, allow] of [
+      ['switch off', switchedOff, () => setErrorDetails(switchedOff, true)],
+      ['no grant', ungranted, () => grantConsent(ungranted, '2026-09-24T00:00:00.000Z')],
+    ] as const) {
+      const uploads: Upload[] = [];
+      const seam = gatedSeam(kv, uploads);
+      seam.diagnostics.enqueueDiagnostic(queuedExposure(record));
+      await seam.diagnostics.flush();
+      h.eq(uploads.length, 0, `${what}: nothing is sent`);
+      allow();
+      await seam.diagnostics.flush();
+      h.eq(uploads.length, 0, `${what}: the result was discarded, not queued for later`);
+      seam.diagnostics.enqueueDiagnostic(queuedExposure(record));
+      await seam.diagnostics.flush();
+      h.eq(uploaded(uploads).map((r) => r.exposure), ['navigated:android'], `${what}: a result recorded once it is allowed goes`);
+    }
+  });
+
   // ── Uncaught host errors and fatal JS errors are captured ─────────────────────────────────
 
   await h.test('crash capture: an uncaught error is an error record, then reaches the previous handler', () => {
@@ -627,6 +802,7 @@ export async function runDiagnosticsTests(h: Harness): Promise<void> {
       ['not JSON', '{"at":'],
       ['a field outside the allowlist', JSON.stringify({ at: 1, level: 'error', channel: 'whim', message: 'uncaught error', detail: 'Alice owes 40' })],
       ['a route that is a full URL', JSON.stringify({ at: 1, level: 'error', channel: 'whim', message: 'm', route: 'https://api.example/v1/x' })],
+      ['an error record carrying an exposure result', JSON.stringify({ at: 1, level: 'error', channel: 'whim', message: 'uncaught error', exposure: 'navigated:android', webview: 'chrome-131' })],
     ] as const) {
       const kv = consentedStore();
       kv.set('whim.fatal-error:v1', raw);
