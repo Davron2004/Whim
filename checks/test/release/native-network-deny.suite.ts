@@ -86,7 +86,7 @@ interface KotlinLiteralSpan {
   readonly text: string;
 }
 
-interface KotlinLexResult {
+export interface KotlinLexResult {
   readonly code: string;
   readonly strings: readonly KotlinLiteralSpan[];
 }
@@ -118,7 +118,7 @@ function nonCodeSpanAt(source: string, index: number): KotlinMaskedSpan | undefi
 }
 
 /** Preserve Kotlin code positions while blanking comments and literal bodies. */
-function lexKotlin(source: string): KotlinLexResult {
+export function lexKotlin(source: string): KotlinLexResult {
   const chars = source.split('');
   const strings: KotlinLiteralSpan[] = [];
   let index = 0;
@@ -135,7 +135,21 @@ function lexKotlin(source: string): KotlinLexResult {
   return { code: chars.join(''), strings };
 }
 
-function closingBraceIndex(source: string, start: number): number | undefined {
+/** Preserve positions while blanking only comments; string and character literals stay. */
+export function maskComments(source: string): string {
+  const chars = source.split('');
+  let index = 0;
+  while (index < source.length) {
+    const span = nonCodeSpanAt(source, index);
+    if (span && (source.startsWith('//', index) || source.startsWith('/*', index))) {
+      maskRange(chars, source, index, span.end);
+    }
+    index = span ? span.end : index + 1;
+  }
+  return chars.join('');
+}
+
+export function closingBraceIndex(source: string, start: number): number | undefined {
   if (start < 0) return undefined;
   let depth = 0;
   for (let index = start; index < source.length; index++) {
@@ -146,7 +160,7 @@ function closingBraceIndex(source: string, start: number): number | undefined {
   return undefined;
 }
 
-function methodBody(source: string, signature: RegExp): string | undefined {
+export function methodBody(source: string, signature: RegExp): string | undefined {
   const match = signature.exec(source);
   if (!match) return undefined;
   const start = source.indexOf('{', match.index);
@@ -172,7 +186,7 @@ function exactlyOnePackageIsChecked(application: KotlinLexResult): boolean {
   return application.code.slice(start + 1, end).trim() === '' && attachedStrings.length === 1;
 }
 
-function checkApplicationWiring(application: KotlinLexResult, findings: NativeNetworkDenyFinding[]): void {
+export function checkApplicationWiring(application: KotlinLexResult, findings: NativeNetworkDenyFinding[]): void {
   const { code } = application;
   if (!/PackageList\(this\)\.packages\.apply\s*\{/.test(code)) {
     addFinding(findings, ANDROID_MAIN_APPLICATION_PATH, 'the autolinked package list is not updated in place');
@@ -214,7 +228,10 @@ export function checkAndroidNativeNetworkDeny(root: string): NativeNetworkDenyFi
   if (!createBody) {
     addFinding(findings, ANDROID_NETWORK_DENY_MANAGER_PATH, 'createViewInstance override is missing');
   } else {
-    const createIndex = createBody.indexOf('super.createViewInstance(context)');
+    // The stock creation, or the library's two-argument path on a WebView subclass (webview-bridge-provenance D6).
+    const createIndex = createBody.search(
+      /val wrapper = (?:super\.createViewInstance\(context\)|\w+\.createViewInstance\(context, \w+\(context\)\))/,
+    );
     const denyIndex = createBody.indexOf('wrapper.webView.settings.blockNetworkLoads = true');
     const returnIndex = createBody.indexOf('return wrapper');
     if (!(createIndex >= 0 && denyIndex > createIndex && returnIndex > denyIndex)) {
@@ -378,7 +395,7 @@ function phaseHasFile(
   });
 }
 
-function targetPhaseHasFile(pbxproj: string, phaseType: string, filePath: string): boolean {
+export function targetPhaseHasFile(pbxproj: string, phaseType: string, filePath: string): boolean {
   const root = parsePbxproj(pbxproj);
   const objects = root.objects;
   if (!isPbxDict(objects)) return false;
