@@ -73,6 +73,22 @@ def enableProguardInReleaseBuilds = false
 def jscFlavor = 'io.github.react-native-community:jsc-android:2026004.+'
 
 /**
+ * The androidx.webkit version react-native-webview itself resolves, read the way its build.gradle
+ * does (`safeExtGet('webkitVersion')`: the root project's ext, else the library's gradle.properties),
+ * so MainFrameOnlyWebView compiles against the same artifact. The fallback is the library's current
+ * value (checks/test/release/webview-main-frame.suite.ts keeps the two equal).
+ */
+def rnWebViewProperties = new Properties()
+def rnWebViewPropertiesFile = file('../../node_modules/react-native-webview/android/gradle.properties')
+if (rnWebViewPropertiesFile.exists()) {
+    rnWebViewPropertiesFile.withInputStream { rnWebViewProperties.load(it) }
+}
+def whimWebkitVersion = rnWebViewProperties.getProperty('ReactNativeWebView_webkitVersion', '1.14.0')
+if (rootProject.ext.has('webkitVersion')) {
+    whimWebkitVersion = rootProject.ext.get('webkitVersion')
+}
+
+/**
  * Whim's native release file (design D1): identity, version and domain. Same grammar as
  * scripts/release/lib/native-config.ts: "KEY = VALUE" lines, "//" comments and blank lines only,
  * no #include, no $(...), all five keys exactly once. The TypeScript parser also checks each
@@ -145,6 +161,9 @@ android {
         versionCode whimVersionCode
         // A single-key assignment, never a map replacement (design D1).
         manifestPlaceholders.whimWebHost = "whim.${whimReleaseConfig.WHIM_DOMAIN}"
+        // webview-bridge-provenance D6: off everywhere; only the debug build type below can turn
+        // it on. checks/test/release/webview-main-frame.suite.ts fails the gate otherwise.
+        buildConfigField "boolean", "WHIM_FORCE_JS_INTERFACE_BRIDGE", "false"
     }
     signingConfigs {
         debug {
@@ -175,6 +194,10 @@ android {
     buildTypes {
         debug {
             signingConfig signingConfigs.debug
+            // `-PWHIM_FORCE_JS_INTERFACE_BRIDGE=true` makes MainFrameOnlyWebView take the
+            // addJavascriptInterface bridge, so the token-only fallback runs on an emulator.
+            buildConfigField("boolean", "WHIM_FORCE_JS_INTERFACE_BRIDGE",
+                project.findProperty('WHIM_FORCE_JS_INTERFACE_BRIDGE') == 'true' ? 'true' : 'false')
         }
         release {
             signingConfig signingConfigs.release
@@ -227,6 +250,9 @@ dependencies {
     implementation("com.facebook.react:react-android")
     // Play Age Signals (legal-surface-v2 D11): the store's age signal, read by WhimAgeSignalModule.
     implementation("com.google.android.play:age-signals:0.0.1-beta01")
+    // MainFrameOnlyWebView (webview-bridge-provenance D6) compiles against the web-message-listener
+    // API; react-native-webview already ships this artifact, but only on its own classpath.
+    implementation("androidx.webkit:webkit:${whimWebkitVersion}")
 
     if (hermesEnabled.toBoolean()) {
         implementation("com.facebook.react:hermes-android")

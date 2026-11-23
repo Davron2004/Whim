@@ -9,6 +9,8 @@ import { run as runStoreListing } from './store-listing.suite';
 import { run as runReleaseCli } from './release-cli.suite';
 import { run as runDomainLockstep } from './domain-lockstep.suite';
 import { run as runNativeNetworkDeny } from './native-network-deny.suite';
+import { run as runWebviewMainFrame } from './webview-main-frame.suite';
+import { run as runSecureRandom } from './secure-random.suite';
 import { run as runDisclosure } from './disclosure.suite';
 import { run as runSourceMaps } from './source-maps.suite';
 import { run as runUpgradeCheck } from './upgrade-check.suite';
@@ -25,6 +27,8 @@ export async function runReleaseSuites(): Promise<void> {
   await runReleaseCli();
   await runDomainLockstep();
   await runNativeNetworkDeny();
+  await runWebviewMainFrame();
+  await runSecureRandom();
   await runDisclosure();
   await runSourceMaps();
   await runUpgradeCheck();
