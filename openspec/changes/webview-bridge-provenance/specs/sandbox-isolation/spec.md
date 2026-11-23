@@ -1,7 +1,7 @@
 ## ADDED Requirements
 
 ### Requirement: The mini-app frame holds no native bridge object
-The mini-app frame SHALL hold no native message-bridge object reachable by app code other than the loader's transport stub: neutralization MUST remove any native `ReactNativeWebView` and `webkit.messageHandlers.ReactNativeWebView` present in the frame before any other runtime script runs, and counted `reach` probes MUST fail containment if app code can still reach one.
+The mini-app frame SHALL hold no native message-bridge object reachable by app code other than the loader's transport stub: neutralization MUST remove any native `ReactNativeWebView` and every `webkit.messageHandlers` entry present in the frame before any other runtime script runs, and counted `reach` probes MUST fail containment if app code can still reach one.
 
 #### Scenario: A native bridge injected into the frame is removed
 - **WHEN** the platform has put a native `ReactNativeWebView` object into the mini-app frame before the runtime's scripts run
@@ -11,9 +11,9 @@ The mini-app frame SHALL hold no native message-bridge object reachable by app c
 - **WHEN** a native bridge object in the frame cannot be removed or shadowed (for example a non-configurable, non-writable property), or one stays reachable through the window's prototype chain
 - **THEN** the corresponding `reach` probe fails and the verdict reports `contained: false`
 
-#### Scenario: The iOS message handler is unreachable
-- **WHEN** app code reads `window.webkit.messageHandlers.ReactNativeWebView`
-- **THEN** it obtains nothing it can post through, and the `reach` probe for it passes; where the handler cannot be made unreachable, that probe fails
+#### Scenario: Every iOS message handler is unreachable
+- **WHEN** app code reads `window.webkit.messageHandlers` or any entry on it (`ReactNativeWebView`, `ReactNativeHistoryShim`, any other)
+- **THEN** it obtains nothing it can post through, and the `reach` probe "webkit.messageHandlers unreachable" passes; where the reach cannot be removed, that probe fails
 
 #### Scenario: App code cannot uncover a removed bridge
 - **WHEN** app code deletes or replaces `window.ReactNativeWebView` and then reads it again, or walks the window's prototypes for it

@@ -42,10 +42,26 @@ Every node/npm command and every gate runs under the RSS watchdog. Device work (
   - handoff: handoff/bridge-record.md
 - writes-contract: handoff/page-envelope.md (the `auth`/`warm` control calls and when they are accepted, the exact envelope grammar, the full list of signed message kinds, the `bridge-exposure` payload, the canary constant, the fixture's id and what its forged frames carry)
 
+## chain-7: native-secure-random
+
+- tasks: 8.1–8.3 (8.3 by a runner)
+- rationale: the token needs an OS secure random source and Hermes has none (design D1). A tiny first-party TurboModule, both platforms plus its static check, before chain-3 consumes it.
+- files:
+  - new `src/native/NativeWhimRandom.ts`
+  - new `android/app/src/main/java/com/whim/random/` (module + package), `MainApplication.kt` (one registration)
+  - new `ios/Whim/WhimRandomModule.mm`, `ios/Whim.xcodeproj/project.pbxproj`
+  - codegen config in `package.json` if the `WhimHaptics` pattern needs it
+  - new `checks/test/release/secure-random.suite.ts` and its registration in `checks/test/release/index.ts`
+- reads:
+  - design.md D1
+  - the `WhimHaptics` module files as the pattern
+  - handoff: none
+- writes-contract: handoff/secure-random.md (the JS spec's exact import path and signature, failure semantics, how the Node test mock should stub it)
+
 ## chain-3: host-message-auth
 
 - tasks: 3.1–3.6
-- after: chain-2
+- after: chain-2, chain-7
 - rationale: every RN consumer of runtime-page messages, the token lifecycle and the test suites that feed `onMessage` share one seam: the verifier at the head of each consumer.
 - files:
   - new `src/host/launcher/runtime-message-auth.ts`
@@ -55,10 +71,10 @@ Every node/npm command and every gate runs under the RSS watchdog. Device work (
   - the six existing suites named in 3.5
   - new `src/host/launcher/test/runtime-message-auth-ui.suite.tsx` and its unit suite
 - reads:
-  - specs/webview-message-provenance/spec.md §"Each page load of a hosting WebView has its own secret token" and §"RN drops every unsigned message before reading it"
+  - specs/webview-message-provenance/spec.md §"Each hosting WebView instance has its own secret token" and §"RN drops every unsigned message before reading it"
   - design.md D1 (host half), D2, D5 (RN record), D7 (host suite)
   - research.md Part A §Current behavior (RN parse), §Pattern census, §Risks (test list)
-  - handoff: handoff/page-envelope.md
+  - handoff: handoff/page-envelope.md, handoff/secure-random.md
 - writes-contract: handoff/host-auth.md (where the token is minted and delivered, the drop counter and exposure record and where DevProbeScreen shows them, the signed-frame test helper)
 
 ## chain-4: native-main-frame-filter
