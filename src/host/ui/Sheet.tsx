@@ -570,7 +570,6 @@ function useCardReveal({ grown, shown, toward }: SheetMotion, anchored: boolean,
         if (finished) scheduleOnRN(grew);
       });
     },
-    [anchored, grew],
   );
 }
 
@@ -822,7 +821,6 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
     (landed, before) => {
       if (landed && before !== true) exitEnded(motion.ended, onSettled);
     },
-    [closing, motion, frame, place, onSettled],
   );
   // While it grows out of its place the card is not seen yet, and a view that is not seen takes no
   // touch, so the plate, the shape that is seen, takes the same drag.

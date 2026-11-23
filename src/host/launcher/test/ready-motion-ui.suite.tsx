@@ -288,7 +288,7 @@ export async function runReadyMotionUiTests(h: Harness): Promise<void> {
     h.eq(
       await play(true),
       { flare: false, rises: 0, waits: [], ember: 1, tile: [0, 1], texts: unseen, plainFades: 0 },
-      'on: the ember and the whole tile cross-fade, the words fading in with them, every fade the reduced one the root ReducedMotionConfig plays; nothing flares, rises or waits',
+      'on: the ember and the whole tile cross-fade, the words fading in with them, every fade the reduced one Reanimated plays under Reduce Motion; nothing flares, rises or waits',
     );
   });
 
@@ -376,7 +376,7 @@ export async function runReadyMotionUiTests(h: Harness): Promise<void> {
     // The light at its own opacity for the run's activity, 0.5 here (the reduced light burns as at 1).
     const lit = (on: boolean) => [ambientOpacity(on ? 1 : 0.5), false, 1];
     h.eq(await play(false), { first: [whole, whole, whole, lit(false)], fades: 1, gone: 0 }, 'off: on the first frame of the travel the title, the words, a step and the light are all still seen, in place; one fade-out takes them, and once it and the travel end the page has gone');
-    h.eq(await play(true), { first: [whole, whole, whole, lit(true)], fades: 1, gone: 0 }, 'on: the same, over the fade the root ReducedMotionConfig plays');
+    h.eq(await play(true), { first: [whole, whole, whole, lit(true)], fades: 1, gone: 0 }, 'on: the same, over the fade Reanimated plays under Reduce Motion');
   });
 
   await h.test('Making → Ready: the travelling ember is drawn in the light the Making page’s ember had as it set out, part way along its smoothing, and Ready’s ember flares in that same light', async () => {

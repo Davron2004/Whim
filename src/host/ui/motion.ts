@@ -15,8 +15,8 @@ import {
 } from 'react-native-reanimated';
 import { PRESS_SCALE, REDUCED_PRESS, springConfig, timingOf, type PressKind, type ShellTokens, type TimingName } from './tokens-pure';
 
-/** A token timing as Reanimated config. A reduced-motion replacement passes `reduced`, so the root
- *  `ReducedMotionConfig` doesn't skip the very fade that stands in for the motion. */
+/** A token timing as Reanimated config. A reduced-motion replacement passes `reduced`, so Reanimated's
+ *  OS Reduce Motion default doesn't skip the very fade that stands in for the motion. */
 export function timing(name: TimingName, reduced = false) {
   const { duration, bezier } = timingOf(name);
   return {

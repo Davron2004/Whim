@@ -72,8 +72,8 @@ const RISE = 8;
 const SMOOTH = springConfig('smooth');
 const FADE_IN = timingOf('fadeIn');
 /** M8: questions landing over their skeleton, and M25: Save and Cancel under a row grown into its
- *  text area, fade in on `fade-in`. The questions' fade is itself the Reduce Motion form, so the root
- *  `ReducedMotionConfig` must not skip it. */
+ *  text area, fade in on `fade-in`. The questions' fade is itself the Reduce Motion form, so Reanimated's
+ *  OS Reduce Motion default must not skip it. */
 const FADES_IN = FadeIn.duration(FADE_IN.duration).easing(Easing.bezier(...FADE_IN.bezier));
 const QUESTION_IN = FADES_IN.reduceMotion(ReduceMotion.Never);
 

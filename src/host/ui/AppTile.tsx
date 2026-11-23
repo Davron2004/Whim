@@ -93,7 +93,7 @@ const MORPH = springConfig('morph');
 
 /** M18: when a tile leaves or comes back, its neighbours reflow on `smooth`, a Reanimated layout
  *  transition (system.md §4.3 rule 4); under Reduce Motion they cross-fade in place instead, over the
- *  160 ms `fade-in`, which the root `ReducedMotionConfig` must not skip. */
+ *  160 ms `fade-in`, which Reanimated's OS Reduce Motion default must not skip. */
 export const REFLOW = LinearTransition.springify().mass(SMOOTH.mass).stiffness(SMOOTH.stiffness).damping(SMOOTH.damping);
 export const REFLOW_REDUCED = FadingTransition.duration(timingOf('fadeIn').duration).reduceMotion(ReduceMotion.Never);
 const reflowOf = (reflows: boolean, reduced: boolean) => {

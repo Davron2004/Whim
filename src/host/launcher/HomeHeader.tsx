@@ -4,8 +4,8 @@
  * build offers one. Shared by Home and its loading skeleton, so the title never jumps when the apps
  * arrive.
  */
-import React from 'react';
-import { Pressable, View } from 'react-native';
+import React, { useRef } from 'react';
+import { Pressable, View, type GestureResponderEvent } from 'react-native';
 import { LAYOUT, SPACE } from '../../design/tokens';
 import { IconButton } from '../ui/IconButton';
 import { Text } from '../ui/Text';
@@ -41,9 +41,27 @@ const settingsButton = (onSettings: () => void) => (
 export function HomeHeader({ onSettings, onOpenDevProbe }: Readonly<HomeHeaderProps>) {
   const t = useTokens();
   const s = styles(t);
+  // The long-press only arms the probe; it opens when the finger lifts. Navigating while the finger
+  // is still down unmounts the Pressable holding the responder, and the release (with the next tap)
+  // is lost. A press-out also comes from sliding off the title or losing the responder, with the
+  // finger still down (`touches` not empty): that disarms without opening.
+  const devProbeArmed = useRef(false);
+  const armDevProbe = () => {
+    devProbeArmed.current = true;
+  };
+  const openArmedDevProbe = (e: GestureResponderEvent) => {
+    const armed = devProbeArmed.current;
+    devProbeArmed.current = false;
+    if (armed && e.nativeEvent.touches.length === 0) onOpenDevProbe?.();
+  };
   return (
     <View style={s.row}>
-      <Pressable style={s.title} onLongPress={onOpenDevProbe} accessible={false}>
+      <Pressable
+        style={s.title}
+        onLongPress={onOpenDevProbe ? armDevProbe : undefined}
+        onPressOut={openArmedDevProbe}
+        accessible={false}
+      >
         <Text type="largeTitle" numberOfLines={1}>
           {COPY.homeTitle}
         </Text>

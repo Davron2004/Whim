@@ -63,9 +63,9 @@ export function visibleRecords(
   return kept.reverse();
 }
 
-/** A record's timestamp as `HH:MM:SS.mmm`, in UTC so two devices' logs line up. */
+/** A record's timestamp as `HH:MM:SS.mmm UTC`: in UTC so two devices' logs line up, and marked so it is not read as local time. */
 export function formatRecordTime(at: number): string {
-  return new Date(at).toISOString().slice(11, 23);
+  return `${new Date(at).toISOString().slice(11, 23)} UTC`;
 }
 
 /** A record's structured fields as one readable line; `''` when there are none. */

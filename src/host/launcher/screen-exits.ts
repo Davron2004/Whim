@@ -41,13 +41,14 @@ export const SCREEN_EXITS: Readonly<Record<ScreenKind, { back: 'root' | 'mini-ap
 /**
  * The root frame's safe-area edges for a screen kind (design D10; spec launcher-screen-exits
  * "Controls at the bottom of a screen clear the bottom system area"). A running mini-app (`app`)
- * keeps its full-height frame and applies the bottom inset itself (the orb, its sheets); the
- * developer probe (`dev`) applies its own `SafeAreaView`. Every other kind gets both edges so an
+ * keeps its full-height frame and applies the bottom inset itself (the orb, its sheets). The
+ * developer probe (`dev`) gets none: it applies its own safe area on its own dark background, so no
+ * strip of the shell's background shows above it. Every other kind gets both edges so an
  * in-flow control anchored to the bottom is never drawn under the home indicator or a navigation
  * bar. A screen on the native stack (`NativeStack.tsx`) gets none: the stack lays its header out
  * under the status bar itself, and each of its screens applies the edges its own header leaves.
  */
 export function frameEdgesFor(kind: ScreenKind, onNativeStack: boolean): readonly ('top' | 'bottom')[] {
-  if (onNativeStack) return [];
-  return kind === 'app' || kind === 'dev' ? ['top'] : ['top', 'bottom'];
+  if (onNativeStack || kind === 'dev') return [];
+  return kind === 'app' ? ['top'] : ['top', 'bottom'];
 }

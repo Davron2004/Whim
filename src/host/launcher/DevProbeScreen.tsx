@@ -8,7 +8,8 @@
 // SAME useMiniAppHost loop the product MiniAppView uses, so realm + dispatcher are always bound
 // (the cap-intruder lesson) by construction.
 import React, { useMemo, useState } from 'react';
-import { SafeAreaView, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { ScrollView, StatusBar, StyleSheet, Text, TouchableOpacity, View } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView } from '../webview';
 import { log } from '../logging';
 import { logWebViewError } from './webview-error';
@@ -35,6 +36,7 @@ export default function DevProbeScreen({ onExit }: Readonly<DevProbeScreenProps>
 
   return (
     <SafeAreaView style={styles.root}>
+      <StatusBar barStyle="light-content" />
       <View style={styles.bar}>
         <View style={styles.titleRow}>
           <TouchableOpacity onPress={host.exit} style={styles.backBtn}>
@@ -42,6 +44,19 @@ export default function DevProbeScreen({ onExit }: Readonly<DevProbeScreenProps>
           </TouchableOpacity>
           <Text style={styles.title}>Dev probe — containment + bridge</Text>
         </View>
+        {/* The fixture buttons sit right under the title, above every status line: the lines grow and
+            wrap as the verdict, the bridge record and the exposure result arrive, and nothing that
+            grows may move a button out from under a tap. */}
+        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.btnRow}>
+          {buttons.map((name) => {
+            const fixture = devProbeFixture(name);
+            return (
+              <TouchableOpacity key={name} style={styles.btn} onPress={() => host.deliverBySource(fixture.record, fixture.source)}>
+                <Text style={styles.btnText}>{name}</Text>
+              </TouchableOpacity>
+            );
+          })}
+        </ScrollView>
         <View style={styles.statusRow}>
           <Text style={[styles.badge, { color: verdictColor }]}>{verdictText} {s.probesFrac}</Text>
           <Text style={styles.meta}>paint {s.paintMs == null ? '—' : s.paintMs + 'ms'} · gen {s.generation ?? '—'}</Text>
@@ -57,16 +72,6 @@ export default function DevProbeScreen({ onExit }: Readonly<DevProbeScreenProps>
         <Text style={styles.meta}>
           bridge: {bridgeText(s.bridge)} · dropped: {runtime.dropped} · exposure: {exposureText(runtime)}
         </Text>
-        <ScrollView horizontal showsHorizontalScrollIndicator={false} contentContainerStyle={styles.btnRow}>
-          {buttons.map((name) => {
-            const fixture = devProbeFixture(name);
-            return (
-              <TouchableOpacity key={name} style={styles.btn} onPress={() => host.deliverBySource(fixture.record, fixture.source)}>
-                <Text style={styles.btnText}>{name}</Text>
-              </TouchableOpacity>
-            );
-          })}
-        </ScrollView>
       </View>
       <WebView
         ref={host.webRef}

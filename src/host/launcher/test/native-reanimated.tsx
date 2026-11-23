@@ -727,11 +727,14 @@ function track<T>(prepare: () => T): [T, Set<SharedValue<unknown>>] {
 
 /** `prepare` runs once the component mounts and again, synchronously, each time a shared value it
  *  read is assigned; every run hands `react` its result and the previous one (null the first time),
- *  as Reanimated's mapper does. The latest `prepare` and `react` are used. When `deps` change,
- *  Reanimated starts a new mapper (hook/useAnimatedReaction.ts), which first runs on the next frame,
- *  with the values that frame moves: here it starts listening to what the new `prepare` reads and runs
- *  as one of them is next assigned, `previous` kept (Reanimated keeps it in a shared value). */
-export function useAnimatedReaction<T>(prepare: () => T, react: (current: T, previous: T | null) => void, deps: readonly unknown[] = []): void {
+ *  as Reanimated's mapper does. The latest `prepare` and `react` are used. On native Reanimated takes
+ *  no deps (useAnimatedReaction.native.ts ignores them, with a warning): it keys the mapper by the
+ *  worklets' closures, and starts a new one when a captured value changes
+ *  (useAnimatedReactionCommon.ts), which first runs on the next frame, with the values that frame
+ *  moves. A closure is invisible here, so every commit counts as a change: the reaction starts
+ *  listening to what the current `prepare` reads and runs as one of them is next assigned, `previous`
+ *  kept (Reanimated keeps it in a shared value). */
+export function useAnimatedReaction<T>(prepare: () => T, react: (current: T, previous: T | null) => void): void {
   const latest = React.useRef({ prepare, react });
   latest.current = { prepare, react };
   const previous = React.useRef<T | null>(null);
@@ -753,8 +756,7 @@ export function useAnimatedReaction<T>(prepare: () => T, react: (current: T, pre
     else run();
     started.current = true;
     return () => { for (const stop of stops) stop(); };
-    // eslint-disable-next-line react-hooks/exhaustive-deps -- the caller's deps, as Reanimated takes them
-  }, deps);
+  });
 }
 
 /** What `measure` reports for any mounted view; a test sets the rect it needs. */
@@ -815,7 +817,7 @@ export const LinearTransition = layoutBuilder('LinearTransition', []);
 export const FadingTransition = layoutBuilder('FadingTransition', []);
 
 /** What a layout animation does on the phone: under the OS Reduce Motion setting Reanimated skips
- *  every animation not marked `ReduceMotion.Never` (App.tsx mounts `ReducedMotionConfig` System), so
+ *  every animation not marked `ReduceMotion.Never` (its default, `ReduceMotion.System`), so
  *  the view lands at once — null; otherwise the animation itself. */
 export function playedUnder(animation: unknown, reduceMotion: boolean): LayoutAnimation | null {
   if (!isLayoutAnimation(animation)) return null;
