@@ -877,11 +877,17 @@ export function KeyboardTextInput({
 const DONE_LABEL_MAX_SCALE = 1.3;
 
 /** The iOS keyboard's Done bar: a `surface` strip over the keyboard, in the scheme the shell is in,
- *  with a `separator` hairline and Done in `text`. */
+ *  with a `separator` hairline and Done in `text`.
+ *
+ *  The bar itself moves onto the keyboard, but React Native also leaves a host view where the bar
+ *  sits in the tree, beside the field. That view is meant to stay hidden, yet RN 0.88's first layout
+ *  of it shows it again, so it painted a keyboard-wide `surface` box over the field and took the
+ *  field's taps until some later prop change hid it (wbp-d3). `doneBarHost` keeps that box clear and
+ *  out of hit-testing; the bar on the keyboard is a separate view and keeps its look. */
 function DoneBar({ nativeID }: Readonly<{ nativeID: string }>) {
   const t = useTokens();
   return (
-    <InputAccessoryView nativeID={nativeID} backgroundColor={t.colors.surface}>
+    <InputAccessoryView nativeID={nativeID} backgroundColor={t.colors.surface} style={styles.doneBarHost}>
       <View style={[styles.doneBar, { borderTopColor: t.colors.separator }]}>
         <TouchableOpacity onPress={dismissKeyboard} accessibilityRole="button" hitSlop={10}>
           <Text style={[styles.doneLabel, { color: t.colors.text }]} maxFontSizeMultiplier={DONE_LABEL_MAX_SCALE}>
@@ -904,6 +910,8 @@ const styles = StyleSheet.create({
   // Bottom action area). A sheet spaces its own actions (`ReportPage`'s actions pad themselves).
   footer: { paddingTop: LAYOUT.actionAreaTop },
   naturalLineHeight: { lineHeight: undefined },
+  /** See `DoneBar`: the in-tree host of the keyboard's bar, never seen or touched. */
+  doneBarHost: { opacity: 0 },
   doneBar: {
     height: DONE_BAR_HEIGHT,
     flexDirection: 'row',
