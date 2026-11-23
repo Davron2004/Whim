@@ -91,6 +91,21 @@
   // CONSTRAINT #3: snapshot the genuine probe fn before any untrusted code can overwrite it.
   const trustedRunProbes = (typeof __whimRunProbes === 'function') ? __whimRunProbes : null;
 
+  // Neutralization's native-bridge record (neutralize.js): which native bridges were in this frame
+  // when the runtime started and whether they were removed. Captured here and the transient global
+  // erased, so the verdict's `bridge` field comes from this closure, never from anything app code
+  // can write. A record that is missing or not neutralize's frozen one reports as null.
+  const bridgeRecordDescriptor = Object.getOwnPropertyDescriptor(window, '__WHIM_BRIDGE_RECORD__');
+  const bridgeRecord = (
+    bridgeRecordDescriptor &&
+    bridgeRecordDescriptor.writable === false &&
+    bridgeRecordDescriptor.configurable === true &&
+    bridgeRecordDescriptor.value !== null &&
+    typeof bridgeRecordDescriptor.value === 'object' &&
+    Object.isFrozen(bridgeRecordDescriptor.value)
+  ) ? bridgeRecordDescriptor.value : null;
+  try { delete window.__WHIM_BRIDGE_RECORD__; } catch (e) {}
+
   // CONSTRAINT #4: the head of every authenticated frame, `{"__whimHarness":true,"nonce":"…","kind":`,
   // built once from the host's init frame (which arrives before any app code runs) and kept ONLY
   // in this closure. The nonce exists nowhere else, and frames are assembled by concatenation, so
@@ -104,9 +119,14 @@
   // can't tell it isn't the native bridge, and the iframe never holds one. UI events from the
   // SDK (and a forgeable spoof from a malicious bundle) both ride this — the host MUST treat
   // all inbound frames as untrusted data and authenticate by nonce (constraint #4).
-  window.ReactNativeWebView = {
+  // neutralize.js already removed any native bridge the platform put here. If one could not be
+  // removed (a non-writable property), the assignment fails without aborting the loader, and the
+  // `reach` probe "frame bridge is the loader stub" reports the frame as not contained. The stub's
+  // identity is kept in this closure for that probe.
+  const transportStub = {
     postMessage: function (s) { try { apply(parentPost, PARENT, [String(s), '*']); } catch (e) {} },
   };
+  try { window.ReactNativeWebView = transportStub; } catch (e) {}
 
   // ── nav-depth seam anchor (launcher-shell / #5 D4 — consumed by SDK navigation) ────────
   // The back-navigation contract rides THIS same one-way transport (no new capability):
@@ -282,11 +302,13 @@
         // CONSTRAINT #3: call the CLOSURE-CAPTURED probe fn, never window.__whimRunProbes, and
         // settle it through the captured `then`, so app code never holds the callbacks below.
         if (!trustedRunProbes) { post('error', { where: 'probes', message: 'trusted probe fn missing' }); return; }
-        apply(promiseThen, trustedRunProbes(), [
+        apply(promiseThen, trustedRunProbes({ stub: transportStub }), [
           function (r) {
             const verdict = plainCopy(r);
             if (verdict !== null && typeof verdict === 'object') {
               defineOwn(verdict, 'generation', { __proto__: null, value: gen, writable: true, enumerable: true, configurable: true });
+              // A side field like t7: reported, never counted in `total` or `contained`.
+              defineOwn(verdict, 'bridge', { __proto__: null, value: plainCopy(bridgeRecord), writable: true, enumerable: true, configurable: true });
             }
             post('probes', verdict);
           },

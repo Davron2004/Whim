@@ -25,6 +25,116 @@
 (function neutralizeForbiddenGlobals() {
   'use strict';
 
+  // ── Native message bridge (sandbox-isolation "The mini-app frame holds no native bridge
+  // object", decision-log D4 of webview-bridge-provenance) ─────────────────────────────────
+  // The FIRST act, before any other runtime script runs: a platform that injects its native
+  // bridge into every frame (Android `ReactNativeWebView`, iOS every `webkit.messageHandlers`
+  // entry) would otherwise hand app code a direct line to RN. Each is recorded as present, removed (deleted
+  // wherever it sits on the window's prototype chain, else shadowed), and recorded as removed
+  // only if nothing on the chain still yields it. The frozen record is handed to the loader on a
+  // transient, read-only global the loader captures and erases before any app code runs; it never
+  // passes through __WHIM_NEUTRALIZE_REPORT__, which app code can rewrite.
+  const bridgeRecord = recordAndRemoveNativeBridges();
+  Object.defineProperty(window, '__WHIM_BRIDGE_RECORD__', {
+    value: bridgeRecord, writable: false, enumerable: false, configurable: true,
+  });
+
+  // Every object on `target`'s prototype chain (target first) holding `name` as an own property,
+  // with the value a read of `target[name]` through that holder yields (a throwing read yields
+  // nothing).
+  function holdersOf(target, name) {
+    const found = [];
+    for (let o = target, depth = 0; o !== null && o !== undefined && depth < 64; depth++) {
+      const desc = ownDescriptor(o, name);
+      if (desc) found.push({ holder: o, value: readThrough(desc, target) });
+      o = protoOf(o);
+    }
+    return found;
+  }
+
+  // `o`'s own descriptor for `name`; a throwing lookup (a hostile proxy) yields none.
+  function ownDescriptor(o, name) {
+    try { return Object.getOwnPropertyDescriptor(o, name); } catch (e) { return undefined; }
+  }
+
+  // The value a read of `target[name]` yields through descriptor `desc`; a throwing getter yields
+  // nothing.
+  function readThrough(desc, target) {
+    if ('value' in desc) return desc.value;
+    if (!desc.get) return undefined;
+    try { return Reflect.apply(desc.get, target, []); } catch (e) { return undefined; }
+  }
+
+  // `o`'s prototype; a throwing lookup ends the chain.
+  function protoOf(o) {
+    try { return Object.getPrototypeOf(o); } catch (e) { return null; }
+  }
+
+  function reachable(target, name) {
+    return holdersOf(target, name).some(function (h) { return h.value !== null && h.value !== undefined; });
+  }
+
+  // Delete `name` from every holder on the chain; if it is still reachable, shadow it with an own
+  // `shadow` descriptor, then by plain assignment (the same delete-or-shadow order as neutralize()).
+  function strip(target, name, shadow) {
+    holdersOf(target, name).forEach(function (h) { try { delete h.holder[name]; } catch (e) { } });
+    if (!reachable(target, name)) return;
+    try { Object.defineProperty(target, name, shadow); } catch (e) { }
+    if (!reachable(target, name)) return;
+    try { target[name] = undefined; } catch (e) { }
+  }
+
+  // iOS's message handlers as app code would reach them: a `messageHandlers` through any `webkit` on
+  // the window's chain.
+  function webkitHandlerHolders() {
+    const found = [];
+    holdersOf(window, 'webkit').forEach(function (w) {
+      try {
+        const handlers = w.value && w.value.messageHandlers;
+        if (handlers !== null && handlers !== undefined) found.push(handlers);
+      } catch (e) {
+        // A `webkit` whose `messageHandlers` read throws yields no handlers app code could use
+        // either, so it is skipped rather than recorded.
+      }
+    });
+    return found;
+  }
+  function webkitHandlersReachable() {
+    return webkitHandlerHolders().length > 0;
+  }
+
+  function recordAndRemoveNativeBridges() {
+    // Android (and react-native-webview's iOS shim): window.ReactNativeWebView, own or inherited.
+    // The shadow stays writable and configurable: the loader installs its transport stub here.
+    const androidPresent = reachable(window, 'ReactNativeWebView');
+    if (androidPresent) {
+      strip(window, 'ReactNativeWebView', { value: undefined, writable: true, configurable: true, enumerable: false });
+    }
+    const android = Object.freeze({
+      present: androidPresent, removed: androidPresent && !reachable(window, 'ReactNativeWebView'),
+    });
+
+    // iOS: window.webkit.messageHandlers. WebKit hands every frame every handler the host registered
+    // and does not enumerate them, so no list of names is complete: `webkit` itself goes, deleted
+    // wherever it sits on the chain, else shadowed (nothing in the sandbox needs it). Where the
+    // engine will not let go of it, the library's own handlers are stripped by name, and the record
+    // says the reach was not removed: a handler nobody can name may still be there.
+    const iosPresent = webkitHandlersReachable();
+    if (iosPresent) {
+      strip(window, 'webkit', { value: undefined, writable: false, configurable: false, enumerable: false });
+      // The handlers react-native-webview registers (RNCWebViewImpl.m): its bridge, and its history
+      // shim, whose message fires RN's onLoadEnd.
+      webkitHandlerHolders().forEach(function (handlers) {
+        ['ReactNativeWebView', 'ReactNativeHistoryShim'].forEach(function (name) {
+          strip(handlers, name, { value: undefined, writable: false, configurable: false, enumerable: false });
+        });
+      });
+    }
+    const ios = Object.freeze({ present: iosPresent, removed: iosPresent && !webkitHandlersReachable() });
+
+    return Object.freeze({ android: android, ios: ios });
+  }
+
   function throwingFn(name) {
     return function whimForbidden() {
       throw new TypeError(name + ' is disabled in the Whim sandbox (Layer-3 escape hatch)');

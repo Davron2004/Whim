@@ -39,7 +39,7 @@ A mini-app is code nobody reviewed, so the runtime treats it as hostile. Each ap
 
 Every launch gets a fresh iframe. In the pen test, loading a second app into the same iframe let the first one leave a backdoor on `window` and `Object.prototype` that the second one inherited (confirmed on Android), so the host never reuses one.
 
-After the first paint, the loader runs a set of 49 containment probes, using a reference it captured before the app's code ran, and reports the result to the host. The probe set includes planted leaks that must be flagged, so a broken probe can't report success. On the server the same page runs in headless Chromium, and a failed containment verdict ends the run: nothing is delivered and nothing about it goes back to the model.
+After the first paint, the loader runs a set of 52 containment probes, using a reference it captured before the app's code ran, and reports the result to the host. The probe set includes planted leaks that must be flagged, so a broken probe can't report success. On the server the same page runs in headless Chromium, and a failed containment verdict ends the run: nothing is delivered and nothing about it goes back to the model.
 
 `npm run invariants` runs these checks against the current build in headless Chromium. It loads adversarial bundles from `fixtures/adversarial/` (escape attempts, a forged verdict, cross-version poisoning, a timer that outlives its realm), checks that a `blob:` script is refused, and runs a copy of the page with `unsafe-eval` added, which the suite must flag. It runs in CI on every pull request and every push to main. Desktop Chromium can't test the native network refusal, so that one has a device probe (`scripts/netdeny/run.mjs` with a canary server), and the release checks fail if its Android or iOS wiring is weakened.
 
@@ -91,7 +91,7 @@ Unless noted, measured on an arm64 Android emulator (Android System WebView, Her
 
 | | |
 |---|---|
-| Containment probes | 49 of 49 contained on every launch in the October 2026 verification run (42 of 42 in the first device run) |
+| Containment probes | 49 of 49 contained on every launch in the October 2026 verification run (42 of 42 in the first device run; the set has since grown to 52) |
 | Mount to first paint | about 119 ms on a cold WebView, 32 ms on a recreated iframe |
 | Tap to first paint, prewarmed WebView | 75 ms median, 84 ms p90 over 30 launches |
 | Snapshot, rollback, fork | 45 to 86 ms, 58 to 183 ms, 37 to 68 ms |

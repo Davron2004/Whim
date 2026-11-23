@@ -41,6 +41,7 @@ check "synthetic-run"     npm run -s synthrun:test
 check "generation-e2e"    npm run -s server:e2e
 check "firestore-stores"  npm run -s stores:firestore:test
 check "deliver-by-source" npm run -s launcher:deliver-verify
+check "bridge-provenance" npm run -s runtime:provenance-verify
 check "sdk-motion"        npm run -s sdk:motion-verify
 check "codex-sync"        node scripts/sync-codex.mjs --check
 # openspec is a required GLOBAL CLI (Homebrew) — NOT an npm package. Fail clearly if absent.
