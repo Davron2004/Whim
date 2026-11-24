@@ -17,24 +17,11 @@ export const ScrollView = host('ScrollView');
 export const Switch = host('Switch');
 export const InputAccessoryView = host('InputAccessoryView');
 /** Counts `Keyboard.dismiss` calls, so a test can tell putting the keyboard away from submitting.
- *  The keyboard's motion is react-native-keyboard-controller's (`native-keyboard-controller.tsx`);
- *  what it does not report, iOS's own `keyboardDidChangeFrame`, `changeKeyboardFrame` plays. */
-type KeyboardFrameListener = (event: { endCoordinates: { screenX: number; screenY: number; width: number; height: number } }) => void;
-const keyboardFrameListeners = new Set<KeyboardFrameListener>();
+ *  The keyboard's motion is react-native-keyboard-controller's (`native-keyboard-controller.tsx`). */
 export const Keyboard = {
   dismissed: 0,
   dismiss: () => { Keyboard.dismissed += 1; },
-  addListener: (_event: 'keyboardDidChangeFrame', listener: KeyboardFrameListener) => {
-    keyboardFrameListeners.add(listener);
-    return { remove: () => { keyboardFrameListeners.delete(listener); } };
-  },
 };
-/** iOS says the keyboard's frame now spans `height` up from the window's bottom edge. */
-export function changeKeyboardFrame(height: number): void {
-  const window = Dimensions.get();
-  for (const listener of [...keyboardFrameListeners]) listener({ endCoordinates: { screenX: 0, screenY: window.height - height, width: window.width, height } });
-}
-export function keyboardFrameListenerCount(): number { return keyboardFrameListeners.size; }
 export const SafeAreaView = host('SafeAreaView');
 export const SafeAreaProvider = host('SafeAreaProvider');
 export const StatusBar = host('StatusBar');

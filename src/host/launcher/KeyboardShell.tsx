@@ -18,11 +18,12 @@
  * window (`footerShare`: the largest text sizes) scrolls with the content instead; and content
  * scrolling under the sheet's header fades out over 16 pt. A drag puts the keyboard away, a tap a control handles reaches the
  * control, and a tap on empty space anywhere in the frame puts the keyboard away.
+ * On iOS a focused multiline field brings up its window's Done bar on the keyboard's top edge
+ * (`useDoneBar`: a screen's frame draws it, a sheet draws its own), and every frame pads for it too.
  */
 
-import React, { createContext, useCallback, useContext, useEffect, useId, useMemo, useRef, useState } from 'react';
+import React, { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  InputAccessoryView,
   Keyboard,
   Platform,
   ScrollView,
@@ -51,6 +52,7 @@ import Svg, { Defs, LinearGradient, Rect, Stop } from 'react-native-svg';
 import {
   KeyboardController,
   KeyboardEvents,
+  KeyboardStickyView,
   useGenericKeyboardHandler,
   useWindowDimensions as useKeyboardWindow,
   type NativeEvent,
@@ -125,6 +127,69 @@ const takesTouch = () => true;
 /** The iOS keyboard toolbar's height — no space-token counterpart. */
 const DONE_BAR_HEIGHT = 44;
 
+/** Height covered from the window's bottom: the keyboard plus the Done bar as far as it has risen
+ *  (`bar × progress`; `bar` is 0 while no bar shows). A worklet. */
+function coveredBy(event: Readonly<{ height: number; progress: number }>, bar: number): number {
+  'worklet';
+  return event.height + bar * event.progress;
+}
+
+/** How a window's fields drive its Done bar (`useDoneBar`). */
+export interface DoneBarHost {
+  /** How tall the bar stands on the keyboard: `DONE_BAR_HEIGHT` while it shows, else 0. Every frame
+   *  in the window pads for it on top of the keyboard. */
+  readonly height: number;
+  /** A field took focus; `wantsBar` when it is one the bar serves (`showsDoneBar`). */
+  readonly focused: (field: object, wantsBar: boolean) => void;
+  /** A field lost focus, or left the tree. */
+  readonly blurred: (field: object) => void;
+}
+
+/** The Done bar of the window a field sits in: a sheet's (`Sheet`) or a screen's (`KeyboardShell`). */
+export const DoneBarContext = createContext<DoneBarHost | null>(null);
+
+/** Every mounted window's way to drop a bar it keeps for a field that has let go. */
+const doneBarHosts = new Set<() => void>();
+
+/**
+ * A window's Done bar state (iOS: shown while a multiline field is focused, `showsDoneBar`). After its
+ * field blurs, the bar stays until the keyboard has gone down (`keyboardDidHide`). It goes at once when
+ * a field it does not serve takes focus, in this window or another, while the keyboard stays up. The
+ * window renders `DoneBar` while `height` is above 0.
+ */
+export function useDoneBar(): DoneBarHost {
+  const [shown, setShown] = useState(false);
+  const owner = useRef<object | null>(null);
+  const release = useCallback(() => {
+    if (owner.current === null) setShown(false);
+  }, []);
+  useEffect(() => {
+    doneBarHosts.add(release);
+    const subscription = KeyboardEvents.addListener('keyboardDidHide', release);
+    return () => {
+      doneBarHosts.delete(release);
+      subscription.remove();
+    };
+  }, [release]);
+  const focused = useCallback((field: object, wantsBar: boolean) => {
+    for (const other of doneBarHosts) if (other !== release) other();
+    owner.current = field;
+    setShown(wantsBar);
+  }, [release]);
+  const blurred = useCallback((field: object) => {
+    if (owner.current !== field) return;
+    owner.current = null;
+    if (!KeyboardController.isVisible()) setShown(false);
+  }, []);
+  return useMemo<DoneBarHost>(() => ({ height: shown ? DONE_BAR_HEIGHT : 0, focused, blurred }), [shown, focused, blurred]);
+}
+
+/** A screen's window: its own Done bar state for the fields in it (a sheet keeps its own in `Sheet`). */
+function ScreenDoneBar({ children }: Readonly<{ children: React.ReactNode }>) {
+  const host = useDoneBar();
+  return <DoneBarContext.Provider value={host}>{children}</DoneBarContext.Provider>;
+}
+
 /** Where the view `frame` holds ends, measured from the top of its root (the app's, or a Modal's),
  *  which fills its window wherever a frame pads, just as the keyboard's height is reported from that
  *  window's bottom. `measureInWindow` would not do on Android, which measures from below the status bar. */
@@ -178,72 +243,68 @@ export interface KeyboardOverlap {
  * `measure` counts the frame from a root laid out far below the window (a pushed screen's frame
  * read 2420 in an 874-high window) and would put its bottom at the window's: the frame was then
  * padded by the home indicator's inset on top of what the keyboard covers.
+ * `bar` is the height of the window's Done bar while it shows (`DoneBarHost.height`), padded for on
+ * top of the keyboard.
  */
-export function useKeyboardOverlap(frame: React.RefObject<ViewInstance | null>, active: boolean, clearBelow = 0): KeyboardOverlap {
+export function useKeyboardOverlap(frame: React.RefObject<ViewInstance | null>, active: boolean, clearBelow = 0, bar = 0): KeyboardOverlap {
   const overlap = useSharedValue(0);
   const height = useSharedValue(0);
   const frameBottom = useSharedValue(0);
+  // The keyboard as the library last reported it, the Done bar left out: its height, and how far up it is.
+  const keyboard = useSharedValue({ height: 0, progress: 0 });
   const { height: windowHeight } = useKeyboardWindow();
   const windowSize = useSharedValue(windowHeight);
   useEffect(() => {
     windowSize.value = windowHeight;
   }, [windowSize, windowHeight]);
-  // iOS: the keyboard's height as the system last reported its frame, since the keyboard last set
-  // off (see the frame listener below); 0 until it has, and whenever the keyboard is down.
-  const systemHeight = useSharedValue(0);
   /** Measures where the frame ends; `place` then pads it for the keyboard as it rests. */
   const measure = useCallback((place: boolean) => {
     measureBottom(frame, (measured) => {
       const bottom = Math.min(measured, windowSize.value - clearBelow);
       frameBottom.value = bottom;
       const settled = settledKeyboardHeight();
-      if (place && active && settled > 0) {
-        overlap.value = keyboardOverlap(Math.max(settled, systemHeight.value), bottom, windowSize.value);
-      }
+      if (place && active && settled > 0) overlap.value = keyboardOverlap(coveredBy({ height: settled, progress: 1 }, bar), bottom, windowSize.value);
     });
-  }, [active, clearBelow, frame, frameBottom, overlap, systemHeight, windowSize]);
+  }, [active, bar, clearBelow, frame, frameBottom, overlap, windowSize]);
   const onLayout = useCallback(() => measure(true), [measure]);
   const follow = (event: NativeEvent) => {
     'worklet';
-    height.value = event.height;
-    overlap.value = active ? keyboardOverlap(event.height, frameBottom.value, windowSize.value) : 0;
-  };
-  // A keyboard at rest is as tall as the system says, if it has said: see the frame listener below.
-  const rest = (event: NativeEvent) => {
-    'worklet';
-    const resting = event.height > 0 ? Math.max(event.height, systemHeight.value) : 0;
-    height.value = resting;
-    overlap.value = active ? keyboardOverlap(resting, frameBottom.value, windowSize.value) : 0;
+    keyboard.value = { height: event.height, progress: event.progress };
+    height.value = coveredBy(event, bar);
+    overlap.value = active ? keyboardOverlap(height.value, frameBottom.value, windowSize.value) : 0;
   };
   // A keyboard that changes height at once (iOS's emoji keyboard: a start with no duration, then no
   // frames before its end, which comes some frames later) pads for its new height in the start's own
   // frame. Its padded-for `height` waits for the end, so the reveal still sees where it set off from.
   const setOff = (event: NativeEvent) => {
     'worklet';
-    systemHeight.value = 0;
-    if (event.duration === 0) overlap.value = active ? keyboardOverlap(event.height, frameBottom.value, windowSize.value) : 0;
+    if (event.duration === 0) overlap.value = active ? keyboardOverlap(coveredBy(event, bar), frameBottom.value, windowSize.value) : 0;
   };
-  useGenericKeyboardHandler({ onStart: setOff, onMove: follow, onInteractive: follow, onEnd: rest }, [active]);
-  // A keyboard already resting up as the frame mounts is padded for (`onLayout`) before any frame of it.
+  useGenericKeyboardHandler({ onStart: setOff, onMove: follow, onInteractive: follow, onEnd: follow }, [active, bar]);
+  // A keyboard already resting up as the frame mounts is padded for (`onLayout`) before any frame of
+  // it; and the Done bar coming or going while the keyboard holds still (a field it serves taking over
+  // from one it does not, or the reverse) moves the padding by the bar at once.
   useEffect(() => {
     const settled = settledKeyboardHeight();
-    if (settled > 0) height.value = Math.max(settled, systemHeight.value);
-  }, [height, systemHeight]);
+    if (settled > 0 && keyboard.value.height === 0) keyboard.value = { height: settled, progress: 1 };
+    height.value = coveredBy(keyboard.value, bar);
+    if (active) overlap.value = keyboardOverlap(height.value, frameBottom.value, windowSize.value);
+  }, [active, bar, frameBottom, height, keyboard, overlap, windowSize]);
   // A frame that mounts after the show has ended on the UI thread, before JS hears `keyboardDidShow`,
   // saw none of its frames and found it not yet settled: it is padded for it as JS hears it settle.
-  // Android has nothing later to correct it (iOS has its frame notification, below).
   useEffect(() => {
     const missed = () => {
       const settled = settledKeyboardHeight();
       if (height.value > 0 || settled === 0) return;
-      height.value = Math.max(settled, systemHeight.value);
+      keyboard.value = { height: settled, progress: 1 };
+      height.value = coveredBy(keyboard.value, bar);
       measure(true);
     };
     settleListeners.add(missed);
     return () => {
       settleListeners.delete(missed);
     };
-  }, [height, measure, systemHeight]);
+  }, [bar, height, keyboard, measure]);
   useEffect(() => {
     if (!active) {
       overlap.value = 0;
@@ -255,21 +316,6 @@ export function useKeyboardOverlap(frame: React.RefObject<ViewInstance | null>, 
     const subscription = KeyboardEvents.addListener('keyboardWillShow', () => measure(false));
     return () => subscription.remove();
   }, [active, measure, overlap]);
-  // iOS: the first keyboard of a process is reported without the Done bar that attaches to it a moment
-  // later. Measured on iOS 27: 328 at `keyboardWillShow`, the library's frames then reach 372 as the bar
-  // arrives, and its end report goes back to 328, which a frame that ends there ends under the bar.
-  // The system's frame notification (372, 400 ms after the show) is the keyboard as it rests, so the
-  // library's end report may not make it shorter than that.
-  useEffect(() => {
-    if (Platform.OS !== 'ios') return undefined;
-    const subscription = Keyboard.addListener('keyboardDidChangeFrame', (event) => {
-      const shown = Math.max(0, windowSize.value - event.endCoordinates.screenY);
-      systemHeight.value = shown;
-      height.value = shown;
-      if (active) overlap.value = keyboardOverlap(shown, frameBottom.value, windowSize.value);
-    });
-    return () => subscription.remove();
-  }, [active, frameBottom, height, overlap, systemHeight, windowSize]);
   const overlapFor = useCallback(
     (keyboardHeight: number) => {
       'worklet';
@@ -348,13 +394,15 @@ interface NativeEventHandler {
  *  block. `shrinkAt` is a worklet: how much of its height the scroll view has lost to a keyboard of a
  *  given height (on a screen, the frame's own padding; in a sheet, the card's growth). `keyboardHeight`
  *  is the height that padding is figured from now (`KeyboardOverlap.height`): a keyboard changing
- *  height starts from what is padded, not from what the library last reported. */
+ *  height starts from what is padded, not from what the library last reported. `bar` is the Done
+ *  bar's height while it shows, which the keyboard takes from the scroll view with it. */
 function useRevealingScroll(
   scrollRef: React.Ref<ScrollViewInstance> | undefined,
   onContentSizeChange: ScrollViewProps['onContentSizeChange'],
   onScrollOffset: ((offset: number) => void) | undefined,
   shrinkAt: (keyboardHeight: number) => number,
   keyboardHeight: SharedValue<number>,
+  bar: number,
 ) {
   const scroll = useRef<ScrollViewInstance | null>(null);
   const scrollOnUI = useAnimatedRef<ScrollView>();
@@ -433,13 +481,14 @@ function useRevealingScroll(
     {
       onStart: (event) => {
         'worklet';
-        const rising = event.height > keyboardHeight.value;
+        const covered = coveredBy(event, bar);
+        const rising = covered > keyboardHeight.value;
         const set = {
           following: rising,
           viewport: shown.value.viewport,
           offset: offset.value,
           shrink: shrinkAt(keyboardHeight.value),
-          end: shrinkAt(event.height),
+          end: shrinkAt(covered),
           hidden: -1,
         };
         rise.value = set;
@@ -463,7 +512,7 @@ function useRevealingScroll(
           hidden = hiddenAtRest(set, at.top, at.bottom, REVEAL_MARGIN);
           rise.value = { ...set, hidden };
         }
-        const now = shrinkAt(event.height);
+        const now = shrinkAt(coveredBy(event, bar));
         const frame = { offset: offset.value, viewport: set.viewport - (now - set.shrink), content: shown.value.content };
         const left = hidden * (1 - riseProgress(set.shrink, set.end, now));
         const next = followOffset(frame, at.top, at.bottom, REVEAL_MARGIN, left);
@@ -474,7 +523,7 @@ function useRevealingScroll(
         rise.value = { ...rise.value, following: false };
       },
     },
-    [shrinkAt, keyboardHeight],
+    [shrinkAt, keyboardHeight, bar],
   );
 
   // The scroll view's native scroll events, on the UI thread as they happen: where it stands, and a
@@ -627,7 +676,17 @@ function footerStyleFor(joinsScroll: boolean, inSheet: boolean, contentContainer
   return inSheet ? undefined : styles.footer;
 }
 
-export default function KeyboardShell({
+/** A screen is a window of its own and keeps its own Done bar; in a sheet the fields use the sheet's. */
+export default function KeyboardShell(props: Readonly<KeyboardShellProps>) {
+  if (props.host === 'sheet') return <ShellFrame {...props} />;
+  return (
+    <ScreenDoneBar>
+      <ShellFrame {...props} />
+    </ScreenDoneBar>
+  );
+}
+
+function ShellFrame({
   footer,
   footerShare = FOOTER_SHARE,
   host = 'screen',
@@ -644,7 +703,9 @@ export default function KeyboardShell({
   // iOS screens sit above the home indicator (`NativeStack`'s `SafeAreaView`); Android's frame
   // measures true and is left to its own measure.
   const { bottom: safeBottom } = useSafeAreaInsets();
-  const { overlap, height: paddedFor, onLayout, overlapFor } = useKeyboardOverlap(frameRef, !inSheet, Platform.OS === 'ios' ? safeBottom : 0);
+  const clearBelow = Platform.OS === 'ios' ? safeBottom : 0;
+  const bar = useContext(DoneBarContext)?.height ?? 0;
+  const { overlap, height: paddedFor, onLayout, overlapFor } = useKeyboardOverlap(frameRef, !inSheet, clearBelow, bar);
   const padding = useAnimatedStyle(() => ({ paddingBottom: overlap.value }));
   // What a keyboard takes from the scroll view: on a screen, the frame's padding; in a sheet, the
   // card's (`Sheet`), all of which a large sheet's body gives up. In a sheet this
@@ -664,7 +725,7 @@ export default function KeyboardShell({
     },
     [onScrollOffset, topFade],
   );
-  const { scrollProps, below, registry } = useRevealingScroll(scrollRef, onContentSizeChange, trackOffset, shrinkAt, paddedFor);
+  const { scrollProps, below, registry } = useRevealingScroll(scrollRef, onContentSizeChange, trackOffset, shrinkAt, paddedFor, bar);
   // A sheet's footer that has grown past its share of the window (large text) scrolls with the
   // content, so the content keeps room of its own and the footer's actions stay reachable.
   const { height: windowHeight } = useKeyboardWindow();
@@ -725,6 +786,7 @@ export default function KeyboardShell({
   return (
     <View ref={frameRef} collapsable={false} onLayout={onLayout} style={[styles.fill, style]}>
       <Animated.View style={[styles.fill, padding]}>{frame}</Animated.View>
+      {bar > 0 ? <DoneBar below={clearBelow} /> : null}
     </View>
   );
 }
@@ -807,10 +869,10 @@ export interface KeyboardTextInputProps extends TextInputProps {
 /**
  * A text field for a `KeyboardShell`: an `ink` caret and selection handles, a highlight its selected
  * text stays readable on (`fieldSelection`), and the shell keeps it in view while it is focused.
- * `autoFocus` focuses it once it has mounted rather than natively: iOS links a Done bar to its field
- * when the bar mounts, and a field that took focus before that shows none. Multiline on iOS, it
- * carries the keyboard's Done bar, which puts the keyboard away and submits nothing; one line on iOS,
- * it sets no line height, which iOS would draw its text below, clipping the descenders.
+ * `autoFocus` focuses it once it has mounted rather than natively, so an overlay can hold the focus
+ * until it is on screen. Multiline on iOS, it brings up its window's Done bar (`useDoneBar`), which
+ * puts the keyboard away and submits nothing; one line on iOS, it sets no line height, which iOS
+ * would draw its text below, clipping the descenders.
  */
 export function KeyboardTextInput({
   revealTarget,
@@ -823,7 +885,8 @@ export function KeyboardTextInput({
   const tokens = useTokens();
   const input = useRef<TextInputInstance>(null);
   const shell = useContext(KeyboardShellContext);
-  const doneBarId = useId();
+  const doneBar = useContext(DoneBarContext);
+  const leaveDoneBar = doneBar?.blurred;
   const target = revealTarget ?? input;
   const autoFocusOnMount = useRef(autoFocus === true);
   const overlayShown = useContext(OverlayShownContext);
@@ -832,19 +895,18 @@ export function KeyboardTextInput({
   const blurred = useRef(false);
   useEffect(() => {
     if (!autoFocusOnMount.current) return undefined;
-    // iOS: a frame after mounting, once the Done bar has linked to the field, so the keyboard comes
-    // up with the bar already on it (focused in the mount frame, it intermittently arrived without
-    // the bar in its reported frame, leaving the footer under the bar). Android: see `askForKeyboard`.
     // In an overlay, the first request waits for the overlay's own report that it is on screen, on
     // both platforms: an iOS field focused before its `Modal` is presented (one still leaving holds
-    // the screen) takes no focus, and nothing would focus it again.
+    // the screen) takes no focus, and nothing would focus it again. Android: see `askForKeyboard`.
     if (!overlayShown) return undefined;
     if (Platform.OS === 'android') return askForKeyboard(input, blurred);
-    const later = requestAnimationFrame(() => input.current?.focus());
-    return () => cancelAnimationFrame(later);
+    input.current?.focus();
+    return undefined;
   }, [overlayShown]);
-  const doneBar = showsDoneBar(Platform.OS, props.multiline);
-  const field = (
+  // A field that leaves the tree focused lets go of the Done bar as a blur would.
+  useEffect(() => () => leaveDoneBar?.(input), [leaveDoneBar]);
+  const wantsDoneBar = showsDoneBar(Platform.OS, props.multiline);
+  return (
     <TextInput
       {...fieldSelection(tokens, props.multiline === true)}
       {...props}
@@ -853,22 +915,16 @@ export function KeyboardTextInput({
       onFocus={(event) => {
         blurred.current = false;
         shell?.focused(target);
+        doneBar?.focused(input, wantsDoneBar);
         onFocus?.(event);
       }}
       onBlur={(event) => {
         blurred.current = true;
         shell?.blurred(target);
+        doneBar?.blurred(input);
         onBlur?.(event);
       }}
-      inputAccessoryViewID={doneBar ? doneBarId : props.inputAccessoryViewID}
     />
-  );
-  if (!doneBar) return field;
-  return (
-    <>
-      {field}
-      <DoneBar nativeID={doneBarId} />
-    </>
   );
 }
 
@@ -876,26 +932,26 @@ export function KeyboardTextInput({
  *  don't grow with it, and a label at 200% outgrew the bar. */
 const DONE_LABEL_MAX_SCALE = 1.3;
 
-/** The iOS keyboard's Done bar: a `surface` strip over the keyboard, in the scheme the shell is in,
- *  with a `separator` hairline and Done in `text`.
- *
- *  The bar itself moves onto the keyboard, but React Native also leaves a host view where the bar
- *  sits in the tree, beside the field. That view is meant to stay hidden, yet RN 0.88's first layout
- *  of it shows it again, so it painted a keyboard-wide `surface` box over the field and took the
- *  field's taps until some later prop change hid it (wbp-d3). `doneBarHost` keeps that box clear and
- *  out of hit-testing; the bar on the keyboard is a separate view and keeps its look. */
-function DoneBar({ nativeID }: Readonly<{ nativeID: string }>) {
+/** Where the Done bar stands as the keyboard moves: on its top edge while it is up, and its own height
+ *  below the window's bottom edge, out of sight, while it is down. */
+const DONE_BAR_OFFSET = { closed: DONE_BAR_HEIGHT, opened: 0 } as const;
+
+/** The iOS keyboard's Done bar: a full-width `surface` strip riding the keyboard's top edge, in the
+ *  scheme the shell is in, with a `separator` hairline and Done in `text`. Render it last in a view
+ *  whose bottom edge is `below` above the window's. */
+export function DoneBar({ below = 0 }: Readonly<{ below?: number }>) {
   const t = useTokens();
+  const bottom = below > 0 ? -below : 0;
   return (
-    <InputAccessoryView nativeID={nativeID} backgroundColor={t.colors.surface} style={styles.doneBarHost}>
-      <View style={[styles.doneBar, { borderTopColor: t.colors.separator }]}>
+    <KeyboardStickyView offset={DONE_BAR_OFFSET} style={[styles.doneBarDock, { bottom }]}>
+      <View style={[styles.doneBar, { backgroundColor: t.colors.surface, borderTopColor: t.colors.separator }]}>
         <TouchableOpacity onPress={dismissKeyboard} accessibilityRole="button" hitSlop={10}>
           <Text style={[styles.doneLabel, { color: t.colors.text }]} maxFontSizeMultiplier={DONE_LABEL_MAX_SCALE}>
             {COPY.keyboardDone}
           </Text>
         </TouchableOpacity>
       </View>
-    </InputAccessoryView>
+    </KeyboardStickyView>
   );
 }
 
@@ -910,8 +966,7 @@ const styles = StyleSheet.create({
   // Bottom action area). A sheet spaces its own actions (`ReportPage`'s actions pad themselves).
   footer: { paddingTop: LAYOUT.actionAreaTop },
   naturalLineHeight: { lineHeight: undefined },
-  /** See `DoneBar`: the in-tree host of the keyboard's bar, never seen or touched. */
-  doneBarHost: { opacity: 0 },
+  doneBarDock: { position: 'absolute', left: 0, right: 0 },
   doneBar: {
     height: DONE_BAR_HEIGHT,
     flexDirection: 'row',

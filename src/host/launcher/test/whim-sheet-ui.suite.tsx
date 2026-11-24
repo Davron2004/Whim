@@ -56,8 +56,9 @@ export function orb(tree: Tree): Node {
   return found[0];
 }
 
-/** The open sheet's card: the one view a screen reader is held inside. */
-export function sheetCard(tree: Tree): Node {
+/** The open sheet's modal part, not its card: the one view a screen reader is held inside, holding
+ *  the card and, while it shows, the keyboard's Done bar. */
+export function sheetModal(tree: Tree): Node {
   const cards = tree.root.findAll((n) => typeof n.type === 'string' && n.props.accessibilityViewIsModal === true);
   if (cards.length !== 1) throw new Error(`expected one open sheet, got ${cards.length}`);
   return cards[0];
@@ -66,18 +67,18 @@ export function sheetCard(tree: Tree): Node {
 /** The controls in the open sheet, in the order they are drawn, by the name a screen reader reads,
  *  leaving out the sheet's own close control. */
 export const controlsIn = (tree: Tree) =>
-  sheetCard(tree)
+  sheetModal(tree)
     .findAll((n) => (hostType(n) === 'Pressable' || hostType(n) === 'TextInput') && n.props.accessibilityLabel !== COPY.sheetClose)
     .map((n) => String(n.props.accessibilityLabel));
 
-const field = (tree: Tree) => sheetCard(tree).find((n) => hostType(n) === 'TextInput' && n.props.accessibilityLabel === COPY.whimSheetAsk);
+const field = (tree: Tree) => sheetModal(tree).find((n) => hostType(n) === 'TextInput' && n.props.accessibilityLabel === COPY.whimSheetAsk);
 export const typeWords = (tree: Tree, words: string) => TestRenderer.act(async () => field(tree).props.onChangeText(words));
 export const hasButton = (tree: Tree, label: string) =>
   tree.root.findAll((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === label).length > 0;
 
 /** The running app's version line in the open sheet. */
 export const versionLine = (tree: Tree) =>
-  sheetCard(tree).findAll(isHost('Text')).map(textOf).find((text) => text.startsWith('Version ')) ?? null;
+  sheetModal(tree).findAll(isHost('Text')).map(textOf).find((text) => text.startsWith('Version ')) ?? null;
 
 /** Home with the example apps, then Tip Splitter opened from it. */
 export async function openTipSplitter(tree: Tree): Promise<InstalledApp> {
@@ -96,7 +97,7 @@ export async function openSheet(tree: Tree): Promise<void> {
 
 /** The 8 pt dots drawn in the open sheet, by colour: a view of exactly 8 x 8 with a round radius. */
 function dotsIn(tree: Tree): string[] {
-  return sheetCard(tree)
+  return sheetModal(tree)
     .findAll((n) => hostType(n) === 'View' && StyleSheet.flatten(n.props.style as StyleProp<ViewStyle>)?.width === 8 && StyleSheet.flatten(n.props.style as StyleProp<ViewStyle>)?.height === 8)
     .map((n) => String(StyleSheet.flatten(n.props.style as StyleProp<ViewStyle>)?.backgroundColor));
 }
@@ -176,7 +177,7 @@ export async function runWhimSheetUiTests(h: Harness): Promise<void> {
     await withLauncher({ examples: true, server: never }, async ({ tree }) => {
       await openTipSplitter(tree);
       await openSheet(tree);
-      const name = sheetCard(tree).findAll(isHost('Text')).find((n) => textOf(n) === APP_NAME)!;
+      const name = sheetModal(tree).findAll(isHost('Text')).find((n) => textOf(n) === APP_NAME)!;
       const gaps = blockGaps(name);
       h.ok(gaps.length === 2 && gaps.every((gap) => gap === gaps[0]) && gaps[0] > 0, `the blocks are evenly spaced (${gaps.join(', ')})`);
       h.eq(trailingSpace(name), gaps[0], 'and the last one ends that far from the bottom');
@@ -204,7 +205,7 @@ export async function runWhimSheetUiTests(h: Harness): Promise<void> {
       await openSheet(tree);
       h.eq(controlsIn(tree), [COPY.whimSheetAsk, COPY.whimSheetSend, COPY.actionHistory, COPY.reportScreenTitle, COPY.whimSheetBackToApps],
         'the send area and its arrow, then History, Report a problem and Back to your apps; no Reload with no newer version');
-      const shown = textOf(sheetCard(tree));
+      const shown = textOf(sheetModal(tree));
       h.ok(shown.indexOf(APP_NAME) >= 0 && shown.indexOf(APP_NAME) < shown.indexOf(COPY.actionHistory), 'the app’s name heads the sheet');
       await waitFor(() => versionLine(tree) !== null, 'the version line');
       h.eq(runningApp(tree).props.tappedAt, launch, 'and the app runs on under it, the same launch');
@@ -217,13 +218,13 @@ export async function runWhimSheetUiTests(h: Harness): Promise<void> {
       await openSheet(tree);
       await waitFor(() => versionLine(tree) !== null, 'the version line');
       for (const label of [COPY.whimSheetSend, COPY.actionHistory, COPY.reportScreenTitle, COPY.whimSheetBackToApps]) {
-        const found = sheetCard(tree).findAll((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === label);
+        const found = sheetModal(tree).findAll((n) => hostType(n) === 'Pressable' && n.props.accessibilityLabel === label);
         h.eq(found.length, 1, `"${label}" is one element`);
         h.eq(found[0]?.props.accessibilityRole, 'button', `"${label}" is announced as a button`);
         h.ok(found[0] !== undefined && screenReaderElement(found[0]) === found[0], `"${label}" sits inside no other element, so VoiceOver reaches it on its own`);
       }
       h.ok(screenReaderElement(field(tree)) === field(tree), 'the send area’s field is reached on its own');
-      const texts = sheetCard(tree).findAll(isHost('Text'));
+      const texts = sheetModal(tree).findAll(isHost('Text'));
       for (const words of [APP_NAME, versionLine(tree)!]) {
         const text = texts.find((n) => textOf(n) === words);
         h.ok(text !== undefined && screenReaderElement(text) === text, `"${words}" is read on its own`);
@@ -471,7 +472,7 @@ export async function runWhimSheetUiTests(h: Harness): Promise<void> {
       ] as const) {
         await press(button(tree, COPY.reportScreenTitle));
         await waitFor(() => hasButton(tree, COPY.reportSend), 'the report form');
-        h.ok(textOf(sheetCard(tree)).includes(COPY.reportScreenTitle) && !hasButton(tree, COPY.whimSheetBackToApps), `${name}: the report replaces the sheet’s rows`);
+        h.ok(textOf(sheetModal(tree)).includes(COPY.reportScreenTitle) && !hasButton(tree, COPY.whimSheetBackToApps), `${name}: the report replaces the sheet’s rows`);
         h.ok(tree.root.findAll(isHost('Modal')).length === 1 && tree.root.findAll(isHost('Modal')).includes(modal), `${name}: inside the same sheet`);
         h.ok(runningApp(tree).props.tappedAt === launch, `${name}: over the same running app`);
         await back();

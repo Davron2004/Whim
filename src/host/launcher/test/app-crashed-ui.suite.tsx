@@ -24,7 +24,7 @@ import { COLORS } from '../../../design/tokens';
 import { planLoaded, resultEvent, settle, sseStream, waitFor, withLauncher, type Tree } from './rendered-launcher';
 import { streamingServer } from './prompt-flow-ui.suite';
 import { dismissToast, pressToastAction, toastOf } from './home-rig';
-import { APP_NAME, controlsIn, hasButton, openSheet, openTipSplitter, orb, runningApp, sheetCard, showing } from './whim-sheet-ui.suite';
+import { APP_NAME, controlsIn, hasButton, openSheet, openTipSplitter, orb, runningApp, sheetModal, showing } from './whim-sheet-ui.suite';
 import { boundWebView, generationIn, makeChange, opening, pageOf, paint, paintRunningApp, send, type HeldPage } from './changing-in-use-ui.suite';
 import RENDER_ERROR_FRAME from './render-error-frame.json';
 
@@ -44,7 +44,7 @@ function drawnChildren(node: Node): Node[] {
 }
 
 /** The Whim sheet's field. */
-const field = (tree: Tree): Node => sheetCard(tree).find((n) => hostType(n) === 'TextInput' && n.props.accessibilityLabel === COPY.whimSheetAsk);
+const field = (tree: Tree): Node => sheetModal(tree).find((n) => hostType(n) === 'TextInput' && n.props.accessibilityLabel === COPY.whimSheetAsk);
 
 /** A render error no boundary in the app caught, as the outer page forwards it, the error named `name`. */
 const renderError = (name: string) => ({ ...RENDER_ERROR_FRAME, payload: { ...RENDER_ERROR_FRAME.payload, name } });
@@ -211,7 +211,7 @@ export async function runAppCrashedUiTests(h: Harness): Promise<void> {
       await waitFor(() => hasButton(tree, COPY.whimSheetBackToApps), 'the Whim sheet');
       h.eq(controlsIn(tree), [COPY.actionStopChange, COPY.actionHistory, COPY.reportScreenTitle, COPY.whimSheetBackToApps],
         'the change being made, Stop the change where the send area was');
-      h.ok(textOf(sheetCard(tree)).includes(COPY.tileChanging), 'under "Changing…"');
+      h.ok(textOf(sheetModal(tree)).includes(COPY.tileChanging), 'under "Changing…"');
       await settle();
       const changeRequests = sent.slice(before).map((r) => r.path).filter((path) => ['/v1/clarify', '/v1/rewrite', '/v1/generate'].includes(path));
       h.eq([changeRequests, streams.length, kv.getString(`pending:${id}`)], [[], 1, kept],
