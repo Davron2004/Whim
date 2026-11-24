@@ -243,3 +243,11 @@ upgrade-to-latest-dependencies reinforced T2, T4, T15 and T18, and added:
   - DRAWBACK: a design call (the Android switch) needed the owner to see a screenshot; the evidence tarball in GCS was the only copy. Keep before/after device screenshots one command away.
   - ENV: the stub server's port is `WHIM_SERVER_PORT` (not `PORT`) and its fingerprint key must be ≥32 chars; reusing an existing Debug Whim.app when `ios/` and the lockfile are unchanged saves a ~35 min native build.
   - Proposals: `fixloop.sh` support for a lane (one worktree, several finding ids); a device-check step in the fix-loop runbook for UI findings, before closure.
+- **2026-11-23 — fix-rn088-deprecations: standalone /fix-loop over #281 + #310 (2 findings, ~10 subagents; attended).**
+  - CAUGHT-REAL-MISTAKE: the gh-310 Opus review found the sheet's new Done bar outside the card's `accessibilityViewIsModal`, so VoiceOver could not reach Done in any sheet; screenshots and every suite were green. Round 2 found `box-none` on the new modal wrapper unpinned (tap-outside-to-close could silently break).
+  - CAUGHT-REAL-MISTAKE (harness): `fixloop.sh redcheck` reported RED for a test FILE passed as the test arg (it executes it: "Permission denied" counts as failure), and a test command containing `--` is split into prod files. Wrap the command: `sh -c 'npm run -s launcher:test -- --only x'`.
+  - DRAWBACK: redcheck is coarse for both findings (a removed export / a removed mock method makes the suite fail to build or throw), so non-vacuity rested on reviewer inspection + worker mutation checks.
+  - DRAWBACK: a worker shell ran node v22 (nvm default) and gated green on it; the orchestrator's gatefull on v26 was the real check.
+  - KEEP: an E2E runner (Sonnet) on the integrated tip with the console read over CDP confirmed zero warnings — the only proof the LogBox toast is gone.
+  - ENV: a headless iOS sim clone starts with ConnectHardwareKeyboard on (software keyboard offscreen); `defaults write com.anycognition.whim RCT_jsLocation localhost:<port>` points a reused Debug app at a worktree Metro.
+  - Proposals: `redcheck` should refuse a non-executable first test arg and accept `--test-cmd '<string>'`; gate.sh preflight should fail (not warn) on a node major below `.nvmrc`.
