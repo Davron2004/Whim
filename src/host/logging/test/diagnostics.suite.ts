@@ -36,8 +36,8 @@ import { CHANNELS } from '../channels';
 import { BRIDGE_EXPOSURE_MESSAGE, DIAGNOSTIC_FIELDS, bridgeExposureDiagnostic, toDiagnostic } from '../diagnostic';
 import { DIAGNOSTICS_PATH } from '../diagnostics';
 import type { DiagnosticsOptions, DiagnosticsTarget, PostDiagnostics } from '../diagnostics';
-import { installCrashCapture, renderCrashRecorder } from '../crash-capture';
-import type { GlobalErrorHandler, RejectionTracking } from '../crash-capture';
+import { devRejectionTracking, installCrashCapture, renderCrashRecorder } from '../crash-capture';
+import type { GlobalErrorHandler, RejectionTracking, RejectionWarningSink } from '../crash-capture';
 import { keepFatalRecord, readFatalRecord, sendFatalRecord } from '../fatal-slot';
 import { createSeam } from '../index';
 import type { Seam } from '../index';
@@ -729,6 +729,64 @@ export async function runDiagnosticsTests(h: Harness): Promise<void> {
     tracking?.onUnhandled(7, new TypeError('no'));
     h.eq([lastRecord(seam).level, lastRecord(seam).fields.where, lastRecord(seam).fields.errorClass], ['error', 'unhandled-rejection', 'TypeError'], 'an error-level record is emitted');
     h.eq(previous, [7], 'and the previous tracking is called with the same id');
+  });
+
+  /** A console stand-in that keeps what the dev rejection tracker wrote, in order. */
+  function warningSink(): RejectionWarningSink & { said: Array<{ level: 'error' | 'warn'; msg: string }> } {
+    const said: Array<{ level: 'error' | 'warn'; msg: string }> = [];
+    return { said, error: msg => { said.push({ level: 'error', msg }); }, warn: msg => { said.push({ level: 'warn', msg }); } };
+  }
+  const handledText = (id: number): string =>
+    `Promise rejection handled (id: ${id})\nThis means you can ignore any previous messages of the form "Uncaught (in promise, id: ${id})"`;
+
+  await h.test('dev rejection tracking: an unhandled rejection is one console error naming the id and the reason', () => {
+    const sink = warningSink();
+    const tracking = devRejectionTracking(true, sink);
+    tracking?.onUnhandled?.(3, new TypeError('no'));
+    h.eq(sink.said, [{ level: 'error', msg: 'Uncaught (in promise, id: 3): "TypeError: no"' }], 'an Error is shown as Name: message');
+    const bare = warningSink();
+    devRejectionTracking(true, bare)?.onUnhandled?.(4, undefined);
+    h.eq(bare.said, [{ level: 'error', msg: 'Uncaught (in promise, id: 4)' }], 'no reason, no quoted suffix');
+  });
+
+  await h.test('dev rejection tracking: a string, an object and a cyclic object each read sensibly', () => {
+    const sink = warningSink();
+    const tracking = devRejectionTracking(true, sink);
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    tracking?.onUnhandled?.(1, 'gone');
+    tracking?.onUnhandled?.(2, { code: 42 });
+    tracking?.onUnhandled?.(5, cyclic);
+    h.eq(sink.said.map(s => s.msg), [
+      'Uncaught (in promise, id: 1): "gone"',
+      'Uncaught (in promise, id: 2): "{"code":42}"',
+      'Uncaught (in promise, id: 5): "[object Object]"',
+    ], 'a string as-is, an object as JSON, a cyclic one by String() without throwing');
+  });
+
+  await h.test('dev rejection tracking: a late handler is one console warning; a release build tracks nothing', () => {
+    const sink = warningSink();
+    devRejectionTracking(true, sink)?.onHandled?.(3);
+    h.eq(sink.said, [{ level: 'warn', msg: handledText(3) }], 'React Native\'s handled-rejection wording');
+    h.eq(devRejectionTracking(false, sink), undefined, 'a release build has no dev tracking');
+  });
+
+  await h.test('dev rejection tracking: behind the Hermes hook, a rejection is both a seam record and a console error', () => {
+    const seam = createSeam({ console: false });
+    const sink = warningSink();
+    let tracking: RejectionTracking | undefined;
+    installCrashCapture({
+      errorUtils: undefined,
+      hermes: { enablePromiseRejectionTracker: options => { tracking = options; } },
+      previousRejectionTracking: devRejectionTracking(true, sink),
+      seam,
+      keepFatal: () => undefined,
+    });
+    tracking?.onUnhandled(7, new RangeError('late'));
+    h.eq([lastRecord(seam).level, lastRecord(seam).fields.where, lastRecord(seam).fields.errorClass], ['error', 'unhandled-rejection', 'RangeError'], 'the seam records it');
+    h.eq(sink.said, [{ level: 'error', msg: 'Uncaught (in promise, id: 7): "RangeError: late"' }], 'and the console shows it');
+    tracking?.onHandled(7);
+    h.eq(sink.said.slice(1), [{ level: 'warn', msg: handledText(7) }], 'a late handler reaches the console too');
   });
 
   await h.test('crash capture: an engine without the rejection tracker says so once, on a channel that is never uploaded', async () => {

@@ -5,9 +5,10 @@
  *
  * The global handler logs, keeps a fatal error's projection for the next launch, and then calls
  * the handler that was installed before it, so a fatal error still ends the process exactly as it
- * did. The rejection hook logs, then defers to the tracking options it was given (React Native's
- * own, in a dev build; there are none in a release build). A render error that reaches the app's
- * root error boundary is recorded the same way as a fatal error (`renderCrashRecorder`).
+ * did. The rejection hook logs, then defers to the tracking options it was given (the dev
+ * messages of `devRejectionTracking`, in a dev build; there are none in a release build). A render
+ * error that reaches the app's root error boundary is recorded the same way as a fatal error
+ * (`renderCrashRecorder`).
  *
  * No React Native import: the RN globals (`ErrorUtils`, `HermesInternal`) are injected by
  * `platform/install-diagnostics.ts`, so the Node suite drives this with fakes.
@@ -32,6 +33,47 @@ export interface RejectionTracking {
   allRejections: boolean;
   onUnhandled: (id: number, rejection: unknown) => void;
   onHandled: (id: number) => void;
+}
+
+/** Where the dev rejection tracker writes its messages (the console, in the app). */
+export interface RejectionWarningSink {
+  error(msg: string): void;
+  warn(msg: string): void;
+}
+
+/** A rejection reason as text. An Error as `Name: message` and an undefined reason with no text,
+ *  as React Native's dev tracker did; a string as-is, anything else as JSON, or `String()` when
+ *  JSON can't hold it. */
+function rejectionText(reason: unknown): string {
+  if (reason === undefined) return '';
+  if (Object.prototype.toString.call(reason) === '[object Error]') return Error.prototype.toString.call(reason);
+  if (typeof reason === 'string') return reason;
+  try {
+    return JSON.stringify(reason) ?? String(reason);
+    // eslint-disable-next-line no-restricted-syntax -- intentional: a reason JSON cannot hold (a cycle, a BigInt) is still shown, by String().
+  } catch {
+    return String(reason);
+  }
+}
+
+/** The dev build's rejection warnings: an unhandled rejection as an error and a late handler as a
+ *  warning, with React Native's wording. A release build has none. */
+export function devRejectionTracking(isDev: boolean, sink: RejectionWarningSink): Partial<RejectionTracking> | undefined {
+  if (!isDev) return undefined;
+  return {
+    allRejections: true,
+    onUnhandled: (id, rejection) => {
+      const text = rejectionText(rejection);
+      const reason = text ? `: "${text}"` : '';
+      sink.error(`Uncaught (in promise, id: ${id})${reason}`);
+    },
+    onHandled: id => {
+      sink.warn(
+        `Promise rejection handled (id: ${id})\n` +
+          `This means you can ignore any previous messages of the form "Uncaught (in promise, id: ${id})"`,
+      );
+    },
+  };
 }
 
 /** The part of the `HermesInternal` global this uses; absent on an engine without it. */
