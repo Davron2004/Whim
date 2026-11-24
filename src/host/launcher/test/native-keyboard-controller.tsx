@@ -2,7 +2,8 @@
  *  `moveKeyboard`, as the native side reports it: the JS `keyboardWill…` event, the worklet
  *  handlers' `onStart` (destination), one `onMove` per frame step, `onEnd`, then `keyboardDid…`.
  *  Heights are measured up from the bottom of an 844-high window (`keyboardWindow`), as the library
- *  reports them. Nothing runs on a UI thread: worklet handlers run inline. */
+ *  reports them, with each frame's `progress` (`progressAt`). Nothing runs on a UI thread: worklet
+ *  handlers run inline. */
 import React from 'react';
 
 interface MoveEvent { height: number; progress: number; duration: number; target: number }
@@ -23,6 +24,15 @@ export const keyboardState = { height: 0, visible: false, dismissed: 0 };
 export const dismissals: ({ keepFocus?: boolean; animated?: boolean } | undefined)[] = [];
 
 const data = (height: number): EventData => ({ height, duration: 250, timestamp: 0, target: -1, type: 'default', appearance: 'light' });
+
+/** The height the keyboard last set off to open at (0: none since the reset). */
+let openedAt = 0;
+/** A frame's `progress` as the library reports it: its height over the height the keyboard opened at
+ *  (or rests at), so 0 → 1 on a show and back to 0 on a hide. */
+function progressAt(height: number): number {
+  const opened = openedAt || keyboardState.height;
+  return opened > 0 ? Math.min(1, height / opened) : 0;
+}
 
 /** As the library's own module does, ahead of every other listener: `keyboardWillShow` makes the
  *  keyboard visible at its destination height before a single frame has moved, `keyboardDidHide`
@@ -76,16 +86,24 @@ export function KeyboardProvider({ children }: { children?: React.ReactNode }) {
   return React.createElement(React.Fragment, null, children);
 }
 
+/** A view the library moves with the keyboard's top edge: drawn as a host view of its own, with the
+ *  props it was given. */
+export function KeyboardStickyView({ children, ...props }: { children?: React.ReactNode; [key: string]: unknown }) {
+  return React.createElement('KeyboardStickyView', props, children);
+}
+
 /** Plays the keyboard moving from where it is to `height` (0: hidden) through `steps` intermediate
  *  heights, as the library reports it. A move between two non-zero heights is a keyboard changing
  *  height while up: the library reports it as a show, instantly. */
 export function moveKeyboard(height: number, steps: readonly number[] = []): void {
   const showing = height > 0;
+  if (showing) openedAt = height;
+  else openedAt ||= keyboardState.height;
   emit(showing ? 'keyboardWillShow' : 'keyboardWillHide', height);
   const progress = showing ? 1 : 0;
   for (const ref of [...handlers]) ref.current.onStart?.({ height, progress, duration: 250, target: -1 });
   for (const step of [...steps, height]) {
-    for (const ref of [...handlers]) ref.current.onMove?.({ height: step, progress, duration: 250, target: -1 });
+    for (const ref of [...handlers]) ref.current.onMove?.({ height: step, progress: progressAt(step), duration: 250, target: -1 });
   }
   keyboardState.height = height;
   keyboardState.visible = showing;
@@ -95,7 +113,7 @@ export function moveKeyboard(height: number, steps: readonly number[] = []): voi
 
 /** An interactive drag (iOS) moving the keyboard to `height` without ending. */
 export function dragKeyboard(height: number): void {
-  for (const ref of [...handlers]) ref.current.onInteractive?.({ height, progress: height > 0 ? 1 : 0, duration: -1, target: -1 });
+  for (const ref of [...handlers]) ref.current.onInteractive?.({ height, progress: progressAt(height), duration: -1, target: -1 });
 }
 
 /** Every handler and event listener still subscribed. */
@@ -110,18 +128,20 @@ export function resetKeyboard(): void {
   keyboardRequests.asked = 0;
   keyboardRequests.handler = null;
   dismissals.splice(0);
+  openedAt = 0;
   emit('keyboardDidHide', 0);
 }
 
 /** The keyboard setting off toward `height`, on the UI thread, ahead of any JS event: the handlers'
  *  `onStart` only. `duration` 0 is a change iOS makes at once (the emoji keyboard): no frames follow. */
 export function startKeyboard(height: number, duration = 250): void {
+  if (height > 0) openedAt = height;
   for (const ref of [...handlers]) ref.current.onStart?.({ height, progress: height > 0 ? 1 : 0, duration, target: -1 });
 }
 
 /** One frame of a keyboard animation still running: the handlers' `onMove` only. */
 export function stepKeyboard(height: number): void {
-  for (const ref of [...handlers]) ref.current.onMove?.({ height, progress: height > 0 ? 1 : 0, duration: 250, target: -1 });
+  for (const ref of [...handlers]) ref.current.onMove?.({ height, progress: progressAt(height), duration: 250, target: -1 });
 }
 
 /** The library's end report on its own, with no start before it: the keyboard's rest as it settled

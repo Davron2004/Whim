@@ -107,8 +107,8 @@ async function tapTile(tree: Tree, name: string): Promise<void> {
   await TestRenderer.act(async () => tileOf(tree, name).props.onPress());
   await settle();
 }
-/** A sheet's card: the view a screen reader is held in. */
-const isSheetCard = (n: Node) => hostType(n) === 'Animated.View' && n.props.accessibilityViewIsModal === true;
+/** The part of a sheet a screen reader is held in: its card, and the Done bar while it shows. */
+const isSheetModal = (n: Node) => typeof n.type === 'string' && n.props.accessibilityViewIsModal === true;
 const homeShown = (tree: Tree) => tree.root.findAllByType(HomeScreen).length === 1;
 const appOpen = (tree: Tree) => tree.root.findAllByType(MiniAppView).length === 1;
 /** The app's `bg`: the one childless, absolutely placed view in the app's layers with corners. */
@@ -672,7 +672,7 @@ export async function runAppMorphUiTests(h: Harness): Promise<void> {
       try {
         await press(button(tree, COPY.whimSheetBackToApps));
         const sheetGone = () => {
-          const card = tree.root.findAll(isSheetCard)[0];
+          const card = tree.root.findAll(isSheetModal)[0]?.findAll((n) => hostType(n) === 'Animated.View')[0];
           return card === undefined || (transformOf(card).translateY ?? 0) >= Dimensions.get().height - 0.5;
         };
         const diceCentre = [DICE_TILE.pageX + DICE_TILE.width / 2, DICE_TILE.pageY + DICE_TILE.height / 2 - STAGE.pageY] as const;

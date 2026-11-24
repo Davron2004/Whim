@@ -43,7 +43,7 @@ import {
   openTipSplitter,
   orb,
   runningApp,
-  sheetCard,
+  sheetModal,
   showing,
   typeWords,
   versionLine,
@@ -473,7 +473,7 @@ export async function runChangingInUseUiTests(h: Harness): Promise<void> {
       await openSheet(tree);
       h.eq(controlsIn(tree), [COPY.actionStopChange, COPY.actionHistory, COPY.reportScreenTitle, COPY.whimSheetBackToApps],
         'Stop the change where the send area was: no field and no Send to start a second change with');
-      h.ok(textOf(sheetCard(tree)).includes(COPY.tileChanging), 'under "Changing…"');
+      h.ok(textOf(sheetModal(tree)).includes(COPY.tileChanging), 'under "Changing…"');
       await press(button(tree, COPY.sheetClose));
       const generate = sent.filter((r) => r.path === '/v1/generate');
       h.ok(generate.length === 1 && generate[0].signal?.aborted !== true, 'the change’s one request is still open');

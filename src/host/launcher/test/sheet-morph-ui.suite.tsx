@@ -135,7 +135,8 @@ const face = (tree: Tree) => {
   for (let up = faceTap(tree)?.parent ?? null; up; up = up.parent) if (hostType(up) === 'Animated.View') return up;
   return null;
 };
-const card = (tree: Tree) => tree.root.findAll((n) => hostType(n) === 'Animated.View' && n.props.accessibilityViewIsModal === true)[0];
+/** The sheet's card: the first animated view in the part of the sheet a screen reader is held in. */
+const card = (tree: Tree) => tree.root.findAll((n) => typeof n.type === 'string' && n.props.accessibilityViewIsModal === true)[0]?.findAll((n) => hostType(n) === 'Animated.View')[0];
 /** How far the plate is from the place (0) to the card (1), read off its width. */
 const grownOf = (tree: Tree, from: Rect) => ((flat(plate(tree)!).width as number) - from.width) / (FRAME.width - from.width);
 const embersIn = (tree: Tree) => {

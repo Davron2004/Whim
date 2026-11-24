@@ -31,6 +31,8 @@
  * - The keyboard: the card's bottom padding follows the keyboard frame by frame on the keyboard's own
  *   curve (`useKeyboardOverlap`): the card continues behind the keyboard and its content ends above
  *   it. A body with fields renders a `KeyboardShell host="sheet"`, which keeps the focused field in view.
+ *   The window's Done bar (`useDoneBar`) rides the keyboard from the frame's bottom edge, and the card
+ *   pads for it too while it shows.
  *   A close, by any route, puts the keyboard away as it starts.
  * - Reduce Motion: opening and closing cross-fade in place (160 / 120 ms); a drag still tracks the
  *   finger and settles with a cross-fade.
@@ -59,7 +61,7 @@ import { LAYOUT, RADII, SPACE } from '../../design/tokens';
 import { haptics } from '../haptics';
 import { COPY } from '../launcher/copy';
 import { sheetBottomPadding } from '../launcher/keyboard-shell';
-import { OverlayShownContext, useKeyboardOverlap } from '../launcher/KeyboardShell';
+import { DoneBar, DoneBarContext, OverlayShownContext, useDoneBar, useKeyboardOverlap } from '../launcher/KeyboardShell';
 import type { IconName } from '../../design/icons/names';
 import type { EmberLight, EmberLightRef } from './Ember';
 import { Icon } from './Icon';
@@ -396,6 +398,8 @@ function HeaderIconButton({ icon, label, onPress }: Readonly<{ icon: IconName; l
 
 const styles = makeStyles((t) => ({
   frame: { flex: 1, justifyContent: 'flex-end' as const },
+  // Fills the frame and lays the card out as the frame would; touches on its empty part reach the scrim.
+  modal: { flex: 1, justifyContent: 'flex-end' as const },
   scrim: { position: 'absolute' as const, top: 0, right: 0, bottom: 0, left: 0, backgroundColor: t.colors.scrim },
   // The card paints the sheet to its edges and has no border: on Android React Native shrinks a
   // rounded view's background by 0.8 px on every side once it has any border, so a top border here
@@ -755,7 +759,10 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
   const anchored = anchor !== undefined;
   const frame = usePlace();
   const titleRef = useRef<TextInstance>(null);
-  const { overlap, onLayout: onFrameLayout } = useKeyboardOverlap(frame.ref, true);
+  // The sheet's window keeps its Done bar here, on the frame, which fills the window: a drag of the
+  // card leaves it on the keyboard.
+  const doneBar = useDoneBar();
+  const { overlap, onLayout: onFrameLayout } = useKeyboardOverlap(frame.ref, true, 0, doneBar.height);
   const safeBottom = insets.bottom;
 
   useEffect(() => {
@@ -853,34 +860,38 @@ function SheetFrame({ closing, motion, anchor, moving, lead, reduceMotion, title
         <Pressable style={StyleSheet.absoluteFill} onPress={onClose} accessible={false} accessibilityRole="none" importantForAccessibility="no" />
       </Animated.View>
       {anchor ? <AnchorMorph anchor={anchor} frame={frame} motion={motion} closing={closing} drag={plateDrag} /> : null}
-      <Animated.View
-        onLayout={onCardLayout}
-        pointerEvents={closing ? 'none' : 'auto'}
-        style={[s.card, detent === 'large' ? { height: SHEET_MAX_HEIGHT } : { maxHeight: SHEET_MAX_HEIGHT }, cardMotion]}
-        accessibilityViewIsModal
-        onAccessibilityEscape={onClose}
-      >
-        <TopHighlight radius={RADII.xl.radius} continuous corners="top" />
-        <GestureDetector gesture={drag}>
-          <View style={s.header}>
-            <View style={s.grabber} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" />
-            <View style={[s.titleRow, onBack ? s.titleRowBack : null]}>
-              {onBack ? <HeaderIconButton icon={t.platform === 'ios' ? 'chevron-left' : 'arrow-left'} label={COPY.backLabel} onPress={onBack} /> : null}
-              <View style={s.titleSlot}>
-                {title ? (
-                  <RNText ref={titleRef} style={s.title} accessibilityRole="header" maxFontSizeMultiplier={MAX_FONT_SCALE}>
-                    {title}
-                  </RNText>
-                ) : null}
+      {/* Modal to screen readers: the card, and the Done bar on the keyboard, which they reach too. */}
+      <View collapsable={false} pointerEvents="box-none" style={s.modal} accessibilityViewIsModal onAccessibilityEscape={onClose}>
+        <Animated.View
+          onLayout={onCardLayout}
+          pointerEvents={closing ? 'none' : 'auto'}
+          style={[s.card, detent === 'large' ? { height: SHEET_MAX_HEIGHT } : { maxHeight: SHEET_MAX_HEIGHT }, cardMotion]}
+        >
+          <TopHighlight radius={RADII.xl.radius} continuous corners="top" />
+          <GestureDetector gesture={drag}>
+            <View style={s.header}>
+              <View style={s.grabber} accessibilityElementsHidden importantForAccessibility="no-hide-descendants" />
+              <View style={[s.titleRow, onBack ? s.titleRowBack : null]}>
+                {onBack ? <HeaderIconButton icon={t.platform === 'ios' ? 'chevron-left' : 'arrow-left'} label={COPY.backLabel} onPress={onBack} /> : null}
+                <View style={s.titleSlot}>
+                  {title ? (
+                    <RNText ref={titleRef} style={s.title} accessibilityRole="header" maxFontSizeMultiplier={MAX_FONT_SCALE}>
+                      {title}
+                    </RNText>
+                  ) : null}
+                </View>
+                <HeaderIconButton icon="x" label={closeLabel} onPress={onClose} />
               </View>
-              <HeaderIconButton icon="x" label={closeLabel} onPress={onClose} />
             </View>
+          </GestureDetector>
+          <View style={s.body}>
+            <DoneBarContext.Provider value={doneBar}>
+              <SheetMorphContext.Provider value={morph}>{children}</SheetMorphContext.Provider>
+            </DoneBarContext.Provider>
           </View>
-        </GestureDetector>
-        <View style={s.body}>
-          <SheetMorphContext.Provider value={morph}>{children}</SheetMorphContext.Provider>
-        </View>
-      </Animated.View>
+        </Animated.View>
+        {doneBar.height > 0 ? <DoneBar /> : null}
+      </View>
       {anchor && moving ? <LeadEmber lead={lead} frame={frame} target={anchor.ember} grown={grown} shown={shown} ended={motion.ended} /> : null}
     </View>
   );

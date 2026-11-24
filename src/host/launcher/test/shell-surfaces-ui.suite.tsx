@@ -163,7 +163,10 @@ function inside(node: Node, ancestor: Node): boolean {
 }
 
 const SHEET_HEIGHT = 400;
-const card = (tree: Tree) => tree.root.find((n) => hostType(n) === 'Animated.View' && n.props.accessibilityViewIsModal === true);
+/** The part of the sheet a screen reader is held in: the card, and the Done bar while it shows. */
+const sheetModal = (tree: Tree) => tree.root.find((n) => hostType(n) === 'View' && n.props.accessibilityViewIsModal === true);
+/** The sheet's card: the first animated view in that part. */
+const card = (tree: Tree) => sheetModal(tree).findAll((n) => hostType(n) === 'Animated.View')[0];
 const cardY = (tree: Tree) => ((flat(card(tree)).transform as { translateY: number }[] | undefined)?.[0]?.translateY ?? 0);
 const scrimOpacity = (tree: Tree) => flat(tree.root.find((n) => hostType(n) === 'Animated.View' && flat(n).backgroundColor === LIGHT.scrim)).opacity;
 const dragOf = (tree: Tree) => all(tree, 'GestureDetector')[0].props.gesture as PanConfig;
@@ -425,11 +428,13 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     const title = tree.root.find((n) => hostType(n) === 'Text' && n.props.accessibilityRole === 'header');
     h.eq([textOf(title), flat(title).fontSize, flat(title).fontWeight], ['Report this app', TYPE_SCALE.title2.size, String(TYPE_SCALE.title2.weight)], 'a title2 title');
     h.eq(accessibilityFocus, [{ header: 'Report this app' }], 'screen-reader focus moves to the title on open');
-    h.ok(card(tree).props.accessibilityViewIsModal === true, 'modal to screen readers');
+    h.ok(sheetModal(tree).props.accessibilityViewIsModal === true && inside(card(tree), sheetModal(tree)), 'modal to screen readers, the card inside');
     const close = rowButtons(tree).filter((n) => n.props.accessibilityLabel === COPY.sheetClose);
     h.eq(close.length, 1, 'one close control, read as “Close”');
     const scrim = tree.root.find((n) => hostType(n) === 'Pressable' && n.props.accessible === false);
     h.eq([scrim.props.importantForAccessibility, inside(card(tree), scrim), inside(title, scrim)], ['no', false, false], 'the scrim is a sibling screen readers skip, never a parent of the card');
+    h.eq(sheetModal(tree).props.pointerEvents, 'box-none', 'the modal part lets a tap outside the card through to the scrim');
+    h.ok(!inside(scrim, sheetModal(tree)), 'the scrim sits outside the modal part, so a tap beside the card reaches it');
     await act(() => tree.unmount());
   });
 
@@ -505,7 +510,7 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
       ['scrim', (tree) => press(tree.root.find((n) => hostType(n) === 'Pressable' && n.props.accessible === false))],
       ['close', (tree) => press(rowButtons(tree).find((n) => n.props.accessibilityLabel === COPY.sheetClose)!)],
       ['Android back', (tree) => act(() => all(tree, 'Modal')[0].props.onRequestClose())],
-      ['screen-reader escape', (tree) => act(() => card(tree).props.onAccessibilityEscape())],
+      ['screen-reader escape', (tree) => act(() => sheetModal(tree).props.onAccessibilityEscape())],
     ];
     for (const [way, close] of ways) {
       await resetPhone();
@@ -529,7 +534,7 @@ export async function runShellSurfacesUiTests(h: Harness): Promise<void> {
     const tree = await render(sheet(true));
     await act(() => all(tree, 'Modal')[0].props.onRequestClose());
     h.eq([calls.back, calls.close], [1, 0], 'Android back goes to the page, and the sheet stays');
-    await act(() => card(tree).props.onAccessibilityEscape());
+    await act(() => sheetModal(tree).props.onAccessibilityEscape());
     await press(rowButtons(tree).find((n) => n.props.accessibilityLabel === COPY.sheetClose)!);
     await press(tree.root.find((n) => hostType(n) === 'Pressable' && n.props.accessible === false));
     h.eq([calls.back, calls.close], [1, 3], 'the screen reader’s escape, the close control and the scrim still close it');
