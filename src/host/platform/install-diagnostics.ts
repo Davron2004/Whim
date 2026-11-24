@@ -15,11 +15,11 @@
  * error thrown while the app is loading is already captured.
  */
 
-import { AppState, LogBox, Platform } from 'react-native';
+import { AppState, Platform } from 'react-native';
 import { log } from '../logging';
 import { CHANNELS } from '../logging/channels';
-import { installCrashCapture, renderCrashRecorder } from '../logging/crash-capture';
-import type { RejectionTracking, RejectionTrackerHost } from '../logging/crash-capture';
+import { devRejectionTracking, installCrashCapture, renderCrashRecorder } from '../logging/crash-capture';
+import type { RejectionTrackerHost } from '../logging/crash-capture';
 import type { DiagnosticRecord } from '@whim/contract';
 import { keepFatalRecord, sendFatalRecord } from '../logging/fatal-slot';
 import { diagnosticsTarget } from '../launcher/diagnostics-target';
@@ -33,28 +33,14 @@ log.diagnostics.configure({
   osVersion: String(Platform.Version),
 });
 
-// The one documented deep import (#281, below): React Native's babel preset appends a console.warn
-// naming it to this module, which LogBox would raise as a toast on every dev launch. Only that
-// exact message is silenced; any other deep import still warns.
-if (__DEV__) {
-  LogBox.ignoreLogs([
-    "Deep imports from the 'react-native' package are deprecated ('react-native/Libraries/promiseRejectionTrackingOptions').",
-  ]);
-}
-
-/** React Native installs its own rejection tracking only in a dev build (its yellow-box warning);
- *  the hook below replaces it there, so it defers to it. A release build has none. */
-function devRejectionTracking(): Partial<RejectionTracking> | undefined {
-  // eslint-disable-next-line @react-native/no-deep-imports -- React Native exports its dev rejection tracking options from no public entry point, and Hermes keeps one tracker, so deferring to it means naming the module that holds it.
-  return __DEV__ ? require('react-native/Libraries/promiseRejectionTrackingOptions').default : undefined;
-}
-
 const keepFatal = (record: DiagnosticRecord): void => keepFatalRecord(kv, log.diagnostics, record);
 
 installCrashCapture({
   errorUtils: ErrorUtils,
   hermes: typeof HermesInternal === 'undefined' ? undefined : (HermesInternal as RejectionTrackerHost | null),
-  previousRejectionTracking: devRejectionTracking(),
+  // Hermes keeps one tracker and this hook replaces React Native's dev one, so the dev build's
+  // rejection warnings come from our own tracker.
+  previousRejectionTracking: devRejectionTracking(__DEV__, console),
   seam: log,
   keepFatal,
 });
